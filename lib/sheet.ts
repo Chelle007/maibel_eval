@@ -7,6 +7,12 @@ export function getSheetIdFromLink(link: string): string {
   return match[1];
 }
 
+/** Extract worksheet gid from link if present (e.g. #gid=123456). */
+function getGidFromLink(link: string): string | undefined {
+  const match = link.match(/[#&]gid=(\d+)/);
+  return match ? match[1] : undefined;
+}
+
 /** Raw row from sheet (header keys from first row). */
 export type SheetRow = Record<string, string>;
 
@@ -19,13 +25,25 @@ export async function fetchSheetRows(
   options: { limit?: number; gid?: string } = {}
 ): Promise<SheetRow[]> {
   const sheetId = getSheetIdFromLink(googleSheetLink);
-  const gid = options.gid ?? "0";
+  const gid = options.gid ?? getGidFromLink(googleSheetLink) ?? "0";
   const url = `https://docs.google.com/spreadsheets/d/${sheetId}/export?format=csv&gid=${gid}`;
 
-  const res = await fetch(url);
-  if (!res.ok) throw new Error(`Failed to fetch sheet: ${res.status} ${res.statusText}`);
+  console.log("[sheet] Fetching CSV from:", url);
+  const res = await fetch(url, { cache: "no-store", redirect: "follow" });
+  console.log("[sheet] Response:", res.status, res.statusText, "redirected:", res.redirected, "url:", res.url);
+
+  if (!res.ok) {
+    const body = await res.text().catch(() => "");
+    const hint =
+      res.status === 404
+        ? " Make sure the sheet is published to web: File → Share → Publish to web (and pick the correct tab)."
+        : "";
+    console.error("[sheet] Fetch failed:", res.status, res.statusText, body.slice(0, 500));
+    throw new Error(`Failed to fetch sheet: ${res.status} ${res.statusText}.${hint} URL: ${url}`);
+  }
 
   const csv = await res.text();
+  console.log("[sheet] CSV length:", csv.length, "chars, first 200:", csv.slice(0, 200));
   const rows = parseCsvToRows(csv);
   const limit = options.limit ?? rows.length;
   return rows.slice(0, limit);
@@ -33,10 +51,11 @@ export async function fetchSheetRows(
 
 /** Parse CSV string into array of row objects (first line = headers). */
 function parseCsvToRows(csv: string): SheetRow[] {
-  const lines = csv.split(/\r?\n/).filter((line) => line.trim());
+  const raw = csv.replace(/^\uFEFF/, ""); // strip BOM if present
+  const lines = raw.split(/\r?\n/).filter((line) => line.trim());
   if (lines.length < 2) return [];
 
-  const headers = parseCsvLine(lines[0]);
+  const headers = parseCsvLine(lines[0]).map((h) => h.replace(/^\uFEFF/, "").trim());
   const rows: SheetRow[] = [];
 
   for (let i = 1; i < lines.length; i++) {
@@ -86,12 +105,41 @@ export const DEFAULT_SHEET_COLUMNS = {
   forbidden: "forbidden",
 } as const;
 
+/** Normalize header for matching: lowercase, collapse spaces to single underscore. */
+function normalizeHeader(h: string): string {
+  return h.trim().toLowerCase().replace(/\s+/g, "_");
+}
+
+/** Optional aliases: normalized sheet header -> our key (for flexible matching). */
+const HEADER_ALIASES: Partial<Record<string, keyof typeof DEFAULT_SHEET_COLUMNS>> = {
+  user_message: "input_message",
+  message: "input_message",
+  user_input: "input_message",
+  input: "input_message",
+  test_case_id: "test_case_id",
+  id: "test_case_id",
+  case_id: "test_case_id",
+};
+
+/** Get cell value from row by exact key or by normalized header match. */
+function getCell(row: SheetRow, desiredKey: string): string {
+  const key = desiredKey as keyof typeof DEFAULT_SHEET_COLUMNS;
+  const exact = row[desiredKey] ?? row[DEFAULT_SHEET_COLUMNS[key]];
+  if (exact !== undefined && exact !== "") return String(exact).trim();
+  const normalized = normalizeHeader(desiredKey);
+  for (const [header, value] of Object.entries(row)) {
+    const n = normalizeHeader(header);
+    const match = n === normalized || HEADER_ALIASES[n] === key;
+    if (match && value != null && String(value).trim() !== "") return String(value).trim();
+  }
+  return "";
+}
+
 export function sheetRowToTestCase(
   row: SheetRow,
-  columnMap: Record<string, string> = DEFAULT_SHEET_COLUMNS
+  _columnMap?: Record<string, string>
 ): TestCase {
-  const get = (key: keyof typeof DEFAULT_SHEET_COLUMNS) =>
-    row[columnMap[key]] ?? row[key] ?? "";
+  const get = (key: keyof typeof DEFAULT_SHEET_COLUMNS) => getCell(row, key);
 
   return {
     test_case_id: get("test_case_id"),

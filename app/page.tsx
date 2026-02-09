@@ -27,15 +27,25 @@ export default function Home() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [results, setResults] = useState<EvaluationResult[] | null>(null);
+  const [progress, setProgress] = useState<{
+    stage: string;
+    index?: number;
+    total?: number;
+    test_case_id?: string;
+    message?: string;
+  } | null>(null);
+  const [completedSoFar, setCompletedSoFar] = useState<EvaluationResult[]>([]);
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     setError(null);
     setResults(null);
+    setProgress(null);
+    setCompletedSoFar([]);
     setLoading(true);
 
     try {
-      const res = await fetch("/api/run", {
+      const res = await fetch("/api/run/stream", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -46,16 +56,71 @@ export default function Home() {
         }),
       });
 
-      const data = await res.json();
-
       if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
         setError(data.error ?? `Request failed (${res.status})`);
+        setLoading(false);
         return;
       }
 
-      setResults(data.results ?? []);
+      const reader = res.body?.getReader();
+      const decoder = new TextDecoder();
+      if (!reader) {
+        setError("No response body");
+        setLoading(false);
+        return;
+      }
+
+      let buffer = "";
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split("\n\n");
+        buffer = lines.pop() ?? "";
+        for (const chunk of lines) {
+          const match = chunk.match(/^data:\s*(.+)/m);
+          if (!match) continue;
+          try {
+            const data = JSON.parse(match[1].trim()) as {
+              type: string;
+              stage?: string;
+              message?: string;
+              index?: number;
+              total?: number;
+              test_case_id?: string;
+              result?: EvaluationResult;
+              results?: EvaluationResult[];
+              error?: string;
+            };
+            if (data.type === "progress" && data.stage != null) {
+              setProgress({
+                stage: data.stage,
+                index: data.index,
+                total: data.total,
+                test_case_id: data.test_case_id,
+                message: data.message,
+              });
+              if (data.stage === "done" && data.result) {
+                setCompletedSoFar((prev) => [...prev, data.result!]);
+              }
+            } else if (data.type === "complete" && data.results) {
+              setResults(data.results);
+              setProgress(null);
+              setCompletedSoFar([]);
+            } else if (data.type === "error" && data.error) {
+              setError(data.error);
+              setProgress(null);
+            }
+          } catch {
+            // ignore parse errors for incomplete chunks
+          }
+        }
+      }
+      if (progress && !results) setProgress(null);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Something went wrong");
+      setProgress(null);
     } finally {
       setLoading(false);
     }
@@ -153,21 +218,81 @@ export default function Home() {
             />
           </div>
 
-          <div className="flex items-center gap-4">
-            <button
-              type="submit"
-              disabled={loading}
-              className="rounded-lg bg-stone-800 px-4 py-2.5 text-sm font-medium text-white transition-colors hover:bg-stone-700 focus:outline-none focus:ring-2 focus:ring-stone-500 focus:ring-offset-2 disabled:opacity-50 disabled:pointer-events-none dark:bg-stone-200 dark:text-stone-900 dark:hover:bg-stone-300"
-            >
-              {loading ? "Running…" : "Run evaluation"}
-            </button>
-            {loading && (
-              <span className="text-sm text-stone-500 dark:text-stone-400">
-                Fetching sheet → calling Evren → evaluating each row…
-              </span>
+          <div className="flex flex-col gap-3">
+            <div className="flex items-center gap-4">
+              <button
+                type="submit"
+                disabled={loading}
+                className="rounded-lg bg-stone-800 px-4 py-2.5 text-sm font-medium text-white transition-colors hover:bg-stone-700 focus:outline-none focus:ring-2 focus:ring-stone-500 focus:ring-offset-2 disabled:opacity-50 disabled:pointer-events-none dark:bg-stone-200 dark:text-stone-900 dark:hover:bg-stone-300"
+              >
+                {loading ? "Running…" : "Run evaluation"}
+              </button>
+            </div>
+            {loading && progress && (
+              <div className="rounded-lg border border-stone-200 bg-stone-100/80 dark:border-stone-700 dark:bg-stone-800/50 px-4 py-3 text-sm">
+                {progress.stage === "sheet" && (
+                  <p className="text-stone-700 dark:text-stone-300">{progress.message}</p>
+                )}
+                {(progress.stage === "evren" || progress.stage === "evaluating") && (
+                  <p className="text-stone-700 dark:text-stone-300">
+                    Test case <span className="font-mono font-medium">{progress.test_case_id}</span>
+                    {progress.total != null && progress.index != null && (
+                      <span className="text-stone-500 dark:text-stone-400">
+                        {" "}({progress.index + 1} / {progress.total})
+                      </span>
+                    )}
+                    {" — "}
+                    {progress.stage === "evren" ? "Waiting for Evren response…" : "Evaluating…"}
+                  </p>
+                )}
+                {progress.stage === "done" && progress.total != null && progress.index != null && (
+                  <p className="text-stone-600 dark:text-stone-400">
+                    Done {progress.test_case_id}. {progress.index + 1} / {progress.total} complete.
+                  </p>
+                )}
+              </div>
+            )}
+            {loading && completedSoFar.length > 0 && (
+              <p className="text-xs text-stone-500 dark:text-stone-400">
+                {completedSoFar.length} result(s) so far…
+              </p>
             )}
           </div>
         </form>
+
+        {loading && completedSoFar.length > 0 && (
+          <section className="mt-8">
+            <h2 className="text-sm font-medium text-stone-600 dark:text-stone-400">
+              Results so far ({completedSoFar.length})
+            </h2>
+            <ul className="mt-2 space-y-3">
+              {completedSoFar.map((r, i) => (
+                <li
+                  key={`${r.test_case_id}-${i}`}
+                  className="rounded-lg border border-stone-200 bg-white p-3 shadow-sm dark:border-stone-700 dark:bg-stone-900"
+                >
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="font-mono text-sm font-medium text-stone-700 dark:text-stone-300">
+                      {r.test_case_id}
+                    </span>
+                    <span
+                      className={`rounded-full px-2 py-0.5 text-xs font-medium ${
+                        r.success
+                          ? "bg-emerald-100 text-emerald-800 dark:bg-emerald-900/40 dark:text-emerald-300"
+                          : "bg-red-100 text-red-800 dark:bg-red-900/40 dark:text-red-300"
+                      }`}
+                    >
+                      {r.success ? "Pass" : "Fail"}
+                    </span>
+                  </div>
+                  <p className="mt-0.5 text-xs text-stone-500 dark:text-stone-400">
+                    Score: {r.score}
+                  </p>
+                </li>
+              ))}
+            </ul>
+          </section>
+        )}
 
         {error && (
           <div

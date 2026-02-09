@@ -17,6 +17,9 @@ type EvaluationResult = {
   flags_detected: string;
   reason: string;
   token_usage?: TokenUsage;
+  /** Evren’s reply and flags (from evaluate-one API). */
+  evren_response?: string;
+  detected_flags?: string;
 };
 
 const inputClass =
@@ -25,6 +28,7 @@ const labelClass =
   "block text-sm font-medium text-stone-700 dark:text-stone-300";
 
 export default function EvaluateOnePage() {
+  const [evrenUrl, setEvrenUrl] = useState("http://localhost:8000");
   const [testCaseId, setTestCaseId] = useState("");
   const [inputMessage, setInputMessage] = useState("");
   const [imgUrl, setImgUrl] = useState("");
@@ -32,9 +36,7 @@ export default function EvaluateOnePage() {
   const [expectedFlags, setExpectedFlags] = useState("");
   const [expectedBehavior, setExpectedBehavior] = useState("");
   const [forbidden, setForbidden] = useState("");
-  const [evrenResponse, setEvrenResponse] = useState("");
-  const [detectedFlags, setDetectedFlags] = useState("");
-  const [modelName, setModelName] = useState("gemini-3-pro-preview");
+  const [modelName, setModelName] = useState("gemini-1.5-pro");
   const [systemPrompt, setSystemPrompt] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -47,7 +49,7 @@ export default function EvaluateOnePage() {
     setLoading(true);
 
     try {
-      const res = await fetch("/api/evaluate", {
+      const res = await fetch("/api/evaluate-one", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -60,10 +62,7 @@ export default function EvaluateOnePage() {
             expected_behavior: expectedBehavior,
             ...(forbidden.trim() && { forbidden: forbidden.trim() }),
           },
-          evren_output: {
-            evren_response: evrenResponse,
-            detected_flags: detectedFlags,
-          },
+          evren_model_api_url: evrenUrl.trim(),
           ...(modelName.trim() && { model_name: modelName.trim() }),
           ...(systemPrompt.trim() && { system_prompt: systemPrompt.trim() }),
         }),
@@ -98,11 +97,34 @@ export default function EvaluateOnePage() {
             Evaluate one
           </h1>
           <p className="mt-1 text-sm text-stone-500 dark:text-stone-400">
-            Run the evaluator on a single test case + Evren output.
+            Run Evren on the test case, then evaluate the response with Gemini.
           </p>
         </header>
 
         <form onSubmit={handleSubmit} className="space-y-8">
+          <section>
+            <h2 className="text-sm font-semibold uppercase tracking-wider text-stone-500 dark:text-stone-400">
+              Evren API
+            </h2>
+            <div className="mt-4">
+              <label htmlFor="evren_url" className={labelClass}>
+                Evren model API URL <span className="text-red-500">*</span>
+              </label>
+              <input
+                id="evren_url"
+                type="url"
+                required
+                value={evrenUrl}
+                onChange={(e) => setEvrenUrl(e.target.value)}
+                placeholder="http://localhost:8000"
+                className={inputClass}
+              />
+              <p className="mt-1 text-xs text-stone-500 dark:text-stone-400">
+                We will POST to /evren with input_message (and optional context, img_url).
+              </p>
+            </div>
+          </section>
+
           <section>
             <h2 className="text-sm font-semibold uppercase tracking-wider text-stone-500 dark:text-stone-400">
               Test case
@@ -208,42 +230,6 @@ export default function EvaluateOnePage() {
 
           <section>
             <h2 className="text-sm font-semibold uppercase tracking-wider text-stone-500 dark:text-stone-400">
-              Evren output
-            </h2>
-            <div className="mt-4 space-y-4">
-              <div>
-                <label htmlFor="evren_response" className={labelClass}>
-                  Evren response <span className="text-red-500">*</span>
-                </label>
-                <textarea
-                  id="evren_response"
-                  rows={3}
-                  required
-                  value={evrenResponse}
-                  onChange={(e) => setEvrenResponse(e.target.value)}
-                  placeholder="What Evren actually replied"
-                  className={inputClass}
-                />
-              </div>
-              <div>
-                <label htmlFor="detected_flags" className={labelClass}>
-                  Detected flags <span className="text-red-500">*</span>
-                </label>
-                <input
-                  id="detected_flags"
-                  type="text"
-                  required
-                  value={detectedFlags}
-                  onChange={(e) => setDetectedFlags(e.target.value)}
-                  placeholder="e.g. emotional_distress_flag: true, emotional_intensity: 7.2"
-                  className={inputClass}
-                />
-              </div>
-            </div>
-          </section>
-
-          <section>
-            <h2 className="text-sm font-semibold uppercase tracking-wider text-stone-500 dark:text-stone-400">
               Options
             </h2>
             <div className="mt-4 space-y-4">
@@ -256,7 +242,7 @@ export default function EvaluateOnePage() {
                   type="text"
                   value={modelName}
                   onChange={(e) => setModelName(e.target.value)}
-                  placeholder="gemini-3-pro-preview"
+                  placeholder="gemini-1.5-pro"
                   className={inputClass}
                 />
               </div>
@@ -282,7 +268,7 @@ export default function EvaluateOnePage() {
               disabled={loading}
               className="rounded-lg bg-stone-800 px-4 py-2.5 text-sm font-medium text-white transition-colors hover:bg-stone-700 focus:outline-none focus:ring-2 focus:ring-stone-500 focus:ring-offset-2 disabled:opacity-50 disabled:pointer-events-none dark:bg-stone-200 dark:text-stone-900 dark:hover:bg-stone-300"
             >
-              {loading ? "Evaluating…" : "Evaluate"}
+              {loading ? "Calling Evren, then evaluating…" : "Evaluate"}
             </button>
           </div>
         </form>
@@ -316,7 +302,22 @@ export default function EvaluateOnePage() {
                   {result.success ? "Pass" : "Fail"}
                 </span>
               </div>
-              <p className="mt-1 text-xs text-stone-500 dark:text-stone-400">
+              {(result.evren_response != null && result.evren_response !== "") && (
+                <div className="mt-3 rounded-md bg-stone-100 dark:bg-stone-800/50 px-3 py-2">
+                  <p className="text-xs font-medium uppercase tracking-wider text-stone-500 dark:text-stone-400">
+                    Evren message
+                  </p>
+                  <p className="mt-1 text-sm text-stone-700 dark:text-stone-300 whitespace-pre-wrap">
+                    {result.evren_response}
+                  </p>
+                  {result.detected_flags != null && result.detected_flags !== "" && (
+                    <p className="mt-1.5 text-xs text-stone-500 dark:text-stone-400">
+                      Detected flags: {result.detected_flags}
+                    </p>
+                  )}
+                </div>
+              )}
+              <p className="mt-2 text-xs text-stone-500 dark:text-stone-400">
                 Score: {result.score} · Flags: {result.flags_detected || "—"}
               </p>
               {result.token_usage && (
