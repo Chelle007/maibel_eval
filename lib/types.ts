@@ -1,6 +1,7 @@
 /** Input test case (from sheet) for one evaluation. */
 export interface TestCase {
   test_case_id: string;
+  title?: string;
   input_message: string;
   img_url?: string;
   context?: string;

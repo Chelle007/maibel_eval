@@ -53,7 +53,7 @@ export async function POST(request: Request) {
         }).length;
         sendEvent(controller, "progress", { stage: "sheet", message: `Found ${total} test case(s).`, total });
 
-        const modelName = body.model_name ?? "gemini-1.5-pro";
+        const modelName = body.model_name ?? "gemini-2.5-flash";
         const systemPrompt = body.system_prompt ?? loadEvaluatorSystemPrompt();
         const results: EvaluationResult[] = [];
         let index = 0;

@@ -37,7 +37,7 @@ export async function POST(request: Request) {
     }
 
     const evrenOutput = await callEvrenApi(evrenModelApiUrl, testCase);
-    const modelName = body.model_name ?? "gemini-1.5-pro";
+    const modelName = body.model_name ?? "gemini-2.5-flash";
     const systemPrompt = body.system_prompt;
     const result = await evaluateOne(
       testCase,

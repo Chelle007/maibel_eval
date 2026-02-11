@@ -49,8 +49,8 @@ export async function fetchSheetRows(
   return rows.slice(0, limit);
 }
 
-/** Parse CSV string into array of row objects (first line = headers). */
-function parseCsvToRows(csv: string): SheetRow[] {
+/** Parse CSV string into array of row objects (first line = headers). Exported for CSV upload. */
+export function parseCsvToRows(csv: string): SheetRow[] {
   const raw = csv.replace(/^\uFEFF/, ""); // strip BOM if present
   const lines = raw.split(/\r?\n/).filter((line) => line.trim());
   if (lines.length < 2) return [];
@@ -97,6 +97,7 @@ function parseCsvLine(line: string): string[] {
  */
 export const DEFAULT_SHEET_COLUMNS = {
   test_case_id: "test_case_id",
+  title: "title",
   input_message: "input_message",
   img_url: "img_url",
   context: "context",
@@ -119,6 +120,7 @@ const HEADER_ALIASES: Partial<Record<string, keyof typeof DEFAULT_SHEET_COLUMNS>
   test_case_id: "test_case_id",
   id: "test_case_id",
   case_id: "test_case_id",
+  name: "title",
 };
 
 /** Get cell value from row by exact key or by normalized header match. */
@@ -143,6 +145,7 @@ export function sheetRowToTestCase(
 
   return {
     test_case_id: get("test_case_id"),
+    title: get("title") || undefined,
     input_message: get("input_message"),
     img_url: get("img_url") || undefined,
     context: get("context") || undefined,

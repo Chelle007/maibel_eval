@@ -20,6 +20,13 @@ export function loadEvaluatorSystemPrompt(): string {
   return content.replace(/\{base_system_prompt\}/g, base);
 }
 
+/** Load summarizer system prompt and inject base prompt. */
+export function loadSummarizerSystemPrompt(): string {
+  const content = readPrompt("summarizer_system_prompt.txt");
+  const base = loadBaseSystemPrompt();
+  return content.replace(/\{base_system_prompt\}/g, base);
+}
+
 /** Build the user message (INPUT DATA) for the evaluator from test case + Evren output. */
 export function buildEvaluatorUserMessage(testCase: TestCase, evrenOutput: EvrenOutput): string {
   const tc = testCase;
