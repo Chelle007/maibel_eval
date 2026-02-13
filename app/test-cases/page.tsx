@@ -298,18 +298,18 @@ export default function TestCasesPage() {
                 </option>
               ))}
             </select>
-            {!allFilteredSelected && (
-              <label className="flex cursor-pointer items-center gap-2 rounded-lg border border-stone-200 bg-stone-50/50 px-3 py-2 text-sm font-medium text-stone-700 hover:bg-stone-100">
-                <input
-                  ref={selectAllRef}
-                  type="checkbox"
-                  checked={allFilteredSelected}
-                  onChange={toggleSelectAll}
-                  className="h-4 w-4 rounded border-stone-300 text-stone-900 focus:ring-stone-400"
-                />
-                Select all {filteredList.length > 0 ? `(${filteredList.length})` : ""}
-              </label>
-            )}
+          {!allFilteredSelected && selectedIds.size === 0 && (
+            <label className="flex cursor-pointer items-center gap-2 rounded-lg border border-stone-200 bg-stone-50/50 px-3 py-2 text-sm font-medium text-stone-700 hover:bg-stone-100">
+              <input
+                ref={selectAllRef}
+                type="checkbox"
+                checked={allFilteredSelected}
+                onChange={toggleSelectAll}
+                className="h-4 w-4 rounded border-stone-300 text-stone-900 focus:ring-stone-400"
+              />
+              Select all {filteredList.length > 0 ? `(${filteredList.length})` : ""}
+            </label>
+          )}
             {selectedIds.size > 0 && (
               <button
                 type="button"
