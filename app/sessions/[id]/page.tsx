@@ -135,7 +135,7 @@ export default function SessionDetailPage() {
 
       <div className="mt-6 rounded-xl border border-stone-200 bg-white p-5 shadow-sm">
         <div className="flex items-center justify-between gap-2">
-          <label className="block text-sm font-medium text-stone-700">Session summary</label>
+          <h2 className="text-base font-semibold tracking-tight text-stone-900">Session summary</h2>
           {!editingSummary && (
             <button
               type="button"
@@ -176,7 +176,15 @@ export default function SessionDetailPage() {
             </div>
           </>
         ) : (
-          <div className="mt-1.5 min-h-[4rem] text-stone-700 [&_h1]:text-lg [&_h1]:font-semibold [&_h2]:text-base [&_h2]:font-semibold [&_h3]:mt-2 [&_h3]:text-sm [&_h3]:font-semibold [&_p]:mt-1 [&_p]:text-sm [&_ul]:mt-2 [&_ul]:list-disc [&_ul]:pl-5 [&_ol]:mt-2 [&_ol]:list-decimal [&_ol]:pl-5 [&_strong]:font-semibold">
+          <div className="mt-3 min-h-[4rem] text-stone-700 prose prose-stone max-w-none
+            [&_h1]:text-2xl [&_h1]:font-bold [&_h1]:tracking-tight [&_h1]:text-stone-900 [&_h1]:mt-0 [&_h1]:mb-1 [&_h1]:pb-3 [&_h1]:border-b [&_h1]:border-stone-200
+            [&_h2]:text-lg [&_h2]:font-semibold [&_h2]:tracking-tight [&_h2]:text-stone-900 [&_h2]:mt-6 [&_h2]:mb-2 [&_h2]:first:mt-4
+            [&_h3]:text-sm [&_h3]:font-semibold [&_h3]:text-stone-800 [&_h3]:mt-3 [&_h3]:mb-1
+            [&_p]:mt-1 [&_p]:text-sm [&_p]:leading-relaxed
+            [&_ul]:mt-2 [&_ul]:list-disc [&_ul]:pl-5 [&_ul]:space-y-0.5
+            [&_ol]:mt-2 [&_ol]:list-decimal [&_ol]:pl-5 [&_ol]:space-y-0.5
+            [&_strong]:font-semibold [&_strong]:text-stone-800
+            [&_hr]:my-4 [&_hr]:border-stone-200">
             {summary.trim() ? (
               <ReactMarkdown>{summary}</ReactMarkdown>
             ) : (

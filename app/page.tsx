@@ -1,11 +1,54 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { useRouter } from "next/navigation";
 
 const FALLBACK_EVREN_URL = "http://localhost:8000";
 const FALLBACK_EVALUATOR_MODEL = "gemini-2.5-flash";
 const FALLBACK_SUMMARIZER_MODEL = "gemini-2.5-flash";
+
+function playCompletionSound() {
+  try {
+    const ctx = new (window.AudioContext || (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext)();
+    const playTone = (freq: number, startTime: number, duration: number) => {
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.connect(gain);
+      gain.connect(ctx.destination);
+      osc.frequency.value = freq;
+      osc.type = "sine";
+      gain.gain.setValueAtTime(0.15, startTime);
+      gain.gain.exponentialRampToValueAtTime(0.01, startTime + duration);
+      osc.start(startTime);
+      osc.stop(startTime + duration);
+    };
+    playTone(523.25, 0, 0.15);
+    playTone(659.25, 0.2, 0.2);
+  } catch {
+    /* ignore if AudioContext not supported or blocked */
+  }
+}
+
+function showCompletionNotification() {
+  if (typeof window === "undefined" || !("Notification" in window)) return;
+  try {
+    if (Notification.permission === "granted") {
+      new Notification("Evaluation complete", {
+        body: "All test cases finished. Session ready to view.",
+        icon: "/favicon.ico",
+      });
+    }
+  } catch {
+    /* ignore notification errors */
+  }
+}
+
+function requestNotificationPermission() {
+  if (typeof window === "undefined" || !("Notification" in window)) return;
+  if (Notification.permission === "default") {
+    void Notification.requestPermission();
+  }
+}
 
 type Progress = {
   stage: string;
@@ -24,6 +67,7 @@ export default function Home() {
   const [error, setError] = useState<string | null>(null);
   const [progress, setProgress] = useState<Progress | null>(null);
   const [settingsLoaded, setSettingsLoaded] = useState(false);
+  const abortControllerRef = useRef<AbortController | null>(null);
 
   useEffect(() => {
     fetch("/api/default-settings")
@@ -37,11 +81,18 @@ export default function Home() {
       .finally(() => setSettingsLoaded(true));
   }, []);
 
+  function handleCancel() {
+    abortControllerRef.current?.abort();
+  }
+
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     setError(null);
     setProgress(null);
+    requestNotificationPermission();
     setLoading(true);
+    const controller = new AbortController();
+    abortControllerRef.current = controller;
     try {
       const res = await fetch("/api/evaluate/run/stream", {
         method: "POST",
@@ -51,6 +102,7 @@ export default function Home() {
           model_name: evaluatorModel || undefined,
           summarizer_model: summarizerModel || undefined,
         }),
+        signal: controller.signal,
       });
       if (!res.ok) {
         const data = await res.json().catch(() => ({}));
@@ -97,6 +149,8 @@ export default function Home() {
             } else if (data.type === "complete" && data.test_session_id) {
               setProgress(null);
               setLoading(false);
+              playCompletionSound();
+              showCompletionNotification();
               router.push(`/sessions/${data.test_session_id}`);
               return;
             } else if (data.type === "error" && data.error) {
@@ -109,10 +163,16 @@ export default function Home() {
         }
       }
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Something went wrong");
-      setProgress(null);
+      if (e instanceof Error && e.name === "AbortError") {
+        setProgress(null);
+        setError(null);
+      } else {
+        setError(e instanceof Error ? e.message : "Something went wrong");
+        setProgress(null);
+      }
     } finally {
       setLoading(false);
+      abortControllerRef.current = null;
     }
   }
 
@@ -178,13 +238,24 @@ export default function Home() {
             </div>
           </div>
         )}
-        <button
-          type="submit"
-          disabled={loading}
-          className="mt-6 rounded-lg bg-stone-900 px-4 py-2.5 text-sm font-medium text-white shadow-sm hover:bg-stone-800 disabled:opacity-50"
-        >
-          {loading ? "Running…" : "Run evaluation"}
-        </button>
+        <div className="mt-6 flex gap-3">
+          <button
+            type="submit"
+            disabled={loading}
+            className="rounded-lg bg-stone-900 px-4 py-2.5 text-sm font-medium text-white shadow-sm hover:bg-stone-800 disabled:opacity-50"
+          >
+            {loading ? "Running…" : "Run evaluation"}
+          </button>
+          {loading && (
+            <button
+              type="button"
+              onClick={handleCancel}
+              className="rounded-lg border border-stone-300 bg-white px-4 py-2.5 text-sm font-medium text-stone-700 shadow-sm hover:bg-stone-50"
+            >
+              Cancel
+            </button>
+          )}
+        </div>
       </form>
     </div>
   );
