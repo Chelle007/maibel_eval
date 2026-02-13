@@ -35,6 +35,16 @@ export async function POST(request: Request) {
       { status: 401, headers: { "Content-Type": "application/json" } }
     );
 
+  const { data: userRow } = await supabase.from("users").select("user_id").eq("user_id", userId).maybeSingle();
+  if (!userRow)
+    return new Response(
+      JSON.stringify({
+        error:
+          'User not found in database. test_sessions requires a valid user_id. If signed in, visit /api/auth/sync to create your user row; otherwise set DEFAULT_USER_ID to a UUID that exists in the users table.',
+      }),
+      { status: 400, headers: { "Content-Type": "application/json" } }
+    );
+
   let body: {
     evren_model_api_url: string;
     model_name?: string;

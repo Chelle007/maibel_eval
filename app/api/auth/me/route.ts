@@ -15,25 +15,23 @@ export async function GET() {
   }
 
   const admin = createAdminClient();
-  const table = "USERS";
-  const { data: appUser } = await (admin as any)
-    .from(table)
+  const { data: appUser } = await admin
+    .from("users")
     .select("user_id, email, full_name, is_owner")
     .eq("user_id", user.id)
     .maybeSingle();
 
   if (!appUser) {
-    const { data: existing } = await (admin as any).from(table).select("user_id").limit(1);
+    const { data: existing } = await admin.from("users").select("user_id").limit(1);
     const isFirstUser = !existing?.length;
-    await (admin as any).from(table).insert({
+    await admin.from("users").insert({
       user_id: user.id,
       email: user.email ?? user.id,
-      password_hash: "(password)",
       full_name: user.user_metadata?.full_name ?? user.user_metadata?.name ?? null,
       is_owner: isFirstUser,
     });
-    const { data: inserted } = await (admin as any)
-      .from(table)
+    const { data: inserted } = await admin
+      .from("users")
       .select("user_id, email, full_name, is_owner")
       .eq("user_id", user.id)
       .single();

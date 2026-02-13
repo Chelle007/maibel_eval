@@ -5,7 +5,7 @@ import { createAdminClient } from "@/lib/supabase/admin";
 /**
  * POST /api/auth/signup – create account (server-side to avoid CORS / "Failed to fetch").
  * Body: { email, password, full_name? }. Sets session cookies on success.
- * Also creates a row in users with password_hash set (hashed).
+ * Also creates a row in users.
  */
 export async function POST(request: NextRequest) {
   const response = NextResponse.json({ ok: true });
@@ -39,14 +39,21 @@ export async function POST(request: NextRequest) {
   }
 
   if (signUpData?.user) {
-    const admin = createAdminClient();
-    const { data: existing } = await (admin as any).from("users").select("user_id").limit(1);
+    let admin;
+    try {
+      admin = createAdminClient();
+    } catch (err) {
+      console.error("Signup: createAdminClient failed (is SUPABASE_SERVICE_ROLE_KEY set?)", err);
+      return NextResponse.json(
+        { error: "Server misconfiguration: missing SUPABASE_SERVICE_ROLE_KEY. Add it in .env.local from Supabase Dashboard → Settings → API. You can still sync this account via /api/auth/sync after logging in." },
+        { status: 500 }
+      );
+    }
+    const { data: existing } = await admin.from("users").select("user_id").limit(1);
     const isFirstUser = !existing?.length;
-    const passwordHash = await hashPassword(password);
-    const { error: insertError } = await (admin as any).from("users").insert({
+    const { error: insertError } = await admin.from("users").insert({
       user_id: signUpData.user.id,
       email,
-      password_hash: passwordHash,
       full_name: fullName,
       is_owner: isFirstUser,
     });
@@ -60,9 +67,4 @@ export async function POST(request: NextRequest) {
   }
 
   return response;
-}
-
-async function hashPassword(password: string): Promise<string> {
-  const { createHash } = await import("crypto");
-  return createHash("sha256").update(password).digest("hex");
 }

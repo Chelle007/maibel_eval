@@ -14,14 +14,13 @@ export async function GET(request: Request) {
       const { data: { user } } = await supabase.auth.getUser();
       if (user) {
         const admin = createAdminClient();
-        const table = "USERS";
+        const table = "users";
         const { data: existing } = await (admin as any).from(table).select("user_id").limit(1);
         const isFirstUser = !existing?.length;
         await (admin as any).from(table).upsert(
           {
             user_id: user.id,
             email: user.email ?? user.id,
-            password_hash: "(oauth)",
             full_name: user.user_metadata?.full_name ?? user.user_metadata?.name ?? null,
             is_owner: isFirstUser,
           },

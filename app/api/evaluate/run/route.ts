@@ -17,6 +17,17 @@ export async function POST(request: Request) {
   const userId = authUser?.id ?? process.env.DEFAULT_USER_ID;
   if (!userId) return NextResponse.json({ error: "Not logged in and no DEFAULT_USER_ID" }, { status: 401 });
 
+  const { data: userRow } = await supabase.from("users").select("user_id").eq("user_id", userId).maybeSingle();
+  if (!userRow) {
+    return NextResponse.json(
+      {
+        error:
+          'User not found in database. test_sessions requires a valid user_id. If signed in, visit /api/auth/sync to create your user row; otherwise set DEFAULT_USER_ID to a UUID that exists in the users table.',
+      },
+      { status: 400 }
+    );
+  }
+
   let body: { evren_model_api_url: string; model_name?: string; system_prompt?: string };
   try {
     body = await request.json();

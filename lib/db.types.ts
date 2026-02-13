@@ -11,7 +11,6 @@ export type Json = string | number | boolean | null | { [key: string]: Json | un
 export interface UsersRow {
   user_id: string;
   email: string;
-  password_hash: string;
   full_name: string | null;
   is_owner: boolean;
 }

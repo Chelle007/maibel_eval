@@ -15,7 +15,7 @@ export async function GET() {
   }
 
   const admin = createAdminClient();
-  const table = "USERS";
+  const table = "users";
 
   const { data: existing } = await (admin as any)
     .from(table)
@@ -37,14 +37,13 @@ export async function GET() {
   const { error: insertError } = await (admin as any).from(table).insert({
     user_id: user.id,
     email: user.email ?? user.id,
-    password_hash: "(password)",
     full_name: user.user_metadata?.full_name ?? user.user_metadata?.name ?? null,
     is_owner: isFirstUser,
   });
 
   if (insertError) {
     return NextResponse.json(
-      { error: insertError.message, hint: 'If "relation users does not exist", your table may be named "USERS" – sync route uses USERS.' },
+      { error: insertError.message },
       { status: 500 }
     );
   }

@@ -96,7 +96,7 @@ export function AddUserModal({ open, onClose, onSuccess }: Props) {
               onChange={(e) => setOwner(e.target.checked)}
               className="rounded border-stone-300"
             />
-            <span className="text-sm font-medium text-stone-700">Owner (can add users)</span>
+            <span className="text-sm font-medium text-stone-700">Owner</span>
           </label>
           {error && (
             <p className="text-sm text-red-600">{error}</p>

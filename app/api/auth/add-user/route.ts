@@ -12,9 +12,8 @@ export async function POST(request: Request) {
   if (!caller) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
   const admin = createAdminClient();
-  const table = "USERS";
-  const { data: appUser } = await (admin as any)
-    .from(table)
+  const { data: appUser } = await admin
+    .from("users")
     .select("is_owner")
     .eq("user_id", caller.id)
     .single();
@@ -29,6 +28,9 @@ export async function POST(request: Request) {
   const { email, password, full_name, is_owner } = body;
   if (!email?.trim() || !password) {
     return NextResponse.json({ error: "email and password required" }, { status: 400 });
+  }
+  if (password.length < 6) {
+    return NextResponse.json({ error: "Password must be at least 6 characters" }, { status: 400 });
   }
 
   const { data: newAuthUser, error: createError } = await admin.auth.admin.createUser({
@@ -45,16 +47,21 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "Failed to create user" }, { status: 500 });
   }
 
-  const { error: insertError } = await (admin as any).from(table).insert({
-    user_id: newAuthUser.user.id,
-    email: email.trim(),
-    password_hash: "(password)", // actual hash is in Supabase Auth
-    full_name: full_name?.trim() || null,
-    is_owner: !!is_owner,
-  });
+  // Upsert: trigger may have already inserted the row, so update instead of failing on duplicate key
+  const { error: upsertError } = await admin
+    .from("users")
+    .upsert(
+      {
+        user_id: newAuthUser.user.id,
+        email: email.trim(),
+        full_name: full_name?.trim() || null,
+        is_owner: !!is_owner,
+      },
+      { onConflict: "user_id" }
+    );
 
-  if (insertError) {
-    return NextResponse.json({ error: insertError.message }, { status: 500 });
+  if (upsertError) {
+    return NextResponse.json({ error: upsertError.message }, { status: 500 });
   }
 
   return NextResponse.json({ user_id: newAuthUser.user.id, email: email.trim() });
