@@ -55,7 +55,7 @@ export async function POST(request: Request) {
   }
   const { data, error } = await supabase
     .from("test_cases")
-    .insert(inserts)
+    .upsert(inserts, { onConflict: "test_case_id", ignoreDuplicates: false })
     .select();
   if (error) return NextResponse.json({ error: error.message }, { status: 500 });
   return NextResponse.json({ inserted: data?.length ?? 0, rows: data });

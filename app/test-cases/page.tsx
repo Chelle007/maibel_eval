@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import * as XLSX from "xlsx";
+import { parseXlsxToRows, sheetRowToTestCase } from "@/lib/sheet";
 
 type Category = { category_id: string; name: string };
 
@@ -49,6 +50,8 @@ export default function TestCasesPage() {
   const [categoryFilter, setCategoryFilter] = useState("");
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const selectAllRef = useRef<HTMLInputElement | null>(null);
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const [uploadOverwritePending, setUploadOverwritePending] = useState<{ buffer: ArrayBuffer; overwriteIds: string[] } | null>(null);
   const [form, setForm] = useState({
     test_case_id: "",
     title: "",
@@ -251,28 +254,68 @@ export default function TestCasesPage() {
       .catch((e) => setError(e instanceof Error ? e.message : String(e)));
   }
 
-  function handleUpload(e: React.ChangeEvent<HTMLInputElement>) {
-    const file = e.target.files?.[0];
-    if (!file) return;
+  function doUpload(buffer: ArrayBuffer) {
     setUploading(true);
-    setError(null);
-    file
-      .arrayBuffer()
-      .then((buffer) =>
-        fetch("/api/test-cases/upload", {
-          method: "POST",
-          headers: { "Content-Type": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" },
-          body: buffer,
-        })
-      )
-      .then((r) => r.json())
+    fetch("/api/test-cases/upload", {
+      method: "POST",
+      headers: { "Content-Type": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" },
+      body: buffer,
+    })
+      .then(async (r) => {
+        const text = await r.text();
+        if (!r.ok) {
+          try {
+            const data = JSON.parse(text);
+            throw new Error(data.error ?? `Upload failed: ${r.status}`);
+          } catch (err) {
+            if (err instanceof Error && err.message.startsWith("Upload failed:")) throw err;
+            throw new Error(text || `Upload failed: ${r.status}`);
+          }
+        }
+        return text ? JSON.parse(text) : {};
+      })
       .then((data) => {
         if (data.error) throw new Error(data.error);
         load();
-        e.target.value = "";
+        if (fileInputRef.current) fileInputRef.current.value = "";
       })
       .catch((err) => setError(err.message))
       .finally(() => setUploading(false));
+  }
+
+  function handleUpload(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setError(null);
+    file.arrayBuffer().then((buffer) => {
+      const rows = parseXlsxToRows(buffer);
+      const existingIds = new Set(list.map((tc) => tc.test_case_id));
+      const idsInFile = new Set(
+        rows
+          .map((row) => sheetRowToTestCase(row).test_case_id?.trim())
+          .filter((id): id is string => !!id)
+      );
+      const overwriteIds = [...idsInFile].filter((id) => existingIds.has(id));
+      if (overwriteIds.length > 0) {
+        setUploadOverwritePending({ buffer, overwriteIds });
+        e.target.value = "";
+        return;
+      }
+      doUpload(buffer);
+      e.target.value = "";
+    });
+  }
+
+  function confirmOverwriteUpload() {
+    if (!uploadOverwritePending) return;
+    const { buffer } = uploadOverwritePending;
+    setUploadOverwritePending(null);
+    doUpload(buffer);
+  }
+
+  function cancelOverwriteUpload() {
+    setUploadOverwritePending(null);
+    if (fileInputRef.current) fileInputRef.current.value = "";
   }
 
   return (
@@ -299,7 +342,7 @@ export default function TestCasesPage() {
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12" />
             </svg>
             {uploading ? "Uploading…" : "Upload XLSX"}
-            <input type="file" accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" className="hidden" onChange={handleUpload} disabled={uploading} />
+            <input ref={fileInputRef} type="file" accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" className="hidden" onChange={handleUpload} disabled={uploading} />
           </label>
           <button
             type="button"
@@ -321,6 +364,41 @@ setForm({ test_case_id: "", title: "", category_id: "", input_message: "", img_u
       {error && (
         <div className="mt-5 rounded-lg border border-red-200 bg-red-50 p-4 text-sm text-red-800">
           {error}
+        </div>
+      )}
+
+      {uploadOverwritePending && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4" role="dialog" aria-modal="true" aria-labelledby="overwrite-dialog-title">
+          <div className="fixed inset-0 bg-stone-900/50" aria-hidden onClick={cancelOverwriteUpload} />
+          <div className="relative z-10 w-full max-w-md rounded-xl border border-stone-200 bg-white p-6 shadow-xl">
+            <h2 id="overwrite-dialog-title" className="text-lg font-semibold text-stone-900">Overwrite test cases?</h2>
+            <p className="mt-2 text-sm text-stone-600">
+              {uploadOverwritePending.overwriteIds.length} test case(s) in this file already exist. Uploading will overwrite them with the data from the file.
+            </p>
+            {uploadOverwritePending.overwriteIds.length <= 10 ? (
+              <ul className="mt-3 max-h-32 list-inside list-disc overflow-y-auto rounded-lg bg-stone-50 px-3 py-2 text-sm font-mono text-stone-700">
+                {uploadOverwritePending.overwriteIds.map((id) => (
+                  <li key={id}>{id}</li>
+                ))}
+              </ul>
+            ) : null}
+            <div className="mt-6 flex justify-end gap-3">
+              <button
+                type="button"
+                onClick={cancelOverwriteUpload}
+                className="rounded-lg border border-stone-200 px-4 py-2 text-sm font-medium text-stone-700 hover:bg-stone-50"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={confirmOverwriteUpload}
+                className="rounded-lg bg-stone-900 px-4 py-2 text-sm font-medium text-white hover:bg-stone-800"
+              >
+                Overwrite and upload
+              </button>
+            </div>
+          </div>
         </div>
       )}
 
