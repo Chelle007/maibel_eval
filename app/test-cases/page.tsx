@@ -2,9 +2,12 @@
 
 import { useEffect, useState } from "react";
 
+type Category = { category_id: string; name: string };
+
 type TestCase = {
   test_case_id: string;
   title: string | null;
+  category_id: string | null;
   input_message: string;
   img_url: string | null;
   context: string | null;
@@ -24,9 +27,11 @@ export default function TestCasesPage() {
   const [showForm, setShowForm] = useState(false);
   const [editing, setEditing] = useState<TestCase | null>(null);
   const [uploading, setUploading] = useState(false);
+  const [categories, setCategories] = useState<Category[]>([]);
   const [form, setForm] = useState({
     test_case_id: "",
     title: "",
+    category_id: "",
     input_message: "",
     img_url: "",
     context: "",
@@ -47,7 +52,13 @@ export default function TestCasesPage() {
       .finally(() => setLoading(false));
   }
 
-  useEffect(() => { load(); }, []);
+  useEffect(() => {
+    load();
+    fetch("/api/categories")
+      .then((r) => r.json())
+      .then((data) => setCategories(Array.isArray(data) ? data : []))
+      .catch(() => setCategories([]));
+  }, []);
 
   function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -55,8 +66,8 @@ export default function TestCasesPage() {
     const url = editing ? `/api/test-cases/${editing.test_case_id}` : "/api/test-cases";
     const method = editing ? "PATCH" : "POST";
     const body = editing
-      ? { ...form, title: form.title || null, img_url: form.img_url || null, context: form.context || null, forbidden: form.forbidden || null }
-      : { ...form, test_case_id: form.test_case_id.trim(), title: form.title || null, img_url: form.img_url || null, context: form.context || null, forbidden: form.forbidden || null };
+      ? { ...form, title: form.title || null, category_id: form.category_id || null, img_url: form.img_url || null, context: form.context || null, forbidden: form.forbidden || null }
+      : { ...form, test_case_id: form.test_case_id.trim(), title: form.title || null, category_id: form.category_id || null, img_url: form.img_url || null, context: form.context || null, forbidden: form.forbidden || null };
     fetch(url, {
       method,
       headers: { "Content-Type": "application/json" },
@@ -67,7 +78,7 @@ export default function TestCasesPage() {
         if (data.error) throw new Error(data.error);
         setShowForm(false);
         setEditing(null);
-        setForm({ test_case_id: "", title: "", input_message: "", img_url: "", context: "", expected_flags: "", expected_behavior: "", forbidden: "" });
+        setForm({ test_case_id: "", title: "", category_id: "", input_message: "", img_url: "", context: "", expected_flags: "", expected_behavior: "", forbidden: "" });
         load();
       })
       .catch((e) => setError(e.message));
@@ -125,7 +136,7 @@ export default function TestCasesPage() {
             type="button"
             onClick={() => {
               setEditing(null);
-              setForm({ test_case_id: "", title: "", input_message: "", img_url: "", context: "", expected_flags: "", expected_behavior: "", forbidden: "" });
+              setForm({ test_case_id: "", title: "", category_id: "", input_message: "", img_url: "", context: "", expected_flags: "", expected_behavior: "", forbidden: "" });
               setShowForm(true);
             }}
             className="rounded-lg bg-stone-900 px-4 py-2.5 text-sm font-medium text-white shadow-sm transition hover:bg-stone-800"
@@ -167,6 +178,21 @@ export default function TestCasesPage() {
                 className={inputClass}
                 placeholder="Short description of the test case"
               />
+            </div>
+            <div>
+              <label className={labelClass}>Category</label>
+              <select
+                value={form.category_id}
+                onChange={(e) => setForm((f) => ({ ...f, category_id: e.target.value }))}
+                className={inputClass}
+              >
+                <option value="">No category</option>
+                {categories.map((c) => (
+                  <option key={c.category_id} value={c.category_id}>
+                    {c.name}
+                  </option>
+                ))}
+              </select>
             </div>
 
             <hr className="border-stone-200" />
@@ -222,7 +248,7 @@ export default function TestCasesPage() {
             <li key={tc.test_case_id} className="rounded-xl border border-stone-200 bg-white p-4 shadow-sm">
               <div className="flex items-start justify-between gap-3">
                 <div className="min-w-0 flex-1">
-                  <p className="font-mono text-xs text-stone-400">{tc.test_case_id}{tc.title ? ` · ${tc.title}` : ""}</p>
+                  <p className="font-mono text-xs text-stone-400">{tc.test_case_id}{tc.title ? ` · ${tc.title}` : ""}{tc.category_id ? ` · ${categories.find((c) => c.category_id === tc.category_id)?.name ?? "Category"}` : ""}</p>
                   <p className="mt-1 text-sm font-medium text-stone-800">{tc.input_message.slice(0, 120)}{tc.input_message.length > 120 ? "…" : ""}</p>
                   <p className="mt-1 text-xs text-stone-500">Expected: {tc.expected_flags} · {tc.expected_behavior}</p>
                 </div>
@@ -233,6 +259,7 @@ export default function TestCasesPage() {
                         setForm({
                         test_case_id: tc.test_case_id,
                         title: tc.title ?? "",
+                        category_id: tc.category_id ?? "",
                         input_message: tc.input_message,
                         img_url: tc.img_url ?? "",
                         context: tc.context ?? "",

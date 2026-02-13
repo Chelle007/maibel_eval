@@ -17,6 +17,7 @@ export async function POST(request: Request) {
   const {
     test_case_id,
     title,
+    category_id,
     input_message,
     img_url,
     context,
@@ -35,6 +36,7 @@ export async function POST(request: Request) {
     .insert({
       test_case_id: (test_case_id as string).trim(),
       title: title ?? null,
+      category_id: category_id && typeof category_id === "string" ? category_id : null,
       input_message,
       img_url: img_url ?? null,
       context: context ?? null,

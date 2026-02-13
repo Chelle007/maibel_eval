@@ -38,6 +38,7 @@ export async function POST(request: Request) {
   let body: {
     evren_model_api_url: string;
     model_name?: string;
+    summarizer_model?: string;
     system_prompt?: string;
   };
   try {
@@ -90,7 +91,17 @@ export async function POST(request: Request) {
   const testSessionId = sessionRow.test_session_id;
   const total = testCasesRows.length;
   const modelName = body.model_name ?? "gemini-2.5-flash";
-  const systemPrompt = body.system_prompt ?? loadEvaluatorSystemPrompt();
+  const summarizerModel = body.summarizer_model ?? modelName;
+
+  const { data: defaultSettings } = await supabase
+    .from("default_settings")
+    .select("evaluator_prompt, summarizer_prompt")
+    .limit(1)
+    .maybeSingle();
+  const systemPrompt =
+    (defaultSettings?.evaluator_prompt?.trim() || null) ?? body.system_prompt ?? loadEvaluatorSystemPrompt();
+  const summarizerPrompt =
+    (defaultSettings?.summarizer_prompt?.trim() || null) ?? loadSummarizerSystemPrompt();
 
   const stream = new ReadableStream<Uint8Array>({
     async start(controller) {
@@ -203,8 +214,8 @@ export async function POST(request: Request) {
           const summarizerResult = await runSummarizer(
             apiKey,
             richReports,
-            modelName,
-            loadSummarizerSystemPrompt()
+            summarizerModel,
+            summarizerPrompt
           );
           totalCostUsd += summarizerResult.cost_usd;
           summary = summarizerResult.summary;

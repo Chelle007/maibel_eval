@@ -18,13 +18,16 @@ CREATE TABLE users (
   updated_at    TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
--- User-editable categories (add/remove/rename via UI)
+-- User-editable categories (add/remove/rename via UI; soft delete via deleted_at)
 CREATE TABLE categories (
   category_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  name        TEXT NOT NULL UNIQUE,
+  name        TEXT NOT NULL,
+  deleted_at  TIMESTAMPTZ,
   created_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
   updated_at  TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+-- Unique name only for non-deleted rows (enforced in app or partial unique index)
+CREATE UNIQUE INDEX idx_categories_name_not_deleted ON categories (name) WHERE deleted_at IS NULL;
 
 -- test_case_id is a text identifier you supply (e.g. P0_001), not a UUID
 CREATE TABLE test_cases (

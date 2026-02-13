@@ -8,6 +8,7 @@ const links = [
   { href: "/", label: "Evaluate" },
   { href: "/test-cases", label: "Test cases" },
   { href: "/sessions", label: "Sessions" },
+  { href: "/settings", label: "Settings" },
   { href: "/archive/run-batch", label: "Archive" },
 ];
 

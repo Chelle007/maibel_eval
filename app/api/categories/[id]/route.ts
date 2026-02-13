@@ -1,34 +1,33 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 
+/** PATCH /api/categories/[id] — rename category. */
 export async function PATCH(
-  _request: Request,
+  request: Request,
   { params }: { params: Promise<{ id: string }> }
 ) {
   const { id } = await params;
   const supabase = await createClient();
-  const body = await _request.json() as Record<string, unknown>;
-  const allowed = [
-    "title", "category_id", "input_message", "img_url", "context",
-    "expected_flags", "expected_behavior", "forbidden",
-  ];
-  const updates: Record<string, unknown> = {};
-  for (const key of allowed) {
-    if (key in body) updates[key] = body[key];
+  let body: { name?: string };
+  try {
+    body = await request.json();
+  } catch {
+    return NextResponse.json({ error: "Invalid JSON" }, { status: 400 });
   }
-  if (Object.keys(updates).length === 0) {
-    return NextResponse.json({ error: "No fields to update" }, { status: 400 });
-  }
+  const name = typeof body.name === "string" ? body.name.trim() : "";
+  if (!name) return NextResponse.json({ error: "name required" }, { status: 400 });
   const { data, error } = await supabase
-    .from("test_cases")
-    .update(updates)
-    .eq("test_case_id", id)
-    .select()
+    .from("categories")
+    .update({ name })
+    .eq("category_id", id)
+    .is("deleted_at", null)
+    .select("category_id, name")
     .single();
   if (error) return NextResponse.json({ error: error.message }, { status: 500 });
   return NextResponse.json(data);
 }
 
+/** DELETE /api/categories/[id] — soft delete (set deleted_at). */
 export async function DELETE(
   _request: Request,
   { params }: { params: Promise<{ id: string }> }
@@ -36,9 +35,9 @@ export async function DELETE(
   const { id } = await params;
   const supabase = await createClient();
   const { error } = await supabase
-    .from("test_cases")
-    .delete()
-    .eq("test_case_id", id);
+    .from("categories")
+    .update({ deleted_at: new Date().toISOString() })
+    .eq("category_id", id);
   if (error) return NextResponse.json({ error: error.message }, { status: 500 });
   return NextResponse.json({ ok: true });
 }

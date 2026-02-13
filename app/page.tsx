@@ -4,7 +4,8 @@ import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
 
 const FALLBACK_EVREN_URL = "http://localhost:8000";
-const FALLBACK_MODEL = "gemini-2.5-flash";
+const FALLBACK_EVALUATOR_MODEL = "gemini-2.5-flash";
+const FALLBACK_SUMMARIZER_MODEL = "gemini-2.5-flash";
 
 type Progress = {
   stage: string;
@@ -17,7 +18,8 @@ type Progress = {
 export default function Home() {
   const router = useRouter();
   const [evrenUrl, setEvrenUrl] = useState(FALLBACK_EVREN_URL);
-  const [modelName, setModelName] = useState(FALLBACK_MODEL);
+  const [evaluatorModel, setEvaluatorModel] = useState(FALLBACK_EVALUATOR_MODEL);
+  const [summarizerModel, setSummarizerModel] = useState(FALLBACK_SUMMARIZER_MODEL);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [progress, setProgress] = useState<Progress | null>(null);
@@ -28,12 +30,9 @@ export default function Home() {
       .then((r) => r.json())
       .then((data) => {
         if (data.error) return;
-        if (data.evren_api_url != null && data.evren_api_url !== "") {
-          setEvrenUrl(data.evren_api_url);
-        }
-        if (data.evaluator_model != null && data.evaluator_model !== "") {
-          setModelName(data.evaluator_model);
-        }
+        setEvrenUrl(data.evren_api_url ?? FALLBACK_EVREN_URL);
+        setEvaluatorModel(data.evaluator_model ?? FALLBACK_EVALUATOR_MODEL);
+        setSummarizerModel(data.summarizer_model ?? FALLBACK_SUMMARIZER_MODEL);
       })
       .finally(() => setSettingsLoaded(true));
   }, []);
@@ -49,7 +48,8 @@ export default function Home() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           evren_model_api_url: evrenUrl.trim(),
-          model_name: modelName || undefined,
+          model_name: evaluatorModel || undefined,
+          summarizer_model: summarizerModel || undefined,
         }),
       });
       if (!res.ok) {
@@ -135,11 +135,21 @@ export default function Home() {
           />
         </div>
         <div className="mt-4">
-          <label className="block text-sm font-medium text-stone-700">Gemini model</label>
+          <label className="block text-sm font-medium text-stone-700">Evaluator model</label>
           <input
             type="text"
-            value={modelName}
-            onChange={(e) => setModelName(e.target.value)}
+            value={evaluatorModel}
+            onChange={(e) => setEvaluatorModel(e.target.value)}
+            placeholder="gemini-2.5-flash"
+            className="mt-1.5 block w-full rounded-lg border border-stone-200 bg-white px-3 py-2.5 text-stone-900 placeholder:text-stone-400 focus:border-stone-400 focus:outline-none focus:ring-1 focus:ring-stone-400"
+          />
+        </div>
+        <div className="mt-4">
+          <label className="block text-sm font-medium text-stone-700">Summarizer model</label>
+          <input
+            type="text"
+            value={summarizerModel}
+            onChange={(e) => setSummarizerModel(e.target.value)}
             placeholder="gemini-2.5-flash"
             className="mt-1.5 block w-full rounded-lg border border-stone-200 bg-white px-3 py-2.5 text-stone-900 placeholder:text-stone-400 focus:border-stone-400 focus:outline-none focus:ring-1 focus:ring-stone-400"
           />
