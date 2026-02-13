@@ -1,6 +1,15 @@
 -- Run this in Supabase SQL Editor to fix "new row violates row-level security policy".
 -- Adds policies and grants so authenticated (logged-in) users can use test_cases, etc.
 
+-- categories
+CREATE POLICY "Categories: authenticated all"
+  ON categories FOR ALL
+  TO authenticated
+  USING (true)
+  WITH CHECK (true);
+
+GRANT SELECT, INSERT, UPDATE, DELETE ON categories TO authenticated;
+
 -- test_cases
 CREATE POLICY "Test cases: authenticated all"
   ON test_cases FOR ALL

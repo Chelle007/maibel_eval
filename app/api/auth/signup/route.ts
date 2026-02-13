@@ -48,7 +48,7 @@ export async function POST(request: NextRequest) {
       email,
       password_hash: passwordHash,
       full_name: fullName,
-      owner: isFirstUser,
+      is_owner: isFirstUser,
     });
     if (insertError) {
       console.error("Signup: failed to create users row", insertError);

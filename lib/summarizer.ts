@@ -13,7 +13,7 @@ export interface RichTestCaseReport {
   };
   results: {
     evren_response: string;
-    detected_flags: string;
+    detected_states: string;
   };
   evaluator_verdict: {
     success: boolean;
@@ -37,7 +37,7 @@ export function buildRichReport(
     },
     results: {
       evren_response: evrenOutput.evren_response,
-      detected_flags: evrenOutput.detected_flags,
+      detected_states: evrenOutput.detected_states,
     },
     evaluator_verdict: {
       success: evalResult.success,

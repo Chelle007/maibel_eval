@@ -3,7 +3,7 @@ import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 
 /**
- * POST /api/auth/add-user – owner only. Body: { email, password, full_name, owner }.
+ * POST /api/auth/add-user – owner only. Body: { email, password, full_name, is_owner }.
  * Creates Supabase Auth user and USERS row.
  */
 export async function POST(request: Request) {
@@ -15,18 +15,18 @@ export async function POST(request: Request) {
   const table = "USERS";
   const { data: appUser } = await (admin as any)
     .from(table)
-    .select("owner")
+    .select("is_owner")
     .eq("user_id", caller.id)
     .single();
-  if (!appUser?.owner) return NextResponse.json({ error: "Forbidden: owner only" }, { status: 403 });
+  if (!appUser?.is_owner) return NextResponse.json({ error: "Forbidden: owner only" }, { status: 403 });
 
-  let body: { email: string; password: string; full_name: string; owner: boolean };
+  let body: { email: string; password: string; full_name: string; is_owner: boolean };
   try {
     body = await request.json();
   } catch {
     return NextResponse.json({ error: "Invalid JSON" }, { status: 400 });
   }
-  const { email, password, full_name, owner } = body;
+  const { email, password, full_name, is_owner } = body;
   if (!email?.trim() || !password) {
     return NextResponse.json({ error: "email and password required" }, { status: 400 });
   }
@@ -50,7 +50,7 @@ export async function POST(request: Request) {
     email: email.trim(),
     password_hash: "(password)", // actual hash is in Supabase Auth
     full_name: full_name?.trim() || null,
-    owner: !!owner,
+    is_owner: !!is_owner,
   });
 
   if (insertError) {

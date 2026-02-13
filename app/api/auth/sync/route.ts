@@ -19,7 +19,7 @@ export async function GET() {
 
   const { data: existing } = await (admin as any)
     .from(table)
-    .select("user_id, email, full_name, owner")
+    .select("user_id, email, full_name, is_owner")
     .eq("user_id", user.id)
     .maybeSingle();
 
@@ -39,7 +39,7 @@ export async function GET() {
     email: user.email ?? user.id,
     password_hash: "(password)",
     full_name: user.user_metadata?.full_name ?? user.user_metadata?.name ?? null,
-    owner: isFirstUser,
+    is_owner: isFirstUser,
   });
 
   if (insertError) {
@@ -51,7 +51,7 @@ export async function GET() {
 
   const { data: inserted } = await (admin as any)
     .from(table)
-    .select("user_id, email, full_name, owner")
+    .select("user_id, email, full_name, is_owner")
     .eq("user_id", user.id)
     .single();
 

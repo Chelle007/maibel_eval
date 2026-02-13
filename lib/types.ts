@@ -13,7 +13,7 @@ export interface TestCase {
 /** Evren model output for one test case. */
 export interface EvrenOutput {
   evren_response: string;
-  detected_flags: string;
+  detected_states: string;
 }
 
 /** Payload sent to the evaluator: one test case + Evren's output. */

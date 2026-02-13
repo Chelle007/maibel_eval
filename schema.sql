@@ -13,26 +13,43 @@ CREATE TABLE users (
   email         TEXT NOT NULL UNIQUE,
   password_hash TEXT NOT NULL,
   full_name     TEXT,
-  owner         BOOLEAN NOT NULL DEFAULT FALSE
+  is_owner      BOOLEAN NOT NULL DEFAULT FALSE,
+  created_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at    TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+-- User-editable categories (add/remove/rename via UI)
+CREATE TABLE categories (
+  category_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  name        TEXT NOT NULL UNIQUE,
+  created_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at  TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
 -- test_case_id is a text identifier you supply (e.g. P0_001), not a UUID
 CREATE TABLE test_cases (
   test_case_id      TEXT PRIMARY KEY,
   title             TEXT,
+  category_id       UUID REFERENCES categories(category_id) ON DELETE SET NULL,
   input_message     TEXT NOT NULL,
   img_url           TEXT,
   context           TEXT,
   expected_flags    TEXT NOT NULL,
   expected_behavior TEXT NOT NULL,
-  forbidden         TEXT
+  forbidden         TEXT,
+  is_enabled        BOOLEAN NOT NULL DEFAULT TRUE,
+  notes             TEXT,
+  created_at        TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at        TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
 CREATE TABLE evren_responses (
   evren_response_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   test_case_id      TEXT NOT NULL REFERENCES test_cases(test_case_id) ON DELETE CASCADE,
   evren_response    TEXT NOT NULL,
-  detected_flags    TEXT
+  detected_states   TEXT,
+  created_at        TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at        TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
 CREATE TABLE test_sessions (
@@ -40,7 +57,9 @@ CREATE TABLE test_sessions (
   user_id         UUID NOT NULL REFERENCES users(user_id) ON DELETE CASCADE,
   total_cost_usd  DOUBLE PRECISION,
   summary         TEXT,
-  manually_edited BOOLEAN NOT NULL DEFAULT FALSE
+  manually_edited BOOLEAN NOT NULL DEFAULT FALSE,
+  created_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at      TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
 CREATE TABLE eval_results (
@@ -55,7 +74,9 @@ CREATE TABLE eval_results (
   completion_tokens  INTEGER,
   total_tokens       INTEGER,
   cost_usd           DOUBLE PRECISION,
-  manually_edited    BOOLEAN NOT NULL DEFAULT FALSE
+  manually_edited    BOOLEAN NOT NULL DEFAULT FALSE,
+  created_at         TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at         TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
 CREATE TABLE default_settings (
@@ -64,8 +85,37 @@ CREATE TABLE default_settings (
   evaluator_model    TEXT,
   evaluator_prompt   TEXT,
   summarizer_model   TEXT,
-  summarizer_prompt  TEXT
+  summarizer_prompt  TEXT,
+  created_at         TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at         TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+
+-- =============================================================================
+-- TRIGGERS (auto-update updated_at)
+-- =============================================================================
+
+CREATE OR REPLACE FUNCTION set_updated_at()
+RETURNS TRIGGER AS $$
+BEGIN
+  NEW.updated_at = now();
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE TRIGGER users_updated_at
+  BEFORE UPDATE ON users FOR EACH ROW EXECUTE FUNCTION set_updated_at();
+CREATE TRIGGER categories_updated_at
+  BEFORE UPDATE ON categories FOR EACH ROW EXECUTE FUNCTION set_updated_at();
+CREATE TRIGGER test_cases_updated_at
+  BEFORE UPDATE ON test_cases FOR EACH ROW EXECUTE FUNCTION set_updated_at();
+CREATE TRIGGER evren_responses_updated_at
+  BEFORE UPDATE ON evren_responses FOR EACH ROW EXECUTE FUNCTION set_updated_at();
+CREATE TRIGGER test_sessions_updated_at
+  BEFORE UPDATE ON test_sessions FOR EACH ROW EXECUTE FUNCTION set_updated_at();
+CREATE TRIGGER eval_results_updated_at
+  BEFORE UPDATE ON eval_results FOR EACH ROW EXECUTE FUNCTION set_updated_at();
+CREATE TRIGGER default_settings_updated_at
+  BEFORE UPDATE ON default_settings FOR EACH ROW EXECUTE FUNCTION set_updated_at();
 
 -- =============================================================================
 -- INDEXES (optional, for common lookups)
@@ -75,12 +125,14 @@ CREATE INDEX idx_test_sessions_user_id ON test_sessions(user_id);
 CREATE INDEX idx_eval_results_test_session_id ON eval_results(test_session_id);
 CREATE INDEX idx_eval_results_test_case_id ON eval_results(test_case_id);
 CREATE INDEX idx_evren_responses_test_case_id ON evren_responses(test_case_id);
+CREATE INDEX idx_test_cases_category_id ON test_cases(category_id);
 
 -- =============================================================================
 -- ROW LEVEL SECURITY (Supabase)
 -- =============================================================================
 
 ALTER TABLE users ENABLE ROW LEVEL SECURITY;
+ALTER TABLE categories ENABLE ROW LEVEL SECURITY;
 ALTER TABLE test_sessions ENABLE ROW LEVEL SECURITY;
 ALTER TABLE eval_results ENABLE ROW LEVEL SECURITY;
 ALTER TABLE test_cases ENABLE ROW LEVEL SECURITY;
@@ -109,8 +161,20 @@ CREATE POLICY "Users: authenticated delete"
 CREATE POLICY "Users: authenticated insert only owner"
   ON users FOR INSERT TO authenticated
   WITH CHECK (
-    (SELECT owner FROM users WHERE user_id = auth.uid()) = true
+    (SELECT is_owner FROM users WHERE user_id = auth.uid()) = true
   );
+
+CREATE POLICY "Categories: service_role all"
+  ON categories FOR ALL
+  TO service_role
+  USING (true)
+  WITH CHECK (true);
+
+CREATE POLICY "Categories: authenticated all"
+  ON categories FOR ALL
+  TO authenticated
+  USING (true)
+  WITH CHECK (true);
 
 CREATE POLICY "Test cases: service_role all"
   ON test_cases FOR ALL
@@ -187,6 +251,7 @@ GRANT USAGE ON SCHEMA public TO anon, authenticated, service_role;
 GRANT SELECT, INSERT, UPDATE, DELETE ON users TO service_role;
 GRANT SELECT, UPDATE, DELETE ON users TO authenticated;
 GRANT INSERT ON users TO authenticated;  -- RLS restricts to owner only
+GRANT SELECT, INSERT, UPDATE, DELETE ON categories TO service_role, authenticated;
 GRANT SELECT, INSERT, UPDATE, DELETE ON test_cases TO service_role, authenticated;
 GRANT SELECT, INSERT, UPDATE, DELETE ON evren_responses TO service_role, authenticated;
 GRANT SELECT, INSERT, UPDATE, DELETE ON test_sessions TO service_role, authenticated;

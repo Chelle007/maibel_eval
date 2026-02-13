@@ -28,7 +28,7 @@ export function AddUserModal({ open, onClose, onSuccess }: Props) {
           email: email.trim(),
           password,
           full_name: fullName.trim() || null,
-          owner,
+          is_owner: owner,
         }),
       });
       const data = await res.json();

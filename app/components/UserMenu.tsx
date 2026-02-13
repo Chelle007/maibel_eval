@@ -8,7 +8,7 @@ type AppUser = {
   user_id: string;
   email: string | null;
   full_name: string | null;
-  owner: boolean;
+  is_owner: boolean;
 } | null;
 
 export function UserMenu() {
@@ -75,7 +75,7 @@ export function UserMenu() {
               <p className="truncate text-xs text-stone-500">{appUser?.email ?? user?.email}</p>
             )}
           </div>
-          {appUser?.owner && (
+          {appUser?.is_owner && (
             <button
               type="button"
               onClick={() => {

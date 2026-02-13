@@ -45,7 +45,7 @@ export function buildEvaluatorUserMessage(testCase: TestCase, evrenOutput: Evren
   sections.push("");
   sections.push("=== EVREN OUTPUT ===");
   sections.push(`Evren response: ${out.evren_response}`);
-  sections.push(`Detected flags: ${out.detected_flags}`);
+  sections.push(`Detected states: ${out.detected_states}`);
 
   return sections.join("\n");
 }

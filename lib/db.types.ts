@@ -13,7 +13,7 @@ export interface UsersRow {
   email: string;
   password_hash: string;
   full_name: string | null;
-  owner: boolean;
+  is_owner: boolean;
 }
 
 export interface TestSessionsRow {
@@ -48,13 +48,14 @@ export interface TestCasesRow {
   expected_flags: string;
   expected_behavior: string;
   forbidden: string | null;
+  notes: string | null;
 }
 
 export interface EvrenResponsesRow {
   evren_response_id: string;
   test_case_id: string;
   evren_response: string;
-  detected_flags: string;
+  detected_states: string | null;
 }
 
 export interface DefaultSettingsRow {

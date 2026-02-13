@@ -70,7 +70,7 @@ export async function POST(request: Request) {
       .insert({
         test_case_id: row.test_case_id,
         evren_response: evrenOutput.evren_response,
-        detected_flags: evrenOutput.detected_flags,
+        detected_states: evrenOutput.detected_states,
       })
       .select("evren_response_id")
       .single();

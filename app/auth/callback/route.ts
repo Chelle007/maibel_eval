@@ -23,7 +23,7 @@ export async function GET(request: Request) {
             email: user.email ?? user.id,
             password_hash: "(oauth)",
             full_name: user.user_metadata?.full_name ?? user.user_metadata?.name ?? null,
-            owner: isFirstUser,
+            is_owner: isFirstUser,
           },
           { onConflict: "user_id" }
         );

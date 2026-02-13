@@ -49,7 +49,7 @@ export async function POST(request: Request) {
     return NextResponse.json({
       ...result,
       evren_response: evrenOutput.evren_response,
-      detected_flags: evrenOutput.detected_flags,
+      detected_states: evrenOutput.detected_states,
     });
   } catch (err) {
     console.error("Evaluate-one API error:", err);

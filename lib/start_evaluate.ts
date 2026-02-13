@@ -7,7 +7,7 @@ import type { EvaluationResult, TestCase } from "./types";
 export interface StartEvaluateParams {
   /** System prompt for evaluator (and later summarizer). If omitted, loads evaluator prompt from content/prompts. */
   systemPrompt?: string;
-  /** Evren model API base URL (POST with test case input, returns evren_response + detected_flags). */
+  /** Evren model API base URL (POST with test case input, returns evren_response + detected_flags; we store as detected_states). */
   evrenModelApiUrl: string;
   /** Google Sheet link (must be published to web or publicly viewable for CSV export). */
   googleSheetLink: string;

@@ -15,7 +15,7 @@ function evrenEndpoint(input: string): string {
 
 /**
  * Call Evren model API: POST /evren with input_message, optional img_url and context.
- * Returns evren_response and detected_flags.
+ * Returns evren_response and detected_states (from API's detected_flags).
  *
  * Example: if Evren is running at http://localhost:8000 (uvicorn main:app --reload --host 0.0.0.0 --port 8000),
  * pass evrenModelApiUrl = "http://localhost:8000" and we request POST http://localhost:8000/evren.
@@ -58,6 +58,6 @@ export async function callEvrenApi(
   const data = (await res.json()) as Record<string, unknown>;
   return {
     evren_response: String(data.evren_response ?? ""),
-    detected_flags: String(data.detected_flags ?? ""),
+    detected_states: String(data.detected_flags ?? ""),
   };
 }

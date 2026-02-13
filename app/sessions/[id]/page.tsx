@@ -27,7 +27,7 @@ type EvalResult = {
   cost_usd: number | null;
   manually_edited: boolean;
   test_cases?: { input_message: string; expected_flags: string; expected_behavior: string } | null;
-  evren_responses?: { evren_response: string; detected_flags: string } | { evren_response: string; detected_flags: string }[] | null;
+  evren_responses?: { evren_response: string; detected_states: string | null } | { evren_response: string; detected_states: string | null }[] | null;
 };
 
 export default function SessionDetailPage() {

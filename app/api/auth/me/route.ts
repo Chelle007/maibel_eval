@@ -3,7 +3,7 @@ import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 
 /**
- * GET /api/auth/me – current user and USERS row (includes owner).
+ * GET /api/auth/me – current user and USERS row (includes is_owner).
  * Syncs auth user to USERS if missing (e.g. first Google login).
  */
 export async function GET() {
@@ -18,7 +18,7 @@ export async function GET() {
   const table = "USERS";
   const { data: appUser } = await (admin as any)
     .from(table)
-    .select("user_id, email, full_name, owner")
+    .select("user_id, email, full_name, is_owner")
     .eq("user_id", user.id)
     .maybeSingle();
 
@@ -30,21 +30,21 @@ export async function GET() {
       email: user.email ?? user.id,
       password_hash: "(password)",
       full_name: user.user_metadata?.full_name ?? user.user_metadata?.name ?? null,
-      owner: isFirstUser,
+      is_owner: isFirstUser,
     });
     const { data: inserted } = await (admin as any)
       .from(table)
-      .select("user_id, email, full_name, owner")
+      .select("user_id, email, full_name, is_owner")
       .eq("user_id", user.id)
       .single();
     return NextResponse.json({
       user: { id: user.id, email: user.email },
-      appUser: inserted ?? { user_id: user.id, email: user.email, full_name: null, owner: false },
+      appUser: inserted ?? { user_id: user.id, email: user.email, full_name: null, is_owner: false },
     });
   }
 
   return NextResponse.json({
     user: { id: user.id, email: user.email },
-    appUser: { user_id: appUser.user_id, email: appUser.email, full_name: appUser.full_name, owner: appUser.owner },
+    appUser: { user_id: appUser.user_id, email: appUser.email, full_name: appUser.full_name, is_owner: appUser.is_owner },
   });
 }
