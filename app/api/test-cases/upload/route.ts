@@ -23,7 +23,7 @@ export async function POST(request: Request) {
     input_message: string;
     img_url: string | null;
     context: string | null;
-    expected_states: string;
+    expected_state: string;
     expected_behavior: string;
     forbidden: string | null;
   }> = [];
@@ -41,7 +41,7 @@ export async function POST(request: Request) {
       input_message: tc.input_message,
       img_url: tc.img_url ?? null,
       context: tc.context ?? null,
-      expected_states: tc.expected_states ?? "",
+      expected_state: tc.expected_state ?? "",
       expected_behavior: tc.expected_behavior ?? "",
       forbidden: tc.forbidden ?? null,
     });

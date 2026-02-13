@@ -122,7 +122,7 @@ export const DEFAULT_SHEET_COLUMNS = {
   input_message: "input_message",
   img_url: "img_url",
   context: "context",
-  expected_states: "expected_states",
+  expected_state: "expected_state",
   expected_behavior: "expected_behavior",
   forbidden: "forbidden",
 } as const;
@@ -171,7 +171,7 @@ export function sheetRowToTestCase(
     input_message: get("input_message"),
     img_url: get("img_url") || undefined,
     context: get("context") || undefined,
-    expected_states: get("expected_states"),
+    expected_state: get("expected_state"),
     expected_behavior: get("expected_behavior"),
     forbidden: get("forbidden") || undefined,
     category: get("category") || undefined,

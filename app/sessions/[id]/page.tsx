@@ -26,7 +26,7 @@ type EvalResult = {
   total_tokens: number | null;
   cost_usd: number | null;
   manually_edited: boolean;
-  test_cases?: { input_message: string; expected_states: string; expected_behavior: string } | null;
+  test_cases?: { input_message: string; expected_state: string; expected_behavior: string } | null;
   evren_responses?: { evren_response: string; detected_states: string | null } | { evren_response: string; detected_states: string | null }[] | null;
 };
 

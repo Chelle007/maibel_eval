@@ -45,7 +45,7 @@ export interface TestCasesRow {
   input_message: string;
   img_url: string | null;
   context: string | null;
-  expected_states: string;
+  expected_state: string;
   expected_behavior: string;
   forbidden: string | null;
   notes: string | null;

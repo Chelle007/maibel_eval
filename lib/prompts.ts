@@ -38,7 +38,7 @@ export function buildEvaluatorUserMessage(testCase: TestCase, evrenOutput: Evren
   sections.push(`Input message: ${tc.input_message}`);
   if (tc.img_url) sections.push(`Img url: ${tc.img_url}`);
   if (tc.context) sections.push(`Context: ${tc.context}`);
-  sections.push(`Expected states: ${tc.expected_states}`);
+  sections.push(`Expected states: ${tc.expected_state}`);
   sections.push(`Expected behavior: ${tc.expected_behavior}`);
   if (tc.forbidden) sections.push(`Forbidden: ${tc.forbidden}`);
 

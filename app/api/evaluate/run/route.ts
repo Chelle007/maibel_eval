@@ -60,7 +60,7 @@ export async function POST(request: Request) {
       input_message: row.input_message,
       img_url: row.img_url ?? undefined,
       context: row.context ?? undefined,
-      expected_states: row.expected_states ?? "",
+      expected_state: row.expected_state ?? "",
       expected_behavior: row.expected_behavior ?? "",
       forbidden: row.forbidden ?? undefined,
     };

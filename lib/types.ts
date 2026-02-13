@@ -5,7 +5,7 @@ export interface TestCase {
   input_message: string;
   img_url?: string;
   context?: string;
-  expected_states: string;
+  expected_state: string;
   expected_behavior: string;
   forbidden?: string;
   /** Category name from sheet (used on upload to resolve to category_id). */

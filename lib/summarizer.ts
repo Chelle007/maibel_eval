@@ -9,7 +9,7 @@ export interface RichTestCaseReport {
     input: string;
     expected_behavior: string;
     forbidden?: string;
-    expected_states: string;
+    expected_state: string;
   };
   results: {
     evren_response: string;
@@ -33,7 +33,7 @@ export function buildRichReport(
       input: testCase.input_message,
       expected_behavior: testCase.expected_behavior,
       ...(testCase.forbidden && { forbidden: testCase.forbidden }),
-      expected_states: testCase.expected_states,
+      expected_state: testCase.expected_state,
     },
     results: {
       evren_response: evrenOutput.evren_response,

@@ -11,7 +11,7 @@ type TestCase = {
   input_message: string;
   img_url: string | null;
   context: string | null;
-  expected_states: string;
+  expected_state: string;
   expected_behavior: string;
   forbidden: string | null;
   is_enabled?: boolean;
@@ -28,7 +28,7 @@ function matchSearch(tc: TestCase, q: string): boolean {
     tc.test_case_id,
     tc.title ?? "",
     tc.input_message,
-    tc.expected_states,
+    tc.expected_state,
     tc.expected_behavior,
     tc.forbidden ?? "",
   ].map((s) => s.toLowerCase());
@@ -54,7 +54,7 @@ export default function TestCasesPage() {
     input_message: "",
     img_url: "",
     context: "",
-    expected_states: "",
+    expected_state: "",
     expected_behavior: "",
     forbidden: "",
     is_enabled: true,
@@ -136,7 +136,7 @@ export default function TestCasesPage() {
         if (data.error) throw new Error(data.error);
         setShowForm(false);
         setEditing(null);
-        setForm({ test_case_id: "", title: "", category_id: "", input_message: "", img_url: "", context: "", expected_states: "", expected_behavior: "", forbidden: "", is_enabled: true });
+        setForm({ test_case_id: "", title: "", category_id: "", input_message: "", img_url: "", context: "", expected_state: "", expected_behavior: "", forbidden: "", is_enabled: true });
         load();
       })
       .catch((e) => setError(e.message));
@@ -253,7 +253,7 @@ export default function TestCasesPage() {
             type="button"
             onClick={() => {
               setEditing(null);
-              setForm({ test_case_id: "", title: "", category_id: "", input_message: "", img_url: "", context: "", expected_states: "", expected_behavior: "", forbidden: "", is_enabled: true });
+              setForm({ test_case_id: "", title: "", category_id: "", input_message: "", img_url: "", context: "", expected_state: "", expected_behavior: "", forbidden: "", is_enabled: true });
               setShowForm(true);
             }}
             className="rounded-lg bg-stone-900 px-4 py-2.5 text-sm font-medium text-white shadow-sm transition hover:bg-stone-800"
@@ -422,7 +422,7 @@ export default function TestCasesPage() {
 
             <div>
               <label className={labelClass}>Expected states *</label>
-              <textarea rows={3} required value={form.expected_states} onChange={(e) => setForm((f) => ({ ...f, expected_states: e.target.value }))} className={inputClass} />
+              <textarea rows={3} required value={form.expected_state} onChange={(e) => setForm((f) => ({ ...f, expected_state: e.target.value }))} className={inputClass} />
             </div>
             <div>
               <label className={labelClass}>Expected behavior *</label>
@@ -480,7 +480,7 @@ export default function TestCasesPage() {
                     <span>{tc.test_case_id}{tc.title ? ` · ${tc.title}` : ""}</span>
                   </p>
                   <p className="mt-1 text-sm font-medium text-stone-800">{tc.input_message.slice(0, 120)}{tc.input_message.length > 120 ? "…" : ""}</p>
-                  <p className="mt-1 text-xs text-stone-500">Expected: {tc.expected_states} | {tc.expected_behavior}</p>
+                  <p className="mt-1 text-xs text-stone-500">Expected: {tc.expected_state} | {tc.expected_behavior}</p>
                 </div>
                 <div className="flex shrink-0 items-center gap-2">
                   <button
@@ -510,7 +510,7 @@ export default function TestCasesPage() {
                         input_message: tc.input_message,
                         img_url: tc.img_url ?? "",
                         context: tc.context ?? "",
-                        expected_states: tc.expected_states,
+                        expected_state: tc.expected_state,
                         expected_behavior: tc.expected_behavior,
                         forbidden: tc.forbidden ?? "",
                         is_enabled: tc.is_enabled !== false,
