@@ -122,7 +122,7 @@ export async function POST(request: Request) {
             input_message: row.input_message,
             img_url: row.img_url ?? undefined,
             context: row.context ?? undefined,
-            expected_flags: row.expected_flags ?? "",
+            expected_states: row.expected_states ?? "",
             expected_behavior: row.expected_behavior ?? "",
             forbidden: row.forbidden ?? undefined,
           };

@@ -11,7 +11,7 @@ type TestCase = {
   input_message: string;
   img_url: string | null;
   context: string | null;
-  expected_flags: string;
+  expected_states: string;
   expected_behavior: string;
   forbidden: string | null;
 };
@@ -35,7 +35,7 @@ export default function TestCasesPage() {
     input_message: "",
     img_url: "",
     context: "",
-    expected_flags: "",
+    expected_states: "",
     expected_behavior: "",
     forbidden: "",
   });
@@ -78,7 +78,7 @@ export default function TestCasesPage() {
         if (data.error) throw new Error(data.error);
         setShowForm(false);
         setEditing(null);
-        setForm({ test_case_id: "", title: "", category_id: "", input_message: "", img_url: "", context: "", expected_flags: "", expected_behavior: "", forbidden: "" });
+        setForm({ test_case_id: "", title: "", category_id: "", input_message: "", img_url: "", context: "", expected_states: "", expected_behavior: "", forbidden: "" });
         load();
       })
       .catch((e) => setError(e.message));
@@ -102,12 +102,12 @@ export default function TestCasesPage() {
     setUploading(true);
     setError(null);
     file
-      .text()
-      .then((csv) =>
+      .arrayBuffer()
+      .then((buffer) =>
         fetch("/api/test-cases/upload", {
           method: "POST",
-          headers: { "Content-Type": "text/csv" },
-          body: csv,
+          headers: { "Content-Type": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" },
+          body: buffer,
         })
       )
       .then((r) => r.json())
@@ -125,18 +125,18 @@ export default function TestCasesPage() {
       <div className="flex flex-wrap items-center justify-between gap-4">
         <div>
           <h1 className="text-2xl font-semibold text-stone-900">Test cases</h1>
-          <p className="mt-0.5 text-sm text-stone-500">Add, edit, delete, or bulk upload via CSV.</p>
+          <p className="mt-0.5 text-sm text-stone-500">Add, edit, delete, or bulk upload via Excel (.xlsx).</p>
         </div>
         <div className="flex gap-3">
           <label className="cursor-pointer rounded-lg border border-stone-200 bg-white px-4 py-2.5 text-sm font-medium text-stone-700 shadow-sm transition hover:bg-stone-50 hover:shadow">
-            {uploading ? "Uploading…" : "Upload CSV"}
-            <input type="file" accept=".csv" className="hidden" onChange={handleUpload} disabled={uploading} />
+            {uploading ? "Uploading…" : "Upload XLSX"}
+            <input type="file" accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" className="hidden" onChange={handleUpload} disabled={uploading} />
           </label>
           <button
             type="button"
             onClick={() => {
               setEditing(null);
-              setForm({ test_case_id: "", title: "", category_id: "", input_message: "", img_url: "", context: "", expected_flags: "", expected_behavior: "", forbidden: "" });
+              setForm({ test_case_id: "", title: "", category_id: "", input_message: "", img_url: "", context: "", expected_states: "", expected_behavior: "", forbidden: "" });
               setShowForm(true);
             }}
             className="rounded-lg bg-stone-900 px-4 py-2.5 text-sm font-medium text-white shadow-sm transition hover:bg-stone-800"
@@ -213,8 +213,8 @@ export default function TestCasesPage() {
             <hr className="border-stone-200" />
 
             <div>
-              <label className={labelClass}>Expected flags *</label>
-              <textarea rows={3} required value={form.expected_flags} onChange={(e) => setForm((f) => ({ ...f, expected_flags: e.target.value }))} className={inputClass} />
+              <label className={labelClass}>Expected states *</label>
+              <textarea rows={3} required value={form.expected_states} onChange={(e) => setForm((f) => ({ ...f, expected_states: e.target.value }))} className={inputClass} />
             </div>
             <div>
               <label className={labelClass}>Expected behavior *</label>
@@ -240,7 +240,7 @@ export default function TestCasesPage() {
         <p className="mt-8 text-stone-500">Loading…</p>
       ) : list.length === 0 ? (
         <div className="mt-8 rounded-xl border border-stone-200 bg-white p-8 text-center text-stone-500">
-          No test cases yet. Add one above or upload a CSV.
+          No test cases yet. Add one above or upload an Excel (.xlsx) file.
         </div>
       ) : (
         <ul className="mt-6 space-y-3">
@@ -250,7 +250,7 @@ export default function TestCasesPage() {
                 <div className="min-w-0 flex-1">
                   <p className="font-mono text-xs text-stone-400">{tc.test_case_id}{tc.title ? ` · ${tc.title}` : ""}{tc.category_id ? ` · ${categories.find((c) => c.category_id === tc.category_id)?.name ?? "Category"}` : ""}</p>
                   <p className="mt-1 text-sm font-medium text-stone-800">{tc.input_message.slice(0, 120)}{tc.input_message.length > 120 ? "…" : ""}</p>
-                  <p className="mt-1 text-xs text-stone-500">Expected: {tc.expected_flags} · {tc.expected_behavior}</p>
+                  <p className="mt-1 text-xs text-stone-500">Expected: {tc.expected_states} | {tc.expected_behavior}</p>
                 </div>
                 <div className="flex shrink-0 gap-2">
                   <button
@@ -263,7 +263,7 @@ export default function TestCasesPage() {
                         input_message: tc.input_message,
                         img_url: tc.img_url ?? "",
                         context: tc.context ?? "",
-                        expected_flags: tc.expected_flags,
+                        expected_states: tc.expected_states,
                         expected_behavior: tc.expected_behavior,
                         forbidden: tc.forbidden ?? "",
                       });

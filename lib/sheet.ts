@@ -1,3 +1,4 @@
+import * as XLSX from "xlsx";
 import type { TestCase } from "./types";
 
 /** Extract Google Sheet ID from share/edit link. */
@@ -49,6 +50,25 @@ export async function fetchSheetRows(
   return rows.slice(0, limit);
 }
 
+/**
+ * Parse XLSX file buffer into array of row objects (first row = headers).
+ * Uses first sheet only. Exported for XLSX upload.
+ */
+export function parseXlsxToRows(buffer: ArrayBuffer): SheetRow[] {
+  const workbook = XLSX.read(buffer, { type: "array" });
+  const sheetName = workbook.SheetNames[0];
+  if (!sheetName) return [];
+  const sheet = workbook.Sheets[sheetName];
+  const rows = XLSX.utils.sheet_to_json(sheet) as Record<string, unknown>[];
+  return rows.map((row) => {
+    const out: SheetRow = {};
+    for (const [k, v] of Object.entries(row)) {
+      out[String(k).trim()] = v != null ? String(v).trim() : "";
+    }
+    return out;
+  });
+}
+
 /** Parse CSV string into array of row objects (first line = headers). Exported for CSV upload. */
 export function parseCsvToRows(csv: string): SheetRow[] {
   const raw = csv.replace(/^\uFEFF/, ""); // strip BOM if present
@@ -98,10 +118,11 @@ function parseCsvLine(line: string): string[] {
 export const DEFAULT_SHEET_COLUMNS = {
   test_case_id: "test_case_id",
   title: "title",
+  category: "category",
   input_message: "input_message",
   img_url: "img_url",
   context: "context",
-  expected_flags: "expected_flags",
+  expected_states: "expected_states",
   expected_behavior: "expected_behavior",
   forbidden: "forbidden",
 } as const;
@@ -121,6 +142,7 @@ const HEADER_ALIASES: Partial<Record<string, keyof typeof DEFAULT_SHEET_COLUMNS>
   id: "test_case_id",
   case_id: "test_case_id",
   name: "title",
+  category_id: "category",
 };
 
 /** Get cell value from row by exact key or by normalized header match. */
@@ -149,8 +171,9 @@ export function sheetRowToTestCase(
     input_message: get("input_message"),
     img_url: get("img_url") || undefined,
     context: get("context") || undefined,
-    expected_flags: get("expected_flags"),
+    expected_states: get("expected_states"),
     expected_behavior: get("expected_behavior"),
     forbidden: get("forbidden") || undefined,
+    category: get("category") || undefined,
   };
 }

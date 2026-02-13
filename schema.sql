@@ -37,7 +37,7 @@ CREATE TABLE test_cases (
   input_message     TEXT NOT NULL,
   img_url           TEXT,
   context           TEXT,
-  expected_flags    TEXT NOT NULL,
+  expected_states   TEXT NOT NULL,
   expected_behavior TEXT NOT NULL,
   forbidden         TEXT,
   is_enabled        BOOLEAN NOT NULL DEFAULT TRUE,

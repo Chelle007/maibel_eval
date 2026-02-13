@@ -21,7 +21,7 @@ export async function POST(request: Request) {
     input_message,
     img_url,
     context,
-    expected_flags,
+    expected_states,
     expected_behavior,
     forbidden,
   } = body as Record<string, unknown>;
@@ -40,7 +40,7 @@ export async function POST(request: Request) {
       input_message,
       img_url: img_url ?? null,
       context: context ?? null,
-      expected_flags: expected_flags ?? "",
+      expected_states: expected_states ?? "",
       expected_behavior: expected_behavior ?? "",
       forbidden: forbidden ?? null,
     })
