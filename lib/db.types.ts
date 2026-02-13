@@ -49,6 +49,7 @@ export interface TestCasesRow {
   expected_behavior: string;
   forbidden: string | null;
   notes: string | null;
+  is_enabled: boolean;
 }
 
 export interface EvrenResponsesRow {

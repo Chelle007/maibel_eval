@@ -26,6 +26,8 @@ export async function POST(request: Request) {
     expected_state: string;
     expected_behavior: string;
     forbidden: string | null;
+    notes: string | null;
+    is_enabled: boolean;
   }> = [];
   for (const row of rows) {
     const tc = sheetRowToTestCase(row);
@@ -44,6 +46,8 @@ export async function POST(request: Request) {
       expected_state: tc.expected_state ?? "",
       expected_behavior: tc.expected_behavior ?? "",
       forbidden: tc.forbidden ?? null,
+      notes: tc.notes ?? null,
+      is_enabled: tc.is_enabled !== false,
     });
   }
   if (inserts.length === 0) {

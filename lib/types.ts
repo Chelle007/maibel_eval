@@ -8,6 +8,8 @@ export interface TestCase {
   expected_state: string;
   expected_behavior: string;
   forbidden?: string;
+  notes?: string;
+  is_enabled?: boolean;
   /** Category name from sheet (used on upload to resolve to category_id). */
   category?: string;
 }

@@ -10,7 +10,7 @@ export async function PATCH(
   const body = await _request.json() as Record<string, unknown>;
   const allowed = [
     "title", "category_id", "input_message", "img_url", "context",
-    "expected_state", "expected_behavior", "forbidden", "is_enabled",
+    "expected_state", "expected_behavior", "forbidden", "notes", "is_enabled",
   ];
   const updates: Record<string, unknown> = {};
   for (const key of allowed) {

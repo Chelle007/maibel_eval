@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
+import * as XLSX from "xlsx";
 
 type Category = { category_id: string; name: string };
 
@@ -14,6 +15,7 @@ type TestCase = {
   expected_state: string;
   expected_behavior: string;
   forbidden: string | null;
+  notes: string | null;
   is_enabled?: boolean;
 };
 
@@ -57,6 +59,7 @@ export default function TestCasesPage() {
     expected_state: "",
     expected_behavior: "",
     forbidden: "",
+    notes: "",
     is_enabled: true,
   });
 
@@ -98,6 +101,27 @@ export default function TestCasesPage() {
     });
   }
 
+  function exportToXlsx() {
+    const categoryNameById = new Map(categories.map((c) => [c.category_id, c.name]));
+    const rows = filteredList.map((tc) => ({
+      test_case_id: tc.test_case_id,
+      title: tc.title ?? "",
+      category: tc.category_id ? categoryNameById.get(tc.category_id) ?? tc.category_id : "",
+      input_message: tc.input_message,
+      img_url: tc.img_url ?? "",
+      context: tc.context ?? "",
+      expected_state: tc.expected_state,
+      expected_behavior: tc.expected_behavior,
+      forbidden: tc.forbidden ?? "",
+      notes: tc.notes ?? "",
+      is_enabled: tc.is_enabled !== false,
+    }));
+    const ws = XLSX.utils.json_to_sheet(rows);
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, "Test cases");
+    XLSX.writeFile(wb, "test-cases.xlsx");
+  }
+
   function load() {
     setLoading(true);
     fetch("/api/test-cases")
@@ -121,55 +145,69 @@ export default function TestCasesPage() {
   function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     setError(null);
-    const url = editing ? `/api/test-cases/${editing.test_case_id}` : "/api/test-cases";
+    const url = editing ? `/api/test-cases/${encodeURIComponent(editing.test_case_id)}` : "/api/test-cases";
     const method = editing ? "PATCH" : "POST";
     const body = editing
-      ? { ...form, title: form.title || null, category_id: form.category_id || null, img_url: form.img_url || null, context: form.context || null, forbidden: form.forbidden || null, is_enabled: form.is_enabled }
-      : { ...form, test_case_id: form.test_case_id.trim(), title: form.title || null, category_id: form.category_id || null, img_url: form.img_url || null, context: form.context || null, forbidden: form.forbidden || null, is_enabled: form.is_enabled };
+      ? { ...form, title: form.title || null, category_id: form.category_id || null, img_url: form.img_url || null, context: form.context || null, forbidden: form.forbidden || null, notes: form.notes || null, is_enabled: form.is_enabled }
+      : { ...form, test_case_id: form.test_case_id.trim(), title: form.title || null, category_id: form.category_id || null, img_url: form.img_url || null, context: form.context || null, forbidden: form.forbidden || null, notes: form.notes || null, is_enabled: form.is_enabled };
     fetch(url, {
       method,
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(body),
     })
-      .then((r) => r.json())
+      .then(parseJsonOrThrow)
       .then((data) => {
         if (data.error) throw new Error(data.error);
         setShowForm(false);
         setEditing(null);
-        setForm({ test_case_id: "", title: "", category_id: "", input_message: "", img_url: "", context: "", expected_state: "", expected_behavior: "", forbidden: "", is_enabled: true });
+        setForm({ test_case_id: "", title: "", category_id: "", input_message: "", img_url: "", context: "", expected_state: "", expected_behavior: "", forbidden: "", notes: "", is_enabled: true });
         load();
       })
-      .catch((e) => setError(e.message));
+      .catch((e) => setError(e instanceof Error ? e.message : String(e)));
   }
 
   function handleToggleEnabled(tc: TestCase) {
     setError(null);
     const next = !(tc.is_enabled !== false);
-    fetch(`/api/test-cases/${tc.test_case_id}`, {
+    fetch(`/api/test-cases/${encodeURIComponent(tc.test_case_id)}`, {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ is_enabled: next }),
     })
-      .then((r) => r.json())
+      .then(parseJsonOrThrow)
       .then((data) => {
         if (data.error) throw new Error(data.error);
         setList((prev) =>
           prev.map((t) => (t.test_case_id === tc.test_case_id ? { ...t, is_enabled: next } : t))
         );
       })
-      .catch((e) => setError(e.message));
+      .catch((e) => setError(e instanceof Error ? e.message : String(e)));
   }
 
   function handleDelete(tc: TestCase) {
     if (!confirm("Delete this test case?")) return;
     setError(null);
-    fetch(`/api/test-cases/${tc.test_case_id}`, { method: "DELETE" })
-      .then((r) => r.json())
+    fetch(`/api/test-cases/${encodeURIComponent(tc.test_case_id)}`, { method: "DELETE" })
+      .then(parseJsonOrThrow)
       .then((data) => {
         if (data.error) throw new Error(data.error);
         load();
       })
-      .catch((e) => setError(e.message));
+      .catch((e) => setError(e instanceof Error ? e.message : String(e)));
+  }
+
+  async function parseJsonOrThrow(r: Response) {
+    const text = await r.text();
+    if (!r.ok) {
+      try {
+        const data = JSON.parse(text);
+        throw new Error(data.error ?? `Request failed: ${r.status}`);
+      } catch (e) {
+        if (e instanceof Error && e.message.startsWith("Request failed:")) throw e;
+        throw new Error(text || `Request failed: ${r.status}`);
+      }
+    }
+    return text ? JSON.parse(text) : {};
   }
 
   function handleBulkDelete() {
@@ -178,7 +216,7 @@ export default function TestCasesPage() {
     setError(null);
     Promise.all(
       Array.from(selectedIds).map((id) =>
-        fetch(`/api/test-cases/${id}`, { method: "DELETE" }).then((r) => r.json())
+        fetch(`/api/test-cases/${encodeURIComponent(id)}`, { method: "DELETE" }).then(parseJsonOrThrow)
       )
     )
       .then((results) => {
@@ -187,7 +225,7 @@ export default function TestCasesPage() {
         setSelectedIds(new Set());
         load();
       })
-      .catch((e) => setError(e.message));
+      .catch((e) => setError(e instanceof Error ? e.message : String(e)));
   }
 
   function handleBulkSetEnabled(enabled: boolean) {
@@ -195,11 +233,11 @@ export default function TestCasesPage() {
     setError(null);
     Promise.all(
       Array.from(selectedIds).map((id) =>
-        fetch(`/api/test-cases/${id}`, {
+        fetch(`/api/test-cases/${encodeURIComponent(id)}`, {
           method: "PATCH",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ is_enabled: enabled }),
-        }).then((r) => r.json())
+        }).then(parseJsonOrThrow)
       )
     )
       .then((results) => {
@@ -210,7 +248,7 @@ export default function TestCasesPage() {
         );
         setSelectedIds(new Set());
       })
-      .catch((e) => setError(e.message));
+      .catch((e) => setError(e instanceof Error ? e.message : String(e)));
   }
 
   function handleUpload(e: React.ChangeEvent<HTMLInputElement>) {
@@ -245,7 +283,21 @@ export default function TestCasesPage() {
           <p className="mt-0.5 text-sm text-stone-500">Add, edit, delete, or bulk upload via Excel (.xlsx).</p>
         </div>
         <div className="flex gap-3">
-          <label className="cursor-pointer rounded-lg border border-stone-200 bg-white px-4 py-2.5 text-sm font-medium text-stone-700 shadow-sm transition hover:bg-stone-50 hover:shadow">
+          <button
+            type="button"
+            onClick={exportToXlsx}
+            disabled={filteredList.length === 0}
+            className="inline-flex items-center gap-2 rounded-lg border border-stone-200 bg-white px-4 py-2.5 text-sm font-medium text-stone-700 shadow-sm transition hover:bg-stone-50 hover:shadow disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            <svg className="h-4 w-4 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden>
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
+            </svg>
+            Export to XLSX
+          </button>
+          <label className="inline-flex cursor-pointer items-center gap-2 rounded-lg border border-stone-200 bg-white px-4 py-2.5 text-sm font-medium text-stone-700 shadow-sm transition hover:bg-stone-50 hover:shadow">
+            <svg className="h-4 w-4 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden>
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12" />
+            </svg>
             {uploading ? "Uploading…" : "Upload XLSX"}
             <input type="file" accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" className="hidden" onChange={handleUpload} disabled={uploading} />
           </label>
@@ -253,11 +305,14 @@ export default function TestCasesPage() {
             type="button"
             onClick={() => {
               setEditing(null);
-              setForm({ test_case_id: "", title: "", category_id: "", input_message: "", img_url: "", context: "", expected_state: "", expected_behavior: "", forbidden: "", is_enabled: true });
-              setShowForm(true);
+setForm({ test_case_id: "", title: "", category_id: "", input_message: "", img_url: "", context: "", expected_state: "", expected_behavior: "", forbidden: "", notes: "", is_enabled: true });
+            setShowForm(true);
             }}
-            className="rounded-lg bg-stone-900 px-4 py-2.5 text-sm font-medium text-white shadow-sm transition hover:bg-stone-800"
+            className="inline-flex items-center gap-2 rounded-lg bg-stone-900 px-4 py-2.5 text-sm font-medium text-white shadow-sm transition hover:bg-stone-800"
           >
+            <svg className="h-4 w-4 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden>
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
+            </svg>
             Add test case
           </button>
         </div>
@@ -432,6 +487,10 @@ export default function TestCasesPage() {
               <label className={labelClass}>Forbidden</label>
               <textarea rows={3} value={form.forbidden} onChange={(e) => setForm((f) => ({ ...f, forbidden: e.target.value }))} className={inputClass} />
             </div>
+            <div>
+              <label className={labelClass}>Notes</label>
+              <textarea rows={2} value={form.notes} onChange={(e) => setForm((f) => ({ ...f, notes: e.target.value }))} className={inputClass} placeholder="Internal notes about this test case" />
+            </div>
           </div>
           <div className="mt-5 flex gap-3">
             <button type="submit" className="rounded-lg bg-stone-900 px-4 py-2 text-sm font-medium text-white hover:bg-stone-800">
@@ -513,6 +572,7 @@ export default function TestCasesPage() {
                         expected_state: tc.expected_state,
                         expected_behavior: tc.expected_behavior,
                         forbidden: tc.forbidden ?? "",
+                        notes: tc.notes ?? "",
                         is_enabled: tc.is_enabled !== false,
                       });
                       setEditing(tc);

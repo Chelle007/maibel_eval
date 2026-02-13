@@ -125,6 +125,8 @@ export const DEFAULT_SHEET_COLUMNS = {
   expected_state: "expected_state",
   expected_behavior: "expected_behavior",
   forbidden: "forbidden",
+  notes: "notes",
+  is_enabled: "is_enabled",
 } as const;
 
 /** Normalize header for matching: lowercase, collapse spaces to single underscore. */
@@ -165,6 +167,11 @@ export function sheetRowToTestCase(
 ): TestCase {
   const get = (key: keyof typeof DEFAULT_SHEET_COLUMNS) => getCell(row, key);
 
+  const isEnabledRaw = get("is_enabled");
+  const is_enabled = isEnabledRaw === "" || isEnabledRaw === undefined
+    ? true
+    : /^(1|true|yes|on)$/i.test(String(isEnabledRaw).trim());
+
   return {
     test_case_id: get("test_case_id"),
     title: get("title") || undefined,
@@ -174,6 +181,8 @@ export function sheetRowToTestCase(
     expected_state: get("expected_state"),
     expected_behavior: get("expected_behavior"),
     forbidden: get("forbidden") || undefined,
+    notes: get("notes") || undefined,
+    is_enabled,
     category: get("category") || undefined,
   };
 }

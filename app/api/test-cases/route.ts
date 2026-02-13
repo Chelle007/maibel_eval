@@ -24,6 +24,7 @@ export async function POST(request: Request) {
     expected_state,
     expected_behavior,
     forbidden,
+    notes,
     is_enabled,
   } = body as Record<string, unknown>;
   if (!test_case_id || typeof test_case_id !== "string" || !test_case_id.trim()) {
@@ -44,6 +45,7 @@ export async function POST(request: Request) {
       expected_state: expected_state ?? "",
       expected_behavior: expected_behavior ?? "",
       forbidden: forbidden ?? null,
+      notes: notes ?? null,
       is_enabled: typeof is_enabled === "boolean" ? is_enabled : true,
     })
     .select()
