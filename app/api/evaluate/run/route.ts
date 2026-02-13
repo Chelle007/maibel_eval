@@ -29,9 +29,10 @@ export async function POST(request: Request) {
   const { data: testCasesRows, error: fetchError } = await supabase
     .from("test_cases")
     .select("*")
+    .eq("is_enabled", true)
     .order("test_case_id", { ascending: true });
   if (fetchError) return NextResponse.json({ error: fetchError.message }, { status: 500 });
-  if (!testCasesRows?.length) return NextResponse.json({ error: "No test cases in database" }, { status: 400 });
+  if (!testCasesRows?.length) return NextResponse.json({ error: "No enabled test cases in database" }, { status: 400 });
 
   const { data: sessionRow, error: sessionError } = await supabase
     .from("test_sessions")

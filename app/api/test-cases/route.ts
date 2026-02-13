@@ -24,6 +24,7 @@ export async function POST(request: Request) {
     expected_states,
     expected_behavior,
     forbidden,
+    is_enabled,
   } = body as Record<string, unknown>;
   if (!test_case_id || typeof test_case_id !== "string" || !test_case_id.trim()) {
     return NextResponse.json({ error: "test_case_id required" }, { status: 400 });
@@ -43,6 +44,7 @@ export async function POST(request: Request) {
       expected_states: expected_states ?? "",
       expected_behavior: expected_behavior ?? "",
       forbidden: forbidden ?? null,
+      is_enabled: typeof is_enabled === "boolean" ? is_enabled : true,
     })
     .select()
     .single();

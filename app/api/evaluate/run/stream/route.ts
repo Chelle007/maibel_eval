@@ -59,6 +59,7 @@ export async function POST(request: Request) {
   const { data: testCasesRows, error: fetchError } = await supabase
     .from("test_cases")
     .select("*")
+    .eq("is_enabled", true)
     .order("test_case_id", { ascending: true });
   if (fetchError)
     return new Response(JSON.stringify({ error: fetchError.message }), {
@@ -66,7 +67,7 @@ export async function POST(request: Request) {
       headers: { "Content-Type": "application/json" },
     });
   if (!testCasesRows?.length)
-    return new Response(JSON.stringify({ error: "No test cases in database" }), {
+    return new Response(JSON.stringify({ error: "No enabled test cases in database" }), {
       status: 400,
       headers: { "Content-Type": "application/json" },
     });
