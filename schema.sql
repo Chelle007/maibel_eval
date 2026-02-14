@@ -54,19 +54,22 @@ CREATE TABLE evren_responses (
   updated_at        TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
+CREATE SEQUENCE IF NOT EXISTS session_short_id_seq START 1;
+
 CREATE TABLE test_sessions (
-  test_session_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  user_id         UUID NOT NULL REFERENCES users(user_id) ON DELETE CASCADE,
-  total_cost_usd  DOUBLE PRECISION,
-  summary         TEXT,
-  manually_edited BOOLEAN NOT NULL DEFAULT FALSE,
-  created_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
-  updated_at      TIMESTAMPTZ NOT NULL DEFAULT now()
+  test_session_id TEXT PRIMARY KEY DEFAULT ('ES' || LPAD(nextval('session_short_id_seq')::text, 3, '0')),
+  user_id          UUID NOT NULL REFERENCES users(user_id) ON DELETE CASCADE,
+  title            TEXT,
+  total_cost_usd   DOUBLE PRECISION,
+  summary          TEXT,
+  manually_edited   BOOLEAN NOT NULL DEFAULT FALSE,
+  created_at       TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at       TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
 CREATE TABLE eval_results (
   eval_result_id     UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  test_session_id    UUID NOT NULL REFERENCES test_sessions(test_session_id) ON DELETE CASCADE,
+  test_session_id    TEXT NOT NULL REFERENCES test_sessions(test_session_id) ON DELETE CASCADE,
   test_case_id       TEXT NOT NULL REFERENCES test_cases(test_case_id) ON DELETE CASCADE,
   evren_response_id  UUID NOT NULL REFERENCES evren_responses(evren_response_id) ON DELETE CASCADE,
   success            BOOLEAN NOT NULL,

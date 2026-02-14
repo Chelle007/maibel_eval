@@ -16,11 +16,11 @@ export function Nav() {
   if (pathname === "/login" || pathname === "/signup") return null;
   return (
     <nav className="border-b border-stone-200 bg-white">
-      <div className="mx-auto flex max-w-4xl items-center gap-8 px-4 py-4">
+      <div className="mx-auto flex max-w-4xl items-center gap-10 px-4 py-4">
         <Link href="/" className="text-lg font-semibold text-stone-900">
           Maibel Eval
         </Link>
-        <div className="flex gap-6">
+        <div className="flex gap-8">
           {links.map(({ href, label }) => {
             const active = pathname === href || (href !== "/" && pathname.startsWith(href));
             return (

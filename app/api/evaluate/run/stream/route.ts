@@ -213,6 +213,7 @@ export async function POST(request: Request) {
         }
 
         let summary: string | null = null;
+        let title: string | null = null;
         if (richReportInputs.length > 0) {
           sendEvent(controller, "progress", {
             stage: "summarizing",
@@ -230,16 +231,18 @@ export async function POST(request: Request) {
           );
           totalCostUsd += summarizerResult.cost_usd;
           summary = summarizerResult.summary;
+          title = summarizerResult.title || null;
         }
 
         await supabase
           .from("test_sessions")
-          .update({ total_cost_usd: totalCostUsd, summary })
+          .update({ total_cost_usd: totalCostUsd, title, summary })
           .eq("test_session_id", testSessionId);
 
         sendEvent(controller, "complete", {
           test_session_id: testSessionId,
           total_cost_usd: totalCostUsd,
+          title: title ?? undefined,
           summary: summary ?? undefined,
         });
       } catch (err) {

@@ -113,6 +113,7 @@ export async function POST(request: Request) {
   }
 
   let summary: string | null = null;
+  let title: string | null = null;
   if (richReportInputs.length > 0) {
     const richReports = richReportInputs.map(({ testCase, evrenOutput, result }) =>
       buildRichReport(testCase, evrenOutput, result)
@@ -125,16 +126,18 @@ export async function POST(request: Request) {
     );
     totalCostUsd += summarizerResult.cost_usd;
     summary = summarizerResult.summary;
+    title = summarizerResult.title || null;
   }
 
   await supabase
     .from("test_sessions")
-    .update({ total_cost_usd: totalCostUsd, summary })
+    .update({ total_cost_usd: totalCostUsd, title, summary })
     .eq("test_session_id", testSessionId);
 
   return NextResponse.json({
     test_session_id: testSessionId,
     total_cost_usd: totalCostUsd,
+    title: title ?? undefined,
     summary: summary ?? undefined,
   });
 }

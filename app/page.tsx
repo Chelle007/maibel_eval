@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useRef } from "react";
 import { useRouter } from "next/navigation";
+import { PageHeader } from "@/app/components/PageHeader";
 
 const FALLBACK_EVREN_URL = "http://localhost:8000";
 const FALLBACK_EVALUATOR_MODEL = "gemini-2.5-flash";
@@ -178,10 +179,10 @@ export default function Home() {
 
   return (
     <div className="mx-auto max-w-xl px-4 py-8 sm:px-6 lg:px-8">
-      <h1 className="text-2xl font-semibold text-stone-900">Run evaluation</h1>
-      <p className="mt-1 text-stone-600">
-        Runs all test cases from the database: Evren → Gemini evaluator. Results are saved to a new session.
-      </p>
+      <PageHeader
+        title="Run evaluation"
+        description="Runs all test cases from the database: Evren → Gemini evaluator. Results are saved to a new session."
+      />
       <form onSubmit={handleSubmit} className="mt-8 rounded-xl border border-stone-200 bg-white p-6 shadow-sm">
         <div>
           <label className="block text-sm font-medium text-stone-700">Evren API URL *</label>

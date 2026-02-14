@@ -18,6 +18,7 @@ export interface UsersRow {
 export interface TestSessionsRow {
   test_session_id: string;
   user_id: string;
+  title: string | null;
   total_cost_usd: number | null;
   summary: string | null;
   manually_edited: boolean;

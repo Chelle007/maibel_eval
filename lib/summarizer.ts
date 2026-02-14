@@ -50,6 +50,7 @@ export function buildRichReport(
 const DEFAULT_MODEL = "gemini-2.5-flash";
 
 export interface SummarizerResult {
+  title: string;
   summary: string;
   cost_usd: number;
 }
@@ -72,7 +73,30 @@ export async function runSummarizer(
 
   const result = await model.generateContent(userMessage);
   const response = result.response;
-  const summary = response.text();
+  let raw = response.text().trim();
+
+  // Strip markdown code block if present (e.g. ```json ... ```)
+  const codeBlockMatch = raw.match(/^```(?:json)?\s*\n?([\s\S]*?)\n?```$/m);
+  if (codeBlockMatch) raw = codeBlockMatch[1].trim();
+
+  let title = "";
+  let summary = raw;
+
+  // Prefer JSON: { "title": "...", "summary": "..." }
+  try {
+    const parsed = JSON.parse(raw) as { title?: string; summary?: string };
+    if (typeof parsed.title === "string") title = parsed.title.trim().slice(0, 80);
+    if (typeof parsed.summary === "string") summary = parsed.summary.trim();
+  } catch {
+    // Fallback: extract title and summary from raw string (e.g. invalid JSON with newlines in values)
+    const titleMatch = raw.match(/"title"\s*:\s*"((?:[^"\\]|\\.)*)"/);
+    const summaryMatch = raw.match(/"summary"\s*:\s*"((?:[^"\\]|\\.)*)"/);
+    if (titleMatch) title = titleMatch[1].replace(/\\"/g, '"').replace(/\\n/g, "\n").trim().slice(0, 80);
+    if (summaryMatch) summary = summaryMatch[1].replace(/\\"/g, '"').replace(/\\n/g, "\n").trim();
+  }
+
+  // Normalize literal \n in summary to real newlines (in case of double-escape or stored literal)
+  summary = summary.replace(/\\n/g, "\n");
 
   const usage = response.usageMetadata;
   const token_usage = usage
@@ -85,5 +109,5 @@ export async function runSummarizer(
 
   const cost_usd = token_usage?.cost_usd ?? 0;
 
-  return { summary, cost_usd };
+  return { title, summary, cost_usd };
 }

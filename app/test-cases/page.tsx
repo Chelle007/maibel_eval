@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import * as XLSX from "xlsx";
 import { parseXlsxToRows, sheetRowToTestCase } from "@/lib/sheet";
+import { PageHeader } from "@/app/components/PageHeader";
 
 type Category = { category_id: string; name: string };
 
@@ -322,8 +323,10 @@ export default function TestCasesPage() {
     <div className="mx-auto max-w-4xl px-4 py-8 sm:px-6 lg:px-8">
       <div className="flex flex-wrap items-center justify-between gap-4">
         <div>
-          <h1 className="text-2xl font-semibold text-stone-900">Test cases</h1>
-          <p className="mt-0.5 text-sm text-stone-500">Add, edit, delete, or bulk upload via Excel (.xlsx).</p>
+          <PageHeader
+            title="Test cases"
+            description="Add, edit, delete, or bulk upload via Excel (.xlsx)."
+          />
         </div>
         <div className="flex gap-3">
           <button
