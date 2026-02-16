@@ -13,7 +13,7 @@ const links = [
 
 export function Nav() {
   const pathname = usePathname();
-  if (pathname === "/login" || pathname === "/signup") return null;
+  if (pathname === "/login") return null;
   return (
     <nav className="border-b border-stone-200 bg-white">
       <div className="mx-auto flex max-w-4xl items-center gap-10 px-4 py-4">
