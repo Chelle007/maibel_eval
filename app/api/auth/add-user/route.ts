@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
-import type { UsersRow } from "@/lib/db.types";
+import type { Database, UsersRow } from "@/lib/db.types";
 
 /**
  * POST /api/auth/add-user – owner only. Body: { email, password, full_name, is_owner }.
@@ -49,18 +49,16 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "Failed to create user" }, { status: 500 });
   }
 
-  // Upsert: trigger may have already inserted the row, so update instead of failing on duplicate key
-  const { error: upsertError } = await admin
-    .from("users")
-    .upsert(
-      {
-        user_id: newAuthUser.user.id,
-        email: email.trim(),
-        full_name: full_name?.trim() || null,
-        is_owner: !!is_owner,
-      },
-      { onConflict: "user_id" }
-    );
+  // Upsert: trigger may have already inserted the row, so update instead of failing on duplicate key.
+  // Type assertion needed: Supabase client infers Insert as 'never' with our Database type.
+  const userRow = {
+    user_id: newAuthUser.user.id,
+    email: email.trim(),
+    full_name: full_name?.trim() || null,
+    is_owner: !!is_owner,
+  } as Database["public"]["Tables"]["users"]["Insert"];
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Supabase client infers Insert as never
+  const { error: upsertError } = await admin.from("users").upsert(userRow as any, { onConflict: "user_id" });
 
   if (upsertError) {
     return NextResponse.json({ error: upsertError.message }, { status: 500 });
