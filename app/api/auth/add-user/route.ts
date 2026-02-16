@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
+import type { UsersRow } from "@/lib/db.types";
 
 /**
  * POST /api/auth/add-user – owner only. Body: { email, password, full_name, is_owner }.
@@ -17,7 +18,8 @@ export async function POST(request: Request) {
     .select("is_owner")
     .eq("user_id", caller.id)
     .single();
-  if (!appUser?.is_owner) return NextResponse.json({ error: "Forbidden: owner only" }, { status: 403 });
+  const isOwner = (appUser as Pick<UsersRow, "is_owner"> | null)?.is_owner;
+  if (!isOwner) return NextResponse.json({ error: "Forbidden: owner only" }, { status: 403 });
 
   let body: { email: string; password: string; full_name: string; is_owner: boolean };
   try {

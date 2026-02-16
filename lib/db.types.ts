@@ -39,9 +39,16 @@ export interface EvalResultsRow {
   manually_edited: boolean;
 }
 
+export interface CategoriesRow {
+  category_id: string;
+  name: string;
+  deleted_at: string | null;
+}
+
 export interface TestCasesRow {
   test_case_id: string;
   title: string | null;
+  category_id: string | null;
   input_message: string;
   img_url: string | null;
   context: string | null;
@@ -78,6 +85,10 @@ export interface Database {
       test_cases: { Row: TestCasesRow; Insert: Omit<TestCasesRow, "test_case_id"> & { test_case_id?: string }; Update: Partial<TestCasesRow> };
       evren_responses: { Row: EvrenResponsesRow; Insert: Omit<EvrenResponsesRow, "evren_response_id"> & { evren_response_id?: string }; Update: Partial<EvrenResponsesRow> };
       default_settings: { Row: DefaultSettingsRow; Insert: Omit<DefaultSettingsRow, "default_setting_id"> & { default_setting_id?: string }; Update: Partial<DefaultSettingsRow> };
+      categories: { Row: CategoriesRow; Insert: Omit<CategoriesRow, "category_id"> & { category_id?: string }; Update: Partial<CategoriesRow> };
     };
+    Views: Record<string, never>;
+    Functions: Record<string, never>;
+    Enums: Record<string, never>;
   };
 }
