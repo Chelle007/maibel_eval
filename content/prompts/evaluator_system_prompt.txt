@@ -52,5 +52,5 @@ Provide your output STRICTLY in the following JSON format:
   "success": "true/false",
   "score": 0-100,
   "flags_detected": "Flags detected by Evren",
-  "reason": "1-2 paragraph of explanation of the score or why it's good or any behavioral failures, such as: personality mismatch, expected behavior mismatch, or expected states mismatch."
+  "reason": "Write exactly two paragraphs. PARAGRAPH 1: Evaluate the detected_flags only—compare them to Expected states and FLAG CONTEXT & LOGIC (missed P0/P1, false positives, flag-behavior mismatch). PARAGRAPH 2: Evaluate the Evren response—expected behavior, forbidden content, persona, continuity, and any personality/empathy issues."
 }

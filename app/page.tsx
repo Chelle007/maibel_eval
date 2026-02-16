@@ -223,11 +223,7 @@ export default function Home() {
         {loading && progress && (
           <div className="mt-4 rounded-lg border border-stone-200 bg-stone-50 px-4 py-3 text-sm text-stone-700">
             <div className="font-medium text-stone-800">
-              {progress.stage === "evren" && "Waiting for Evren…"}
-              {progress.stage === "evaluating" && "Evaluating…"}
-              {progress.stage === "start" && "Starting…"}
-              {progress.stage === "done" && "Completed"}
-              {!["evren", "evaluating", "start", "done"].includes(progress.stage) && progress.stage}
+              {progress.message ?? progress.stage}
             </div>
             <div className="mt-1 text-stone-600">
               {progress.total != null && progress.index != null && (

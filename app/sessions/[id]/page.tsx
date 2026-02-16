@@ -25,13 +25,17 @@ function formatSessionDate(iso: string | null | undefined): string {
 
 /** If the stored summary is raw JSON from the summarizer, extract the summary field and normalize newlines for display. */
 function summaryForDisplay(raw: string | null | undefined): string {
-  if (!raw?.trim()) return "";
-  let trimmed = raw.trim();
+  if (raw == null) return "";
+  const str = typeof raw === "string" ? raw : JSON.stringify(raw);
+  if (!str.trim()) return "";
+  let trimmed = str.trim();
   if (trimmed.startsWith("{")) {
     try {
-      const parsed = JSON.parse(trimmed) as { summary?: string };
-      if (typeof parsed.summary === "string") trimmed = parsed.summary.replace(/\\n/g, "\n");
+      const parsed = JSON.parse(trimmed) as { summary?: string; title?: string };
+      const content = typeof parsed.summary === "string" ? parsed.summary : undefined;
+      if (content) trimmed = content.replace(/\\n/g, "\n");
     } catch {
+      // Fallback: match "summary":"...", including long strings ([\s\S] allows newlines in the regex source)
       const m = trimmed.match(/"summary"\s*:\s*"((?:[^"\\]|\\.)*)"/);
       if (m) trimmed = m[1].replace(/\\"/g, '"').replace(/\\n/g, "\n");
     }
@@ -90,16 +94,24 @@ export default function SessionDetailPage() {
   const [expandedResultId, setExpandedResultId] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState("");
   const [passFailFilter, setPassFailFilter] = useState<"" | "pass" | "fail">("");
+  const [sortBy, setSortBy] = useState<"id" | "score">("id");
   const router = useRouter();
 
   const filteredResults = useMemo(() => {
-    return results.filter((r) => {
+    const filtered = results.filter((r) => {
       if (!matchResultSearch(r, searchQuery)) return false;
       if (passFailFilter === "pass" && !r.success) return false;
       if (passFailFilter === "fail" && r.success) return false;
       return true;
     });
-  }, [results, searchQuery, passFailFilter]);
+    const sorted = [...filtered];
+    if (sortBy === "id") {
+      sorted.sort((a, b) => (a.test_case_id ?? "").localeCompare(b.test_case_id ?? "", undefined, { numeric: true }));
+    } else {
+      sorted.sort((a, b) => b.score - a.score);
+    }
+    return sorted;
+  }, [results, searchQuery, passFailFilter, sortBy]);
 
   useEffect(() => {
     if (!id) return;
@@ -229,13 +241,11 @@ export default function SessionDetailPage() {
             <svg className="h-4 w-4 shrink-0 text-stone-400" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden>
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
             </svg>
-            <span><strong className="font-medium text-stone-800">Passed test cases:</strong> {results.filter((r) => r.success).length} / {results.length}</span>
-          </div>
-          <div className="flex items-center gap-2 text-sm text-stone-700">
-            <svg className="h-4 w-4 shrink-0 text-stone-400" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden>
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" />
-            </svg>
-            <span><strong className="font-medium text-stone-800">Score:</strong> {results.length ? (results.reduce((s, r) => s + r.score, 0) / results.length).toFixed(2) : "—"}</span>
+            <span>
+              Passed test cases: {results.filter((r) => r.success).length} / {results.length}
+              {" | "}
+              Score: {results.length ? (results.reduce((s, r) => s + r.score, 0) / results.length).toFixed(2) : "—"}
+            </span>
           </div>
         </dl>
       </div>
@@ -246,7 +256,10 @@ export default function SessionDetailPage() {
           {!editingSummary && (
             <button
               type="button"
-              onClick={() => setEditingSummary(true)}
+              onClick={() => {
+                setSummary(summaryForDisplay(session?.summary ?? ""));
+                setEditingSummary(true);
+              }}
               className="inline-flex items-center gap-1.5 rounded-lg border border-stone-300 bg-stone-50 px-2.5 py-1.5 text-sm font-medium text-stone-700 shadow-sm hover:bg-stone-100 hover:border-stone-400"
               title="Edit summary"
             >
@@ -331,6 +344,15 @@ export default function SessionDetailPage() {
             <option value="">All</option>
             <option value="pass">Pass</option>
             <option value="fail">Fail</option>
+          </select>
+          <select
+            value={sortBy}
+            onChange={(e) => setSortBy((e.target.value || "id") as "id" | "score")}
+            className="rounded-lg border border-stone-200 bg-stone-50/50 px-3 py-2 text-sm text-stone-700 focus:border-stone-400 focus:bg-white focus:outline-none focus:ring-1 focus:ring-stone-400"
+            title="Sort results"
+          >
+            <option value="id">Sort by ID</option>
+            <option value="score">Sort by score</option>
           </select>
         </div>
         <h2 className="text-lg font-medium text-stone-900">Results ({filteredResults.length})</h2>

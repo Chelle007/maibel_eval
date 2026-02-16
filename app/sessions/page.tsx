@@ -15,6 +15,7 @@ type Session = {
   users?: { full_name: string | null; email: string } | null;
   passed_count?: number;
   total_count?: number;
+  avg_score?: number | null;
 };
 
 /** Format ISO date for display (e.g. "Feb 13, 2025"). */
@@ -290,8 +291,14 @@ export default function SessionsPage() {
                         </span>
                       )}
                     </div>
-                    <p className="mt-1 text-sm text-stone-600">
-                      Passed test cases: {s.passed_count ?? 0} / {s.total_count ?? 0}
+                    <p className="mt-1 flex flex-wrap items-center gap-2 text-sm text-stone-600">
+                      <span>Passed test cases: {s.passed_count ?? 0} / {s.total_count ?? 0}</span>
+                      {s.total_count != null && s.total_count > 0 && (
+                        <>
+                          <span className="text-stone-400" aria-hidden>|</span>
+                          <span>Score: {s.avg_score != null ? Number(s.avg_score).toFixed(2) : "—"}</span>
+                        </>
+                      )}
                     </p>
                   </Link>
                   <button
