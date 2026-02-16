@@ -241,11 +241,13 @@ export default function SessionDetailPage() {
             <svg className="h-4 w-4 shrink-0 text-stone-400" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden>
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
             </svg>
-            <span>
-              Passed test cases: {results.filter((r) => r.success).length} / {results.length}
-              {" | "}
-              Score: {results.length ? (results.reduce((s, r) => s + r.score, 0) / results.length).toFixed(2) : "—"}
-            </span>
+            <span><strong className="font-medium text-stone-800">Passed test cases:</strong> {results.filter((r) => r.success).length} / {results.length}</span>
+          </div>
+          <div className="flex items-center gap-2 text-sm text-stone-700">
+            <svg className="h-4 w-4 shrink-0 text-stone-400" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden>
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" />
+            </svg>
+            <span><strong className="font-medium text-stone-800">Score:</strong> {results.length ? (results.reduce((s, r) => s + r.score, 0) / results.length).toFixed(2) : "—"}</span>
           </div>
         </dl>
       </div>
