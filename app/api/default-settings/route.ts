@@ -71,7 +71,7 @@ export async function PATCH(request: Request) {
   if (existingRow?.default_setting_id) {
     const { data, error } = await supabase
       .from("default_settings")
-      .update(payload as any)
+      .update(payload as unknown as never)
       .eq("default_setting_id", existingRow.default_setting_id)
       .select(FIELDS)
       .single();

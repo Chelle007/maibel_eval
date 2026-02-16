@@ -18,7 +18,7 @@ export async function PATCH(
   const supabase = await createClient();
   const { data, error } = await supabase
     .from("eval_results")
-    .update(updates as any)
+    .update(updates as unknown as never)
     .eq("eval_result_id", id)
     .select()
     .single();

@@ -20,7 +20,7 @@ export async function PATCH(
   const payload = { name } as Database["public"]["Tables"]["categories"]["Update"];
   const { data, error } = await supabase
     .from("categories")
-    .update(payload as any)
+    .update(payload as unknown as never)
     .eq("category_id", id)
     .is("deleted_at", null)
     .select("category_id, name")
@@ -39,7 +39,7 @@ export async function DELETE(
   const payload = { deleted_at: new Date().toISOString() } as Database["public"]["Tables"]["categories"]["Update"];
   const { error } = await supabase
     .from("categories")
-    .update(payload as any)
+    .update(payload as unknown as never)
     .eq("category_id", id);
   if (error) return NextResponse.json({ error: error.message }, { status: 500 });
   return NextResponse.json({ ok: true });

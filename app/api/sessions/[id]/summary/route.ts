@@ -15,7 +15,7 @@ export async function PATCH(
   const payload = { summary: body.summary, manually_edited: true } as Database["public"]["Tables"]["test_sessions"]["Update"];
   const { data, error } = await supabase
     .from("test_sessions")
-    .update(payload as any)
+    .update(payload as unknown as never)
     .eq("test_session_id", id)
     .select()
     .single();

@@ -139,7 +139,7 @@ export async function POST(request: Request) {
   const sessionUpdate = { total_cost_usd: totalCostUsd, title, summary } as Database["public"]["Tables"]["test_sessions"]["Update"];
   await supabase
     .from("test_sessions")
-    .update(sessionUpdate as any)
+    .update(sessionUpdate as unknown as never)
     .eq("test_session_id", testSessionId);
 
   return NextResponse.json({
