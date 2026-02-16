@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createRouteHandlerClient } from "@/lib/supabase/route-handler";
 import { createAdminClient } from "@/lib/supabase/admin";
+import type { Database } from "@/lib/db.types";
 
 /**
  * POST /api/auth/signup – create account (server-side to avoid CORS / "Failed to fetch").
@@ -51,12 +52,13 @@ export async function POST(request: NextRequest) {
     }
     const { data: existing } = await admin.from("users").select("user_id").limit(1);
     const isFirstUser = !existing?.length;
-    const { error: insertError } = await admin.from("users").insert({
+    const userRow = {
       user_id: signUpData.user.id,
       email,
       full_name: fullName,
       is_owner: isFirstUser,
-    });
+    } as Database["public"]["Tables"]["users"]["Insert"];
+    const { error: insertError } = await admin.from("users").insert(userRow as any);
     if (insertError) {
       console.error("Signup: failed to create users row", insertError);
       return NextResponse.json(

@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
+import type { Database } from "@/lib/db.types";
 
 export async function GET() {
   const supabase = await createClient();
@@ -33,21 +34,22 @@ export async function POST(request: Request) {
   if (!input_message || typeof input_message !== "string") {
     return NextResponse.json({ error: "input_message required" }, { status: 400 });
   }
+  const row = {
+    test_case_id: (test_case_id as string).trim(),
+    title: title ?? null,
+    category_id: category_id && typeof category_id === "string" ? category_id : null,
+    input_message,
+    img_url: img_url ?? null,
+    context: context ?? null,
+    expected_state: expected_state ?? "",
+    expected_behavior: expected_behavior ?? "",
+    forbidden: forbidden ?? null,
+    notes: notes ?? null,
+    is_enabled: typeof is_enabled === "boolean" ? is_enabled : true,
+  } as Database["public"]["Tables"]["test_cases"]["Insert"];
   const { data, error } = await supabase
     .from("test_cases")
-    .insert({
-      test_case_id: (test_case_id as string).trim(),
-      title: title ?? null,
-      category_id: category_id && typeof category_id === "string" ? category_id : null,
-      input_message,
-      img_url: img_url ?? null,
-      context: context ?? null,
-      expected_state: expected_state ?? "",
-      expected_behavior: expected_behavior ?? "",
-      forbidden: forbidden ?? null,
-      notes: notes ?? null,
-      is_enabled: typeof is_enabled === "boolean" ? is_enabled : true,
-    })
+    .insert(row as any)
     .select()
     .single();
   if (error) return NextResponse.json({ error: error.message }, { status: 500 });

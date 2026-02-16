@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import { parseXlsxToRows, sheetRowToTestCase } from "@/lib/sheet";
+import type { Database, CategoriesRow } from "@/lib/db.types";
 
 export async function POST(request: Request) {
   const buffer = await request.arrayBuffer();
@@ -11,8 +12,9 @@ export async function POST(request: Request) {
     .from("categories")
     .select("category_id, name")
     .is("deleted_at", null);
+  const categoryList = (categories ?? []) as Pick<CategoriesRow, "category_id" | "name">[];
   const nameToId = new Map<string, string>();
-  for (const c of categories ?? []) {
+  for (const c of categoryList) {
     nameToId.set(c.name.trim().toLowerCase(), c.category_id);
   }
 
@@ -55,7 +57,7 @@ export async function POST(request: Request) {
   }
   const { data, error } = await supabase
     .from("test_cases")
-    .upsert(inserts, { onConflict: "test_case_id", ignoreDuplicates: false })
+    .upsert(inserts as any, { onConflict: "test_case_id", ignoreDuplicates: false })
     .select();
   if (error) return NextResponse.json({ error: error.message }, { status: 500 });
   return NextResponse.json({ inserted: data?.length ?? 0, rows: data });

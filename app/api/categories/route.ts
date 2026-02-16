@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
+import type { Database } from "@/lib/db.types";
 
 /** GET /api/categories — list active categories (deleted_at is null). */
 export async function GET(request: Request) {
@@ -29,9 +30,10 @@ export async function POST(request: Request) {
   }
   const name = typeof body.name === "string" ? body.name.trim() : "";
   if (!name) return NextResponse.json({ error: "name required" }, { status: 400 });
+  const row = { name } as Database["public"]["Tables"]["categories"]["Insert"];
   const { data, error } = await supabase
     .from("categories")
-    .insert({ name })
+    .insert(row as any)
     .select("category_id, name")
     .single();
   if (error) return NextResponse.json({ error: error.message }, { status: 500 });

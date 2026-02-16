@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
+import type { Database } from "@/lib/db.types";
 
 /** PATCH /api/categories/[id] — rename category. */
 export async function PATCH(
@@ -16,9 +17,10 @@ export async function PATCH(
   }
   const name = typeof body.name === "string" ? body.name.trim() : "";
   if (!name) return NextResponse.json({ error: "name required" }, { status: 400 });
+  const payload = { name } as Database["public"]["Tables"]["categories"]["Update"];
   const { data, error } = await supabase
     .from("categories")
-    .update({ name })
+    .update(payload as any)
     .eq("category_id", id)
     .is("deleted_at", null)
     .select("category_id, name")
@@ -34,9 +36,10 @@ export async function DELETE(
 ) {
   const { id } = await params;
   const supabase = await createClient();
+  const payload = { deleted_at: new Date().toISOString() } as Database["public"]["Tables"]["categories"]["Update"];
   const { error } = await supabase
     .from("categories")
-    .update({ deleted_at: new Date().toISOString() })
+    .update(payload as any)
     .eq("category_id", id);
   if (error) return NextResponse.json({ error: error.message }, { status: 500 });
   return NextResponse.json({ ok: true });

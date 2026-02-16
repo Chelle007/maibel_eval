@@ -5,6 +5,7 @@ import { evaluateOne } from "@/lib/evaluator";
 import { buildRichReport, runSummarizer } from "@/lib/summarizer";
 import { loadEvaluatorSystemPrompt, loadSummarizerSystemPrompt } from "@/lib/prompts";
 import type { TestCase, EvrenOutput, EvaluationResult } from "@/lib/types";
+import type { Database, TestCasesRow, EvrenResponsesRow } from "@/lib/db.types";
 
 export const maxDuration = 300;
 
@@ -45,27 +46,30 @@ export async function POST(request: Request) {
   if (fetchError) return NextResponse.json({ error: fetchError.message }, { status: 500 });
   if (!testCasesRows?.length) return NextResponse.json({ error: "No enabled test cases in database" }, { status: 400 });
 
+  const sessionInsert = {
+    user_id: userId,
+    total_cost_usd: 0,
+    summary: null,
+    manually_edited: false,
+  } as Database["public"]["Tables"]["test_sessions"]["Insert"];
   const { data: sessionRow, error: sessionError } = await supabase
     .from("test_sessions")
-    .insert({
-      user_id: userId,
-      total_cost_usd: 0,
-      summary: null,
-      manually_edited: false,
-    })
+    .insert(sessionInsert as any)
     .select("test_session_id")
     .single();
   if (sessionError || !sessionRow) {
     return NextResponse.json({ error: sessionError?.message ?? "Failed to create session" }, { status: 500 });
   }
-  const testSessionId = sessionRow.test_session_id;
+  const session = sessionRow as { test_session_id: string };
+  const testSessionId = session.test_session_id;
 
   const modelName = body.model_name ?? "gemini-2.5-flash";
   const systemPrompt = body.system_prompt ?? loadEvaluatorSystemPrompt();
   let totalCostUsd = 0;
   const richReportInputs: { testCase: TestCase; evrenOutput: EvrenOutput; result: EvaluationResult }[] = [];
 
-  for (const row of testCasesRows) {
+  const rows = (testCasesRows ?? []) as TestCasesRow[];
+  for (const row of rows) {
     const testCase: TestCase = {
       test_case_id: row.test_case_id,
       input_message: row.input_message,
@@ -77,13 +81,14 @@ export async function POST(request: Request) {
     };
     const evrenOutput = await callEvrenApi(evrenModelApiUrl, testCase);
 
+    const evrenInsertPayload = {
+      test_case_id: row.test_case_id,
+      evren_response: evrenOutput.evren_response,
+      detected_states: evrenOutput.detected_states,
+    } as Database["public"]["Tables"]["evren_responses"]["Insert"];
     const { data: evrenInsert, error: evrenErr } = await supabase
       .from("evren_responses")
-      .insert({
-        test_case_id: row.test_case_id,
-        evren_response: evrenOutput.evren_response,
-        detected_states: evrenOutput.detected_states,
-      })
+      .insert(evrenInsertPayload as any)
       .select("evren_response_id")
       .single();
     if (evrenErr || !evrenInsert) {
@@ -91,16 +96,17 @@ export async function POST(request: Request) {
       continue;
     }
 
+    const evrenRow = evrenInsert as Pick<EvrenResponsesRow, "evren_response_id">;
     const result = await evaluateOne(testCase, evrenOutput, apiKey, modelName, systemPrompt);
     const costUsd = result.token_usage?.cost_usd ?? 0;
     totalCostUsd += costUsd;
 
     richReportInputs.push({ testCase, evrenOutput, result });
 
-    await supabase.from("eval_results").insert({
+    const evalPayload = {
       test_session_id: testSessionId,
       test_case_id: row.test_case_id,
-      evren_response_id: evrenInsert.evren_response_id,
+      evren_response_id: evrenRow.evren_response_id,
       success: result.success,
       score: result.score,
       reason: result.reason ?? null,
@@ -109,7 +115,8 @@ export async function POST(request: Request) {
       total_tokens: result.token_usage?.total_tokens ?? null,
       cost_usd: costUsd || null,
       manually_edited: false,
-    });
+    } as Database["public"]["Tables"]["eval_results"]["Insert"];
+    await supabase.from("eval_results").insert(evalPayload as any);
   }
 
   let summary: string | null = null;
@@ -129,9 +136,10 @@ export async function POST(request: Request) {
     title = summarizerResult.title || null;
   }
 
+  const sessionUpdate = { total_cost_usd: totalCostUsd, title, summary } as Database["public"]["Tables"]["test_sessions"]["Update"];
   await supabase
     .from("test_sessions")
-    .update({ total_cost_usd: totalCostUsd, title, summary })
+    .update(sessionUpdate as any)
     .eq("test_session_id", testSessionId);
 
   return NextResponse.json({

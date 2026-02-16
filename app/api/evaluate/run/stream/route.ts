@@ -4,6 +4,7 @@ import { evaluateOne } from "@/lib/evaluator";
 import { buildRichReport, runSummarizer } from "@/lib/summarizer";
 import { loadEvaluatorSystemPrompt, loadSummarizerSystemPrompt } from "@/lib/prompts";
 import type { TestCase, EvrenOutput, EvaluationResult } from "@/lib/types";
+import type { Database, TestCasesRow, EvrenResponsesRow, DefaultSettingsRow } from "@/lib/db.types";
 
 export const maxDuration = 300;
 
@@ -82,14 +83,15 @@ export async function POST(request: Request) {
       headers: { "Content-Type": "application/json" },
     });
 
+  const sessionInsert = {
+    user_id: userId,
+    total_cost_usd: 0,
+    summary: null,
+    manually_edited: false,
+  } as Database["public"]["Tables"]["test_sessions"]["Insert"];
   const { data: sessionRow, error: sessionError } = await supabase
     .from("test_sessions")
-    .insert({
-      user_id: userId,
-      total_cost_usd: 0,
-      summary: null,
-      manually_edited: false,
-    })
+    .insert(sessionInsert as any)
     .select("test_session_id")
     .single();
   if (sessionError || !sessionRow)
@@ -99,7 +101,8 @@ export async function POST(request: Request) {
       }),
       { status: 500, headers: { "Content-Type": "application/json" } }
     );
-  const testSessionId = sessionRow.test_session_id;
+  const session = sessionRow as { test_session_id: string };
+  const testSessionId = session.test_session_id;
   const total = testCasesRows.length;
   const modelName = body.model_name ?? "gemini-2.5-flash";
   const summarizerModel = body.summarizer_model ?? modelName;
@@ -109,10 +112,11 @@ export async function POST(request: Request) {
     .select("evaluator_prompt, summarizer_prompt")
     .limit(1)
     .maybeSingle();
+  const settingsRow = defaultSettings as Pick<DefaultSettingsRow, "evaluator_prompt" | "summarizer_prompt"> | null;
   const systemPrompt =
-    (defaultSettings?.evaluator_prompt?.trim() || null) ?? body.system_prompt ?? loadEvaluatorSystemPrompt();
+    (settingsRow?.evaluator_prompt?.trim() || null) ?? body.system_prompt ?? loadEvaluatorSystemPrompt();
   const summarizerPrompt =
-    (defaultSettings?.summarizer_prompt?.trim() || null) ?? loadSummarizerSystemPrompt();
+    (settingsRow?.summarizer_prompt?.trim() || null) ?? loadSummarizerSystemPrompt();
 
   const stream = new ReadableStream<Uint8Array>({
     async start(controller) {
@@ -126,8 +130,9 @@ export async function POST(request: Request) {
           message: `Starting run (${total} test case${total === 1 ? "" : "s"})…`,
         });
 
-        for (let index = 0; index < testCasesRows.length; index++) {
-          const row = testCasesRows[index];
+        const rows = (testCasesRows ?? []) as TestCasesRow[];
+        for (let index = 0; index < rows.length; index++) {
+          const row = rows[index];
           const testCase: TestCase = {
             test_case_id: row.test_case_id,
             input_message: row.input_message,
@@ -148,13 +153,14 @@ export async function POST(request: Request) {
 
           const evrenOutput = await callEvrenApi(evrenModelApiUrl, testCase);
 
+          const evrenInsertPayload = {
+            test_case_id: row.test_case_id,
+            evren_response: evrenOutput.evren_response,
+            detected_states: evrenOutput.detected_states,
+          } as Database["public"]["Tables"]["evren_responses"]["Insert"];
           const { data: evrenInsert, error: evrenErr } = await supabase
             .from("evren_responses")
-            .insert({
-              test_case_id: row.test_case_id,
-              evren_response: evrenOutput.evren_response,
-              detected_states: evrenOutput.detected_states,
-            })
+            .insert(evrenInsertPayload as any)
             .select("evren_response_id")
             .single();
           if (evrenErr || !evrenInsert) {
@@ -168,6 +174,8 @@ export async function POST(request: Request) {
             });
             continue;
           }
+
+          const evrenRow = evrenInsert as Pick<EvrenResponsesRow, "evren_response_id">;
 
           sendEvent(controller, "progress", {
             stage: "evaluating",
@@ -189,10 +197,10 @@ export async function POST(request: Request) {
 
           richReportInputs.push({ testCase, evrenOutput, result });
 
-          await supabase.from("eval_results").insert({
+          const evalPayload = {
             test_session_id: testSessionId,
             test_case_id: row.test_case_id,
-            evren_response_id: evrenInsert.evren_response_id,
+            evren_response_id: evrenRow.evren_response_id,
             success: result.success,
             score: result.score,
             reason: result.reason ?? null,
@@ -201,7 +209,8 @@ export async function POST(request: Request) {
             total_tokens: result.token_usage?.total_tokens ?? null,
             cost_usd: costUsd || null,
             manually_edited: false,
-          });
+          } as Database["public"]["Tables"]["eval_results"]["Insert"];
+          await supabase.from("eval_results").insert(evalPayload as any);
 
           sendEvent(controller, "progress", {
             stage: "done",
@@ -234,9 +243,10 @@ export async function POST(request: Request) {
           title = summarizerResult.title || null;
         }
 
+        const sessionUpdate = { total_cost_usd: totalCostUsd, title, summary } as Database["public"]["Tables"]["test_sessions"]["Update"];
         await supabase
           .from("test_sessions")
-          .update({ total_cost_usd: totalCostUsd, title, summary })
+          .update(sessionUpdate as any)
           .eq("test_session_id", testSessionId);
 
         sendEvent(controller, "complete", {

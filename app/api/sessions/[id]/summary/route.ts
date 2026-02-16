@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
+import type { Database } from "@/lib/db.types";
 
 export async function PATCH(
   request: Request,
@@ -11,9 +12,10 @@ export async function PATCH(
     return NextResponse.json({ error: "summary string required" }, { status: 400 });
   }
   const supabase = await createClient();
+  const payload = { summary: body.summary, manually_edited: true } as Database["public"]["Tables"]["test_sessions"]["Update"];
   const { data, error } = await supabase
     .from("test_sessions")
-    .update({ summary: body.summary, manually_edited: true })
+    .update(payload as any)
     .eq("test_session_id", id)
     .select()
     .single();
