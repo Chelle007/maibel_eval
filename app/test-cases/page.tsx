@@ -22,8 +22,7 @@ type TestCase = {
 };
 
 const inputClass =
-  "mt-1.5 block w-full rounded-lg border border-stone-200 bg-white px-3 py-2 text-sm text-stone-900 placeholder:text-stone-400 focus:border-stone-400 focus:outline-none focus:ring-1 focus:ring-stone-400";
-const labelClass = "block text-sm font-medium text-stone-700";
+  "mt-1 block w-full rounded-lg border border-stone-200 bg-white px-3 py-2 text-sm text-stone-900 placeholder:text-stone-400 focus:border-stone-400 focus:outline-none focus:ring-1 focus:ring-stone-400";
 
 function matchSearch(tc: TestCase, q: string): boolean {
   if (!q.trim()) return true;
@@ -37,6 +36,11 @@ function matchSearch(tc: TestCase, q: string): boolean {
     tc.forbidden ?? "",
   ].map((s) => s.toLowerCase());
   return fields.some((s) => s.includes(lower));
+}
+
+function inputPreview(msg: string, maxLen = 80): string {
+  if (!msg?.trim()) return "";
+  return msg.slice(0, maxLen) + (msg.length > maxLen ? "…" : "");
 }
 
 export default function TestCasesPage() {
@@ -53,6 +57,7 @@ export default function TestCasesPage() {
   const selectAllRef = useRef<HTMLInputElement | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const [uploadOverwritePending, setUploadOverwritePending] = useState<{ buffer: ArrayBuffer; overwriteIds: string[] } | null>(null);
+  const [expandedTestCaseId, setExpandedTestCaseId] = useState<string | null>(null);
   const [form, setForm] = useState({
     test_case_id: "",
     title: "",
@@ -164,6 +169,7 @@ export default function TestCasesPage() {
         if (data.error) throw new Error(data.error);
         setShowForm(false);
         setEditing(null);
+        setExpandedTestCaseId(null);
         setForm({ test_case_id: "", title: "", category_id: "", input_message: "", img_url: "", context: "", expected_state: "", expected_behavior: "", forbidden: "", notes: "", is_enabled: true });
         load();
       })
@@ -484,102 +490,59 @@ setForm({ test_case_id: "", title: "", category_id: "", input_message: "", img_u
         </div>
       )}
 
-      {showForm && (
+      {showForm && !editing && (
         <form onSubmit={handleSubmit} className="mt-6 rounded-xl border border-stone-200 bg-white p-6 shadow-sm">
-          <h2 className="text-lg font-medium text-stone-900">{editing ? "Edit" : "New"} test case</h2>
+          <h2 className="text-lg font-medium text-stone-900">New test case</h2>
           <div className="mt-4 space-y-4">
-            <div>
-              <label className={labelClass}>Test case ID</label>
-              <input
-                type="text"
-                value={form.test_case_id}
-                onChange={(e) => setForm((f) => ({ ...f, test_case_id: e.target.value }))}
-                className={inputClass}
-                placeholder="e.g. P0_001"
-                required={!editing}
-                disabled={!!editing}
-              />
-              {editing && <p className="mt-1 text-xs text-stone-400">ID cannot be changed when editing.</p>}
+            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+              <div>
+                <p className="text-xs font-medium uppercase tracking-wide text-stone-400">Test case ID</p>
+                <input type="text" value={form.test_case_id} onChange={(e) => setForm((f) => ({ ...f, test_case_id: e.target.value }))} className={inputClass} placeholder="e.g. P0_001" required />
+              </div>
+              <div>
+                <p className="text-xs font-medium uppercase tracking-wide text-stone-400">Title</p>
+                <input type="text" value={form.title} onChange={(e) => setForm((f) => ({ ...f, title: e.target.value }))} className={inputClass} placeholder="Short description of the test case" />
+              </div>
+              <div>
+                <p className="text-xs font-medium uppercase tracking-wide text-stone-400">Category</p>
+                <select value={form.category_id} onChange={(e) => setForm((f) => ({ ...f, category_id: e.target.value }))} className={inputClass}>
+                  <option value="">No category</option>
+                  {categories.map((c) => <option key={c.category_id} value={c.category_id}>{c.name}</option>)}
+                </select>
+              </div>
             </div>
             <div>
-              <label className={labelClass}>Title</label>
-              <input
-                type="text"
-                value={form.title}
-                onChange={(e) => setForm((f) => ({ ...f, title: e.target.value }))}
-                className={inputClass}
-                placeholder="Short description of the test case"
-              />
-            </div>
-            <div>
-              <label className={labelClass}>Category</label>
-              <select
-                value={form.category_id}
-                onChange={(e) => setForm((f) => ({ ...f, category_id: e.target.value }))}
-                className={inputClass}
-              >
-                <option value="">No category</option>
-                {categories.map((c) => (
-                  <option key={c.category_id} value={c.category_id}>
-                    {c.name}
-                  </option>
-                ))}
-              </select>
-            </div>
-            <div className="flex items-center gap-2">
-              <input
-                type="checkbox"
-                id="form-is-enabled"
-                checked={form.is_enabled}
-                onChange={(e) => setForm((f) => ({ ...f, is_enabled: e.target.checked }))}
-                className="h-4 w-4 rounded border-stone-300 text-stone-900 focus:ring-stone-400"
-              />
-              <label htmlFor="form-is-enabled" className="text-sm font-medium text-stone-700">
-                Include in evaluation (only enabled test cases are run when you start evaluate)
-              </label>
-            </div>
-
-            <hr className="border-stone-200" />
-
-            <div>
-              <label className={labelClass}>Input message *</label>
+              <p className="text-xs font-medium uppercase tracking-wide text-stone-400">Input *</p>
               <textarea rows={3} required value={form.input_message} onChange={(e) => setForm((f) => ({ ...f, input_message: e.target.value }))} className={inputClass} />
             </div>
             <div>
-              <label className={labelClass}>Img URL</label>
-              <input type="url" value={form.img_url} onChange={(e) => setForm((f) => ({ ...f, img_url: e.target.value }))} className={inputClass} />
-            </div>
-            <div>
-              <label className={labelClass}>Context</label>
+              <p className="text-xs font-medium uppercase tracking-wide text-stone-400">Context</p>
               <textarea rows={2} value={form.context} onChange={(e) => setForm((f) => ({ ...f, context: e.target.value }))} className={inputClass} />
             </div>
-
-            <hr className="border-stone-200" />
-
             <div>
-              <label className={labelClass}>Expected states *</label>
+              <p className="text-xs font-medium uppercase tracking-wide text-stone-400">Expected state *</p>
               <textarea rows={3} required value={form.expected_state} onChange={(e) => setForm((f) => ({ ...f, expected_state: e.target.value }))} className={inputClass} />
             </div>
             <div>
-              <label className={labelClass}>Expected behavior *</label>
+              <p className="text-xs font-medium uppercase tracking-wide text-stone-400">Expected behaviour *</p>
               <textarea rows={2} required value={form.expected_behavior} onChange={(e) => setForm((f) => ({ ...f, expected_behavior: e.target.value }))} className={inputClass} />
             </div>
             <div>
-              <label className={labelClass}>Forbidden</label>
-              <textarea rows={3} value={form.forbidden} onChange={(e) => setForm((f) => ({ ...f, forbidden: e.target.value }))} className={inputClass} />
+              <p className="text-xs font-medium uppercase tracking-wide text-stone-400">Forbidden</p>
+              <textarea rows={2} value={form.forbidden} onChange={(e) => setForm((f) => ({ ...f, forbidden: e.target.value }))} className={inputClass} />
             </div>
             <div>
-              <label className={labelClass}>Notes</label>
+              <p className="text-xs font-medium uppercase tracking-wide text-stone-400">Notes</p>
               <textarea rows={2} value={form.notes} onChange={(e) => setForm((f) => ({ ...f, notes: e.target.value }))} className={inputClass} placeholder="Internal notes about this test case" />
+            </div>
+            <div>
+              <p className="text-xs font-medium uppercase tracking-wide text-stone-400">Img URL</p>
+              <input type="url" value={form.img_url} onChange={(e) => setForm((f) => ({ ...f, img_url: e.target.value }))} className={inputClass} />
             </div>
           </div>
           <div className="mt-5 flex gap-3">
-            <button type="submit" className="rounded-lg bg-stone-900 px-4 py-2 text-sm font-medium text-white hover:bg-stone-800">
-              {editing ? "Save" : "Create"}
-            </button>
-            <button type="button" onClick={() => { setShowForm(false); setEditing(null); }} className="rounded-lg border border-stone-200 px-4 py-2 text-sm font-medium text-stone-600 hover:bg-stone-50">
-              Cancel
-            </button>
+            <button type="submit" className="rounded-lg bg-stone-900 px-4 py-2 text-sm font-medium text-white hover:bg-stone-800">Create</button>
+            <button type="button" onClick={() => { setShowForm(false); setEditing(null); }} className="rounded-lg border border-stone-200 px-4 py-2 text-sm font-medium text-stone-600 hover:bg-stone-50">Cancel</button>
           </div>
         </form>
       )}
@@ -597,32 +560,59 @@ setForm({ test_case_id: "", title: "", category_id: "", input_message: "", img_u
               No test cases match your search or category filter.
             </li>
           ) : (
-            filteredList.map((tc) => (
-            <li key={tc.test_case_id} className="rounded-xl border border-stone-200 bg-white p-4 shadow-sm">
-              <div className="flex items-start gap-3">
-                <label className="flex shrink-0 cursor-pointer items-start pt-0.5">
-                  <input
-                    type="checkbox"
-                    checked={selectedIds.has(tc.test_case_id)}
-                    onChange={() => toggleSelect(tc.test_case_id)}
-                    className="mt-1 h-4 w-4 rounded border-stone-300 text-stone-900 focus:ring-stone-400"
-                  />
-                </label>
-                <div className="min-w-0 flex-1">
-                  <p className="font-mono text-xs text-stone-400 flex flex-wrap items-center gap-2">
-                    {tc.category_id ? (
-                      <span className="inline-flex items-center rounded bg-stone-200 px-1.5 py-0.5 text-xs font-medium text-stone-700 shrink-0">
-                        {categories.find((c) => c.category_id === tc.category_id)?.name ?? "Category"}
-                      </span>
-                    ) : (
-                      <span className="inline-flex items-center rounded bg-stone-100 px-1.5 py-0.5 text-xs font-medium text-stone-500 shrink-0">No category</span>
+            filteredList.map((tc) => {
+              const isExpanded = expandedTestCaseId === tc.test_case_id;
+              const isEditingThis = editing?.test_case_id === tc.test_case_id;
+              return (
+            <li key={tc.test_case_id} className="rounded-xl border border-stone-200 bg-white shadow-sm transition-all duration-200 hover:shadow-md hover:-translate-y-0.5">
+              <div
+                role="button"
+                tabIndex={0}
+                onClick={() => setExpandedTestCaseId((prev) => (prev === tc.test_case_id ? null : tc.test_case_id))}
+                onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); setExpandedTestCaseId((prev) => (prev === tc.test_case_id ? null : tc.test_case_id)); } }}
+                className="flex flex-wrap items-center justify-between gap-3 px-5 py-3 cursor-pointer hover:bg-stone-50/50 transition"
+                aria-expanded={isExpanded}
+              >
+                <div className="flex items-center gap-3 min-w-0 flex-1">
+                  <label className="flex shrink-0 cursor-pointer items-center" onClick={(e) => e.stopPropagation()}>
+                    <input
+                      type="checkbox"
+                      checked={selectedIds.has(tc.test_case_id)}
+                      onChange={() => toggleSelect(tc.test_case_id)}
+                      className="h-4 w-4 rounded border-stone-300 text-stone-900 focus:ring-stone-400"
+                    />
+                  </label>
+                  <div className="min-w-0 flex-1">
+                    <div className="font-mono text-base font-semibold text-stone-900 flex flex-wrap items-center gap-2">
+                      {tc.test_case_id}
+                      {isEditingThis ? (
+                        <input
+                          type="text"
+                          value={form.title}
+                          onChange={(e) => setForm((f) => ({ ...f, title: e.target.value }))}
+                          onClick={(e) => e.stopPropagation()}
+                          className="ml-1 min-w-[120px] flex-1 max-w-md rounded-lg border border-stone-200 bg-white px-2.5 py-1 text-sm font-sans font-normal text-stone-600 focus:border-stone-400 focus:outline-none focus:ring-1 focus:ring-stone-400"
+                          placeholder="Title"
+                        />
+                      ) : (
+                        tc.title?.trim() && (
+                          <span className="font-sans font-normal text-stone-600">· {tc.title.trim()}</span>
+                        )
+                      )}
+                    </div>
+                    {!isExpanded && tc.input_message?.trim() && !isEditingThis && (
+                      <p className="mt-1 text-sm text-stone-500 truncate max-w-full" title={tc.input_message}>
+                        {inputPreview(tc.input_message)}
+                      </p>
                     )}
-                    <span>{tc.test_case_id}{tc.title ? ` · ${tc.title}` : ""}</span>
-                  </p>
-                  <p className="mt-1 text-sm font-medium text-stone-800">{tc.input_message.slice(0, 120)}{tc.input_message.length > 120 ? "…" : ""}</p>
-                  <p className="mt-1 text-xs text-stone-500">Expected: {tc.expected_state} | {tc.expected_behavior}</p>
+                    {!isExpanded && isEditingThis && (
+                      <p className="mt-1 text-sm text-stone-500 truncate max-w-full" title={form.input_message}>
+                        {inputPreview(form.input_message)}
+                      </p>
+                    )}
+                  </div>
                 </div>
-                <div className="flex shrink-0 items-center gap-2">
+                <div className="flex shrink-0 items-center gap-2" onClick={(e) => e.stopPropagation()}>
                   <button
                     type="button"
                     role="switch"
@@ -640,33 +630,52 @@ setForm({ test_case_id: "", title: "", category_id: "", input_message: "", img_u
                       aria-hidden
                     />
                   </button>
-                  <button
-                    type="button"
-                    onClick={() => {
+                  {isEditingThis ? (
+                    <>
+                      <button
+                        type="button"
+                        onClick={() => (document.getElementById(`edit-form-${tc.test_case_id}`) as HTMLFormElement | null)?.requestSubmit()}
+                        className="rounded-lg bg-stone-900 px-4 py-2 text-sm font-medium text-white hover:bg-stone-800"
+                      >
+                        Save
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setEditing(null)}
+                        className="rounded-lg border border-stone-200 px-4 py-2 text-sm font-medium text-stone-600 hover:bg-stone-50"
+                      >
+                        Cancel
+                      </button>
+                    </>
+                  ) : (
+                    <button
+                      type="button"
+                      onClick={() => {
                         setForm({
-                        test_case_id: tc.test_case_id,
-                        title: tc.title ?? "",
-                        category_id: tc.category_id ?? "",
-                        input_message: tc.input_message,
-                        img_url: tc.img_url ?? "",
-                        context: tc.context ?? "",
-                        expected_state: tc.expected_state,
-                        expected_behavior: tc.expected_behavior,
-                        forbidden: tc.forbidden ?? "",
-                        notes: tc.notes ?? "",
-                        is_enabled: tc.is_enabled !== false,
-                      });
-                      setEditing(tc);
-                      setShowForm(true);
-                    }}
-                    title="Edit"
-                    aria-label="Edit test case"
-                    className="rounded-lg border border-stone-200 p-2 text-stone-600 hover:bg-stone-50"
-                  >
-                    <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden>
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
-                    </svg>
-                  </button>
+                          test_case_id: tc.test_case_id,
+                          title: tc.title ?? "",
+                          category_id: tc.category_id ?? "",
+                          input_message: tc.input_message,
+                          img_url: tc.img_url ?? "",
+                          context: tc.context ?? "",
+                          expected_state: tc.expected_state,
+                          expected_behavior: tc.expected_behavior,
+                          forbidden: tc.forbidden ?? "",
+                          notes: tc.notes ?? "",
+                          is_enabled: tc.is_enabled !== false,
+                        });
+                        setEditing(tc);
+                        setExpandedTestCaseId(tc.test_case_id);
+                      }}
+                      title="Edit"
+                      aria-label="Edit test case"
+                      className="rounded-lg border border-stone-200 p-2 text-stone-600 hover:bg-stone-50"
+                    >
+                      <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden>
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
+                      </svg>
+                    </button>
+                  )}
                   <button
                     type="button"
                     onClick={() => handleDelete(tc)}
@@ -680,8 +689,115 @@ setForm({ test_case_id: "", title: "", category_id: "", input_message: "", img_u
                   </button>
                 </div>
               </div>
+              {isExpanded && (
+                <div className="border-t border-stone-100 p-5">
+                  {isEditingThis ? (
+                    <form id={`edit-form-${tc.test_case_id}`} onSubmit={handleSubmit} className="space-y-4">
+                      <div className="flex flex-wrap items-center gap-4 mb-4">
+                        <div>
+                          <p className="text-xs font-medium uppercase tracking-wide text-stone-400">Category</p>
+                          <select value={form.category_id} onChange={(e) => setForm((f) => ({ ...f, category_id: e.target.value }))} className="mt-1 rounded-lg border border-stone-200 bg-white px-3 py-2 text-sm text-stone-900 focus:border-stone-400 focus:outline-none focus:ring-1 focus:ring-stone-400">
+                            <option value="">No category</option>
+                            {categories.map((c) => <option key={c.category_id} value={c.category_id}>{c.name}</option>)}
+                          </select>
+                        </div>
+                      </div>
+                      <div>
+                        <p className="text-xs font-medium uppercase tracking-wide text-stone-400">Input *</p>
+                        {isEditingThis ? (
+                          <textarea rows={3} value={form.input_message} onChange={(e) => setForm((f) => ({ ...f, input_message: e.target.value }))} required className="mt-1 block w-full rounded-lg border border-stone-200 bg-white px-3 py-2 text-sm text-stone-900 focus:border-stone-400 focus:outline-none focus:ring-1 focus:ring-stone-400" />
+                        ) : (
+                          <p className="mt-1 text-sm text-stone-700 leading-relaxed">{tc.input_message?.trim() || "—"}</p>
+                        )}
+                      </div>
+                      <div>
+                        <p className="text-xs font-medium uppercase tracking-wide text-stone-400">Context</p>
+                        {isEditingThis ? (
+                          <textarea rows={2} value={form.context} onChange={(e) => setForm((f) => ({ ...f, context: e.target.value }))} className="mt-1 block w-full rounded-lg border border-stone-200 bg-white px-3 py-2 text-sm text-stone-900 focus:border-stone-400 focus:outline-none focus:ring-1 focus:ring-stone-400" />
+                        ) : (
+                          <p className="mt-1 text-sm text-stone-700 leading-relaxed whitespace-pre-wrap">{tc.context?.trim() || "—"}</p>
+                        )}
+                      </div>
+                      <div>
+                        <p className="text-xs font-medium uppercase tracking-wide text-stone-400">Expected state *</p>
+                        {isEditingThis ? (
+                          <textarea rows={3} value={form.expected_state} onChange={(e) => setForm((f) => ({ ...f, expected_state: e.target.value }))} required className="mt-1 block w-full rounded-lg border border-stone-200 bg-white px-3 py-2 text-sm text-stone-900 focus:border-stone-400 focus:outline-none focus:ring-1 focus:ring-stone-400" />
+                        ) : (
+                          <p className="mt-1 text-sm text-stone-700 leading-relaxed whitespace-pre-wrap">{tc.expected_state?.trim() || "—"}</p>
+                        )}
+                      </div>
+                      <div>
+                        <p className="text-xs font-medium uppercase tracking-wide text-stone-400">Expected behaviour *</p>
+                        {isEditingThis ? (
+                          <textarea rows={2} value={form.expected_behavior} onChange={(e) => setForm((f) => ({ ...f, expected_behavior: e.target.value }))} required className="mt-1 block w-full rounded-lg border border-stone-200 bg-white px-3 py-2 text-sm text-stone-900 focus:border-stone-400 focus:outline-none focus:ring-1 focus:ring-stone-400" />
+                        ) : (
+                          <p className="mt-1 text-sm text-stone-700 leading-relaxed whitespace-pre-wrap">{tc.expected_behavior?.trim() || "—"}</p>
+                        )}
+                      </div>
+                      <div>
+                        <p className="text-xs font-medium uppercase tracking-wide text-stone-400">Forbidden</p>
+                        {isEditingThis ? (
+                          <textarea rows={2} value={form.forbidden} onChange={(e) => setForm((f) => ({ ...f, forbidden: e.target.value }))} className="mt-1 block w-full rounded-lg border border-stone-200 bg-white px-3 py-2 text-sm text-stone-900 focus:border-stone-400 focus:outline-none focus:ring-1 focus:ring-stone-400" />
+                        ) : (
+                          <p className="mt-1 text-sm text-stone-700 leading-relaxed whitespace-pre-wrap">{tc.forbidden?.trim() || "—"}</p>
+                        )}
+                      </div>
+                      <div>
+                        <p className="text-xs font-medium uppercase tracking-wide text-stone-400">Notes</p>
+                        {isEditingThis ? (
+                          <textarea rows={2} value={form.notes} onChange={(e) => setForm((f) => ({ ...f, notes: e.target.value }))} className="mt-1 block w-full rounded-lg border border-stone-200 bg-white px-3 py-2 text-sm text-stone-900 focus:border-stone-400 focus:outline-none focus:ring-1 focus:ring-stone-400" placeholder="Internal notes" />
+                        ) : (
+                          <p className="mt-1 text-sm text-stone-700 leading-relaxed whitespace-pre-wrap">{tc.notes?.trim() || "—"}</p>
+                        )}
+                      </div>
+                      <div>
+                        <p className="text-xs font-medium uppercase tracking-wide text-stone-400">Img URL</p>
+                        {isEditingThis ? (
+                          <input type="url" value={form.img_url} onChange={(e) => setForm((f) => ({ ...f, img_url: e.target.value }))} className="mt-1 block w-full rounded-lg border border-stone-200 bg-white px-3 py-2 text-sm text-stone-900 focus:border-stone-400 focus:outline-none focus:ring-1 focus:ring-stone-400" />
+                        ) : (
+                          <p className="mt-1 text-sm text-stone-700 leading-relaxed">{tc.img_url?.trim() || "—"}</p>
+                        )}
+                      </div>
+                    </form>
+                  ) : (
+                    <div className="space-y-3">
+                      <div>
+                        <p className="text-xs font-medium uppercase tracking-wide text-stone-400">Input</p>
+                        <p className="mt-1 text-sm text-stone-700 leading-relaxed">{tc.input_message?.trim() || "—"}</p>
+                      </div>
+                      <div>
+                        <p className="text-xs font-medium uppercase tracking-wide text-stone-400">Context</p>
+                        <p className="mt-1 text-sm text-stone-700 leading-relaxed whitespace-pre-wrap">{tc.context?.trim() || "—"}</p>
+                      </div>
+                      <div>
+                        <p className="text-xs font-medium uppercase tracking-wide text-stone-400">Expected state</p>
+                        <p className="mt-1 text-sm text-stone-700 leading-relaxed whitespace-pre-wrap">{tc.expected_state?.trim() || "—"}</p>
+                      </div>
+                      <div>
+                        <p className="text-xs font-medium uppercase tracking-wide text-stone-400">Expected behaviour</p>
+                        <p className="mt-1 text-sm text-stone-700 leading-relaxed whitespace-pre-wrap">{tc.expected_behavior?.trim() || "—"}</p>
+                      </div>
+                      <div>
+                        <p className="text-xs font-medium uppercase tracking-wide text-stone-400">Forbidden</p>
+                        <p className="mt-1 text-sm text-stone-700 leading-relaxed whitespace-pre-wrap">{tc.forbidden?.trim() || "—"}</p>
+                      </div>
+                      <div>
+                        <p className="text-xs font-medium uppercase tracking-wide text-stone-400">Notes</p>
+                        <p className="mt-1 text-sm text-stone-700 leading-relaxed whitespace-pre-wrap">{tc.notes?.trim() || "—"}</p>
+                      </div>
+                      {tc.img_url?.trim() ? (
+                        <div>
+                          <p className="text-xs font-medium uppercase tracking-wide text-stone-400">Img URL</p>
+                          <p className="mt-1 text-sm text-stone-700 leading-relaxed">{tc.img_url}</p>
+                        </div>
+                      ) : null}
+                    </div>
+                  )}
+                </div>
+              )}
             </li>
-            ))
+              );
+            })
           )}
         </ul>
       )}
