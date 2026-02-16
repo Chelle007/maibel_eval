@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
+import type { Database, UsersRow } from "@/lib/db.types";
 
 /**
  * GET /api/auth/me – current user and USERS row (includes is_owner).
@@ -24,25 +25,28 @@ export async function GET() {
   if (!appUser) {
     const { data: existing } = await admin.from("users").select("user_id").limit(1);
     const isFirstUser = !existing?.length;
-    await admin.from("users").insert({
+    const newUserRow = {
       user_id: user.id,
       email: user.email ?? user.id,
       full_name: user.user_metadata?.full_name ?? user.user_metadata?.name ?? null,
       is_owner: isFirstUser,
-    });
+    } as Database["public"]["Tables"]["users"]["Insert"];
+    await admin.from("users").insert(newUserRow as any);
     const { data: inserted } = await admin
       .from("users")
       .select("user_id, email, full_name, is_owner")
       .eq("user_id", user.id)
       .single();
+    const row = inserted as Pick<UsersRow, "user_id" | "email" | "full_name" | "is_owner"> | null;
     return NextResponse.json({
       user: { id: user.id, email: user.email },
-      appUser: inserted ?? { user_id: user.id, email: user.email, full_name: null, is_owner: false },
+      appUser: row ?? { user_id: user.id, email: user.email, full_name: null, is_owner: false },
     });
   }
 
+  const row = appUser as Pick<UsersRow, "user_id" | "email" | "full_name" | "is_owner">;
   return NextResponse.json({
     user: { id: user.id, email: user.email },
-    appUser: { user_id: appUser.user_id, email: appUser.email, full_name: appUser.full_name, is_owner: appUser.is_owner },
+    appUser: { user_id: row.user_id, email: row.email, full_name: row.full_name, is_owner: row.is_owner },
   });
 }
