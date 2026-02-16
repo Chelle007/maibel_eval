@@ -438,24 +438,57 @@ export default function SessionDetailPage() {
             {isExpanded && (
             <div className="border-t border-stone-100 p-5 space-y-4">
               {r.test_cases && (
-                <div>
-                  <p className="text-xs font-medium uppercase tracking-wide text-stone-400">Input</p>
-                  <p className="mt-1 text-sm text-stone-700 leading-relaxed">
-                    {typeof r.test_cases.input_message === "string" ? r.test_cases.input_message : "—"}
-                  </p>
+                <div className="space-y-3">
+                  <div>
+                    <p className="text-xs font-medium uppercase tracking-wide text-stone-400">Input</p>
+                    <p className="mt-1 text-sm text-stone-700 leading-relaxed">
+                      {typeof r.test_cases.input_message === "string" ? r.test_cases.input_message : "—"}
+                    </p>
+                  </div>
+                  <div>
+                    <p className="text-xs font-medium uppercase tracking-wide text-stone-400">Expected state</p>
+                    <p className="mt-1 text-sm text-stone-700 leading-relaxed whitespace-pre-wrap">
+                      {typeof r.test_cases.expected_state === "string" && r.test_cases.expected_state.trim() ? r.test_cases.expected_state : "—"}
+                    </p>
+                  </div>
+                  <div>
+                    <p className="text-xs font-medium uppercase tracking-wide text-stone-400">Expected behaviour</p>
+                    <p className="mt-1 text-sm text-stone-700 leading-relaxed whitespace-pre-wrap">
+                      {typeof r.test_cases.expected_behavior === "string" && r.test_cases.expected_behavior.trim() ? r.test_cases.expected_behavior : "—"}
+                    </p>
+                  </div>
                 </div>
               )}
+              <div className="border-t border-stone-200 pt-4" />
               {r.evren_responses && (
-                <div>
-                  <p className="text-xs font-medium uppercase tracking-wide text-stone-400">Output</p>
-                  <p className="mt-1 text-sm text-stone-700 leading-relaxed">
-                    {((): string => {
-                      const out = Array.isArray(r.evren_responses) ? r.evren_responses[0]?.evren_response : (r.evren_responses as { evren_response?: string }).evren_response;
-                      return out != null && out !== "" ? `"${out}"` : "—";
-                    })()}
-                  </p>
+                <div className="space-y-3">
+                  <div>
+                    <p className="text-xs font-medium uppercase tracking-wide text-stone-400">Output</p>
+                    <p className="mt-1 text-sm text-stone-700 leading-relaxed">
+                      {((): string => {
+                        const out = Array.isArray(r.evren_responses) ? r.evren_responses[0]?.evren_response : (r.evren_responses as { evren_response?: string }).evren_response;
+                        return out != null && out !== "" ? `"${out}"` : "—";
+                      })()}
+                    </p>
+                  </div>
+                  <div>
+                    <p className="text-xs font-medium uppercase tracking-wide text-stone-400">Detected flags</p>
+                    <p className="mt-1 text-sm text-stone-700 leading-relaxed whitespace-pre-wrap font-mono">
+                      {((): string => {
+                        const flags = Array.isArray(r.evren_responses) ? r.evren_responses[0]?.detected_states : (r.evren_responses as { detected_states?: string | null }).detected_states;
+                        if (flags == null || flags === "") return "—";
+                        try {
+                          const parsed = JSON.parse(flags) as unknown;
+                          return JSON.stringify(parsed, null, 2);
+                        } catch {
+                          return flags;
+                        }
+                      })()}
+                    </p>
+                  </div>
                 </div>
               )}
+              <div className="border-t border-stone-200 pt-4" />
               <div>
                 <p className="text-xs font-medium uppercase tracking-wide text-stone-400">Analysis</p>
                 {editingReasonId === r.eval_result_id ? (
