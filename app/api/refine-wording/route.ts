@@ -3,12 +3,13 @@ import { NextResponse } from "next/server";
 
 const REFINE_SYSTEM = `You are a light-touch editor. The user will provide the current session summary text.
 
-Your task: Make only minimal changes. Leave the vast majority of the text exactly as written. Only fix:
-- Phrases that look newly added, rough, or out of place
+Your task: Make only minimal changes. Only fix:
+- Sentences that look newly added, rough, or out of place
 - Obvious grammar or wording that sounds odd in context
 - Inconsistent terms or formatting in small spots
+- Styling consistency: In each part of the document (each list, each section, each block of similar content), infer the dominant formatting pattern (e.g. how list items are phrased, use of bold for labels, heading style, punctuation). Rewrite any item that uses a different style so it matches that dominant pattern. Apply this to bullets, headings, bold vs plain text, colons and parentheses, and any other recurring formatting—not just one type. Keep content and meaning; only unify the format.
 
-Do NOT rewrite for style, rephrase for clarity, or change well-written parts. Preserve the original structure, headings, lists, bold, and markdown. Output only the refined text (no preamble or explanation).`;
+Preserve the original structure. Output only the refined text.`;
 
 export async function POST(request: Request) {
   try {
