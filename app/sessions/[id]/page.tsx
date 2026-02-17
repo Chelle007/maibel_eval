@@ -5,6 +5,7 @@ import { useParams, useRouter } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
 import ReactMarkdown from "react-markdown";
 import { PageHeader } from "@/app/components/PageHeader";
+import { SummaryEditor } from "@/app/components/SummaryEditor";
 
 type Session = {
   test_session_id: string;
@@ -90,6 +91,7 @@ export default function SessionDetailPage() {
   const [summary, setSummary] = useState("");
   const [editingSummary, setEditingSummary] = useState(false);
   const [savingSummary, setSavingSummary] = useState(false);
+  const [refiningWording, setRefiningWording] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [expandedResultId, setExpandedResultId] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState("");
@@ -179,6 +181,23 @@ export default function SessionDetailPage() {
       })
       .catch((e) => setError(e.message))
       .finally(() => setSavingSummary(false));
+  }
+
+  function refineWording() {
+    setRefiningWording(true);
+    setError(null);
+    fetch("/api/refine-wording", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ summary }),
+    })
+      .then((res) => res.json())
+      .then((data) => {
+        if (data.error) throw new Error(data.error);
+        if (typeof data.refined === "string") setSummary(data.refined);
+      })
+      .catch((e) => setError(e.message))
+      .finally(() => setRefiningWording(false));
   }
 
   if (loading) return <div className="mx-auto max-w-4xl px-4 py-8 text-stone-500">Loading…</div>;
@@ -272,14 +291,14 @@ export default function SessionDetailPage() {
         </div>
         {editingSummary ? (
           <>
-            <textarea
-              rows={12}
-              value={summary}
-              onChange={(e) => setSummary(e.target.value)}
-              className="mt-1.5 block w-full rounded-lg border border-stone-200 bg-white px-3 py-2 text-stone-900 placeholder:text-stone-400 focus:border-stone-400 focus:outline-none focus:ring-1 focus:ring-stone-400"
-              placeholder="Optional summary or analysis of this run."
-            />
-            <div className="mt-3 flex gap-2">
+            <div className="mt-1.5">
+              <SummaryEditor
+                value={summary}
+                onChange={setSummary}
+                placeholder="Optional summary or analysis of this run."
+              />
+            </div>
+            <div className="mt-3 flex flex-wrap gap-2">
               <button
                 type="button"
                 onClick={saveSummary}
@@ -287,6 +306,14 @@ export default function SessionDetailPage() {
                 className="rounded-lg bg-stone-900 px-4 py-2 text-sm font-medium text-white hover:bg-stone-800 disabled:opacity-50"
               >
                 {savingSummary ? "Saving…" : "Save summary"}
+              </button>
+              <button
+                type="button"
+                onClick={refineWording}
+                disabled={refiningWording}
+                className="rounded-lg border border-violet-300 bg-violet-50 px-4 py-2 text-sm font-medium text-violet-700 hover:bg-violet-100 hover:border-violet-400 disabled:opacity-50"
+              >
+                {refiningWording ? "Refining…" : "Refine wording"}
               </button>
               <button
                 type="button"
@@ -306,6 +333,7 @@ export default function SessionDetailPage() {
             [&_ul]:mt-1.5 [&_ul]:list-disc [&_ul]:pl-5 [&_ul]:space-y-0.5 [&_ul]:text-sm
             [&_ol]:mt-1.5 [&_ol]:list-decimal [&_ol]:pl-5 [&_ol]:space-y-0.5 [&_ol]:text-sm
             [&_strong]:font-semibold [&_strong]:text-stone-800 [&_strong]:text-sm
+            [&_code]:font-mono [&_code]:text-sm [&_code]:bg-stone-100 [&_code]:px-1 [&_code]:rounded [&_code]:text-stone-800
             [&_hr]:my-4 [&_hr]:border-stone-200">
             {summary.trim() ? (
               <ReactMarkdown>{summary}</ReactMarkdown>
