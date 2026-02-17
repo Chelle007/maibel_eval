@@ -14,6 +14,48 @@ function extractJson(text: string): string {
   return trimmed;
 }
 
+/** Escape control characters inside JSON string literals so JSON.parse accepts the string. */
+function sanitizeJsonStringLiterals(jsonStr: string): string {
+  let result = "";
+  let i = 0;
+  const len = jsonStr.length;
+  while (i < len) {
+    const c = jsonStr[i];
+    if (c === '"') {
+      result += c;
+      i++;
+      while (i < len) {
+        const d = jsonStr[i];
+        if (d === "\\") {
+          result += jsonStr.slice(i, i + 2);
+          i += 2;
+          continue;
+        }
+        if (d === '"') {
+          result += d;
+          i++;
+          break;
+        }
+        if (d >= "\u0000" && d <= "\u001f") {
+          const code = d.charCodeAt(0);
+          if (code === 0x0a) result += "\\n";
+          else if (code === 0x0d) result += "\\r";
+          else if (code === 0x09) result += "\\t";
+          else result += "\\u" + code.toString(16).padStart(4, "0");
+          i++;
+          continue;
+        }
+        result += d;
+        i++;
+      }
+      continue;
+    }
+    result += c;
+    i++;
+  }
+  return result;
+}
+
 const DEFAULT_MODEL = "gemini-2.5-flash";
 
 /** Run evaluator on one test case + Evren output; returns parsed evaluation result. */
@@ -46,7 +88,8 @@ export async function evaluateOne(
     : undefined;
 
   const jsonStr = extractJson(text);
-  const parsed = JSON.parse(jsonStr) as Record<string, unknown>;
+  const sanitized = sanitizeJsonStringLiterals(jsonStr);
+  const parsed = JSON.parse(sanitized) as Record<string, unknown>;
 
   // Normalize success (prompt says "true/false" string)
   const success =

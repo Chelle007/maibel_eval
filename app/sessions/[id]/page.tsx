@@ -63,7 +63,7 @@ type EvalResult = {
   total_tokens: number | null;
   cost_usd: number | null;
   manually_edited: boolean;
-  test_cases?: { input_message: string; expected_state: string; expected_behavior: string; title?: string | null } | null;
+  test_cases?: { input_message: string; expected_state: string; expected_behavior: string; title?: string | null; context?: string | null } | null;
   evren_responses?: { evren_response: string; detected_states: string | null } | { evren_response: string; detected_states: string | null }[] | null;
 };
 
@@ -467,6 +467,12 @@ export default function SessionDetailPage() {
                     <p className="text-xs font-medium uppercase tracking-wide text-stone-400">Input</p>
                     <p className="mt-1 text-sm text-stone-700 leading-relaxed">
                       {typeof r.test_cases.input_message === "string" ? r.test_cases.input_message : "—"}
+                    </p>
+                  </div>
+                  <div>
+                    <p className="text-xs font-medium uppercase tracking-wide text-stone-400">Context</p>
+                    <p className="mt-1 text-sm text-stone-700 leading-relaxed whitespace-pre-wrap">
+                      {typeof r.test_cases.context === "string" && r.test_cases.context.trim() ? r.test_cases.context.trim() : "—"}
                     </p>
                   </div>
                   <div>

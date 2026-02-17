@@ -7,18 +7,13 @@ function evrenEndpoint(input: string): string {
   // Node.js may resolve "localhost" to ::1 (IPv6) which often fails
   url = url.replace(/\/\/localhost([:\/])/g, "//127.0.0.1$1");
   url = url.replace(/\/\/localhost$/, "//127.0.0.1");
-  if (!url.endsWith("/evren") && !url.endsWith("/evren/")) {
-    url = `${url}/evren`;
-  }
   return url;
 }
 
 /**
- * Call Evren model API: POST /evren with input_message, optional img_url and context.
+ * Call Evren model API with input_message, optional img_url and context.
  * Returns evren_response and detected_states (from API's detected_flags).
- *
- * Example: if Evren is running at http://localhost:8000 (uvicorn main:app --reload --host 0.0.0.0 --port 8000),
- * pass evrenModelApiUrl = "http://localhost:8000" and we request POST http://localhost:8000/evren.
+ * evrenModelApiUrl is used as-is (no path is appended); include the full endpoint path in the URL if needed.
  */
 export async function callEvrenApi(
   evrenModelApiUrl: string,
