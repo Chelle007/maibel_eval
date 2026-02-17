@@ -1,19 +1,30 @@
 import type { TestCase, EvrenOutput } from "./types";
 
+/** Path for the Evren eval endpoint (POST only). Server returns 405 if called with GET. */
+const EVREN_EVAL_PATH = "/evren-eval";
+
 /** Build the Evren API endpoint URL. Also replaces localhost with 127.0.0.1
- *  to avoid IPv6 resolution issues in Node.js server-side fetch. */
+ *  to avoid IPv6 resolution issues in Node.js server-side fetch.
+ *  If the base URL has no path (e.g. http://localhost:8000), appends EVREN_EVAL_PATH
+ *  so the request goes to POST /evren-eval, not to the root (which would 405). */
 function evrenEndpoint(input: string): string {
   let url = input.trim().replace(/\/+$/, "");
   // Node.js may resolve "localhost" to ::1 (IPv6) which often fails
   url = url.replace(/\/\/localhost([:\/])/g, "//127.0.0.1$1");
   url = url.replace(/\/\/localhost$/, "//127.0.0.1");
+  const parsed = new URL(url);
+  const path = parsed.pathname;
+  if (!path || path === "/") {
+    parsed.pathname = EVREN_EVAL_PATH;
+    return parsed.toString();
+  }
   return url;
 }
 
 /**
- * Call Evren model API with input_message, optional img_url and context.
+ * Call Evren model API with POST and JSON body (input_message, optional img_url, context).
  * Returns evren_response and detected_states (from API's detected_flags).
- * evrenModelApiUrl is used as-is (no path is appended); include the full endpoint path in the URL if needed.
+ * If evrenModelApiUrl is a base URL with no path (e.g. http://localhost:8000), /evren-eval is appended.
  */
 export async function callEvrenApi(
   evrenModelApiUrl: string,
