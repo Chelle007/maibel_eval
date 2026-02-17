@@ -531,7 +531,15 @@ export default function SessionDetailPage() {
                     />
                   </div>
                 ) : (
-                  <p className="mt-1 text-sm text-stone-600 leading-relaxed">{r.reason || "—"}</p>
+                  <div className="mt-1 space-y-3">
+                    {(r.reason ?? "—")
+                      .split(/\n\n+/)
+                      .map((para, i) => (
+                        <p key={i} className="text-sm text-stone-600 leading-relaxed">
+                          {para.trim() || (i === 0 ? "—" : null)}
+                        </p>
+                      ))}
+                  </div>
                 )}
               </div>
             </div>

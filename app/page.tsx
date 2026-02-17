@@ -1,48 +1,12 @@
 "use client";
 
-import { useState, useEffect, useRef } from "react";
-import { useRouter } from "next/navigation";
+import { useState, useEffect } from "react";
 import { PageHeader } from "@/app/components/PageHeader";
+import { useEvalRun } from "@/app/context/EvalRunContext";
 
 const FALLBACK_EVREN_URL = "http://localhost:8000";
 const FALLBACK_EVALUATOR_MODEL = "gemini-2.5-flash";
 const FALLBACK_SUMMARIZER_MODEL = "gemini-2.5-flash";
-
-function playCompletionSound() {
-  try {
-    const ctx = new (window.AudioContext || (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext)();
-    const playTone = (freq: number, startTime: number, duration: number) => {
-      const osc = ctx.createOscillator();
-      const gain = ctx.createGain();
-      osc.connect(gain);
-      gain.connect(ctx.destination);
-      osc.frequency.value = freq;
-      osc.type = "sine";
-      gain.gain.setValueAtTime(0.15, startTime);
-      gain.gain.exponentialRampToValueAtTime(0.01, startTime + duration);
-      osc.start(startTime);
-      osc.stop(startTime + duration);
-    };
-    playTone(523.25, 0, 0.15);
-    playTone(659.25, 0.2, 0.2);
-  } catch {
-    /* ignore if AudioContext not supported or blocked */
-  }
-}
-
-function showCompletionNotification() {
-  if (typeof window === "undefined" || !("Notification" in window)) return;
-  try {
-    if (Notification.permission === "granted") {
-      new Notification("Evaluation complete", {
-        body: "All test cases finished. Session ready to view.",
-        icon: "/favicon.ico",
-      });
-    }
-  } catch {
-    /* ignore notification errors */
-  }
-}
 
 function requestNotificationPermission() {
   if (typeof window === "undefined" || !("Notification" in window)) return;
@@ -51,24 +15,12 @@ function requestNotificationPermission() {
   }
 }
 
-type Progress = {
-  stage: string;
-  index?: number;
-  total?: number;
-  test_case_id?: string;
-  message?: string;
-};
-
 export default function Home() {
-  const router = useRouter();
+  const { runState, startRun, cancelRun, clearRunState } = useEvalRun();
   const [evrenUrl, setEvrenUrl] = useState(FALLBACK_EVREN_URL);
   const [evaluatorModel, setEvaluatorModel] = useState(FALLBACK_EVALUATOR_MODEL);
   const [summarizerModel, setSummarizerModel] = useState(FALLBACK_SUMMARIZER_MODEL);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [progress, setProgress] = useState<Progress | null>(null);
   const [settingsLoaded, setSettingsLoaded] = useState(false);
-  const abortControllerRef = useRef<AbortController | null>(null);
 
   useEffect(() => {
     fetch("/api/default-settings")
@@ -82,99 +34,23 @@ export default function Home() {
       .finally(() => setSettingsLoaded(true));
   }, []);
 
-  function handleCancel() {
-    abortControllerRef.current?.abort();
-  }
+  // When returning to home after a completed run, clear so form shows again
+  useEffect(() => {
+    if (runState.completed) clearRunState();
+  }, [runState.completed, clearRunState]);
 
-  async function handleSubmit(e: React.FormEvent) {
+  const loading = runState.loading;
+  const progress = runState.progress;
+  const error = runState.error;
+
+  function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
-    setError(null);
-    setProgress(null);
     requestNotificationPermission();
-    setLoading(true);
-    const controller = new AbortController();
-    abortControllerRef.current = controller;
-    try {
-      const res = await fetch("/api/evaluate/run/stream", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          evren_model_api_url: evrenUrl.trim(),
-          model_name: evaluatorModel || undefined,
-          summarizer_model: summarizerModel || undefined,
-        }),
-        signal: controller.signal,
-      });
-      if (!res.ok) {
-        const data = await res.json().catch(() => ({}));
-        setError((data as { error?: string }).error ?? `Request failed (${res.status})`);
-        setLoading(false);
-        return;
-      }
-      const reader = res.body?.getReader();
-      const decoder = new TextDecoder();
-      if (!reader) {
-        setError("No response body");
-        setLoading(false);
-        return;
-      }
-      let buffer = "";
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        buffer += decoder.decode(value, { stream: true });
-        const lines = buffer.split("\n\n");
-        buffer = lines.pop() ?? "";
-        for (const chunk of lines) {
-          const match = chunk.match(/^data:\s*(.+)/m);
-          if (!match) continue;
-          try {
-            const data = JSON.parse(match[1].trim()) as {
-              type: string;
-              stage?: string;
-              message?: string;
-              index?: number;
-              total?: number;
-              test_case_id?: string;
-              test_session_id?: string;
-              error?: string;
-            };
-            if (data.type === "progress" && data.stage != null) {
-              setProgress({
-                stage: data.stage,
-                index: data.index,
-                total: data.total,
-                test_case_id: data.test_case_id,
-                message: data.message,
-              });
-            } else if (data.type === "complete" && data.test_session_id) {
-              setProgress(null);
-              setLoading(false);
-              playCompletionSound();
-              showCompletionNotification();
-              router.push(`/sessions/${data.test_session_id}`);
-              return;
-            } else if (data.type === "error" && data.error) {
-              setError(data.error);
-              setProgress(null);
-            }
-          } catch {
-            /* ignore parse errors */
-          }
-        }
-      }
-    } catch (e) {
-      if (e instanceof Error && e.name === "AbortError") {
-        setProgress(null);
-        setError(null);
-      } else {
-        setError(e instanceof Error ? e.message : "Something went wrong");
-        setProgress(null);
-      }
-    } finally {
-      setLoading(false);
-      abortControllerRef.current = null;
-    }
+    startRun({
+      evren_model_api_url: evrenUrl.trim(),
+      model_name: evaluatorModel || undefined,
+      summarizer_model: summarizerModel || undefined,
+    });
   }
 
   return (
@@ -246,7 +122,7 @@ export default function Home() {
           {loading && (
             <button
               type="button"
-              onClick={handleCancel}
+              onClick={cancelRun}
               className="rounded-lg border border-stone-300 bg-white px-4 py-2.5 text-sm font-medium text-stone-700 shadow-sm hover:bg-stone-50"
             >
               Cancel
