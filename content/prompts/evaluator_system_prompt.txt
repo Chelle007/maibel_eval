@@ -46,7 +46,7 @@ b. EVREN OUTPUT
 - IF Priority 3 (Persona) is weak -> Calculate score. If score < 50, set success = FALSE.
 
 === OUTPUT FORMAT (IMPORTANT) ===
-Provide your output STRICTLY in the following JSON format:
+Provide your output STRICTLY in the following JSON format. Use valid JSON only: inside string values, escape any double quote as \", and use \n for newlines.
 {
   "test_case_id": "ID from sheet",
   "success": "true/false",

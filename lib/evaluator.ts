@@ -14,7 +14,7 @@ function extractJson(text: string): string {
   return trimmed;
 }
 
-/** Escape control characters inside JSON string literals so JSON.parse accepts the string. */
+/** Escape control characters and fix unescaped double quotes inside JSON string literals. */
 function sanitizeJsonStringLiterals(jsonStr: string): string {
   let result = "";
   let i = 0;
@@ -32,9 +32,16 @@ function sanitizeJsonStringLiterals(jsonStr: string): string {
           continue;
         }
         if (d === '"') {
-          result += d;
+          // Unescaped quote: if next token is , or }, this closes the string; else escape it.
+          const rest = jsonStr.slice(i + 1);
+          if (/^\s*[,}]/.test(rest) || rest.trim() === "") {
+            result += d;
+            i++;
+            break;
+          }
+          result += '\\"';
           i++;
-          break;
+          continue;
         }
         if (d >= "\u0000" && d <= "\u001f") {
           const code = d.charCodeAt(0);
@@ -54,6 +61,35 @@ function sanitizeJsonStringLiterals(jsonStr: string): string {
     i++;
   }
   return result;
+}
+
+/** Extract evaluator fields from raw text when JSON.parse fails (e.g. unescaped quotes in reason). */
+function extractEvaluatorFieldsFallback(
+  raw: string,
+  fallbackTestCaseId: string
+): Record<string, unknown> {
+  const obj: Record<string, unknown> = {
+    test_case_id: fallbackTestCaseId,
+    success: false,
+    score: 0,
+    flags_detected: "",
+    reason: "",
+  };
+  const unescape = (s: string) => s.replace(/\\"/g, '"').replace(/\\n/g, "\n");
+  const id = raw.match(/"test_case_id"\s*:\s*"((?:[^"\\]|\\.)*)"/);
+  if (id) obj.test_case_id = unescape(id[1]);
+  const succ = raw.match(/"success"\s*:\s*(?:"(true|false)"|(true|false))/i);
+  if (succ) {
+    const v = (succ[1] ?? succ[2] ?? "").toLowerCase();
+    obj.success = v === "true";
+  }
+  const sc = raw.match(/"score"\s*:\s*(\d+)/);
+  if (sc) obj.score = Number(sc[1]);
+  const flags = raw.match(/"flags_detected"\s*:\s*"((?:[^"\\]|\\.)*)"/);
+  if (flags) obj.flags_detected = unescape(flags[1]);
+  const reason = raw.match(/"reason"\s*:\s*"((?:[^"\\]|\\.)*)"/);
+  if (reason) obj.reason = unescape(reason[1]);
+  return obj;
 }
 
 const DEFAULT_MODEL = "gemini-2.5-flash";
@@ -95,12 +131,24 @@ export async function evaluateOne(
   } catch (parseErr) {
     const message = parseErr instanceof Error ? parseErr.message : "Invalid JSON";
     console.error("[evaluator] JSON parse failed:", message, "raw length:", sanitized.length);
+    // Fallback: extract fields with regex (like summarizer) when model returns malformed JSON
+    const fallback = extractEvaluatorFieldsFallback(jsonStr, testCase.test_case_id);
+    const success =
+      fallback.success === true ||
+      fallback.success === "true" ||
+      String(fallback.success).toLowerCase() === "true";
+    const score =
+      typeof fallback.score === "number"
+        ? fallback.score
+        : Number(fallback.score) || 0;
     return {
-      test_case_id: testCase.test_case_id,
-      success: false,
-      score: 0,
-      flags_detected: "",
-      reason: `Evaluator returned invalid JSON: ${message}`,
+      test_case_id: String(fallback.test_case_id ?? testCase.test_case_id),
+      success,
+      score,
+      flags_detected: String(fallback.flags_detected ?? ""),
+      reason:
+        String(fallback.reason ?? "").trim() ||
+        `Evaluator returned invalid JSON (recovered partial): ${message}`,
       ...(token_usage && { token_usage }),
     };
   }
