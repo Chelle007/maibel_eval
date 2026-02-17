@@ -13,8 +13,12 @@ function sendEvent(
   type: string,
   payload: object
 ) {
-  const data = JSON.stringify({ type, ...payload });
-  controller.enqueue(new TextEncoder().encode(`data: ${data}\n\n`));
+  try {
+    const data = JSON.stringify({ type, ...payload });
+    controller.enqueue(new TextEncoder().encode(`data: ${data}\n\n`));
+  } catch {
+    /* Controller may already be closed (e.g. client disconnect). */
+  }
 }
 
 export async function POST(request: Request) {
@@ -258,11 +262,7 @@ export async function POST(request: Request) {
       } catch (err) {
         const message = err instanceof Error ? err.message : "Run failed";
         console.error("[evaluate/run/stream] Error:", message, err);
-        try {
-          sendEvent(controller, "error", { error: message });
-        } catch {
-          /* stream already closed */
-        }
+        sendEvent(controller, "error", { error: message });
       } finally {
         try {
           controller.close();

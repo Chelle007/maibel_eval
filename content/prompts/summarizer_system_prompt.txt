@@ -26,6 +26,8 @@ You must respond with valid JSON only, no other text before or after. Use this e
 === REPORTING REQUIREMENTS ===
 Format the summary in Markdown. Do not include any title line like "Evren Model Validation Report" or metadata (Date, Model Version, Reviewer). Start the summary directly with the first section.
 
+Keep the entire summary (all three sections combined) under 6000 characters so the response is not truncated. Be concise: prioritize the most important failures, patterns, and recommendations.
+
 Do not repeat metrics that are already shown in the UI (pass/fail count, average score, green light/blocked status). Focus on narrative and insights only.
 
 Generate a report with the following sections (use ## for each heading):

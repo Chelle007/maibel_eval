@@ -89,7 +89,21 @@ export async function evaluateOne(
 
   const jsonStr = extractJson(text);
   const sanitized = sanitizeJsonStringLiterals(jsonStr);
-  const parsed = JSON.parse(sanitized) as Record<string, unknown>;
+  let parsed: Record<string, unknown>;
+  try {
+    parsed = JSON.parse(sanitized) as Record<string, unknown>;
+  } catch (parseErr) {
+    const message = parseErr instanceof Error ? parseErr.message : "Invalid JSON";
+    console.error("[evaluator] JSON parse failed:", message, "raw length:", sanitized.length);
+    return {
+      test_case_id: testCase.test_case_id,
+      success: false,
+      score: 0,
+      flags_detected: "",
+      reason: `Evaluator returned invalid JSON: ${message}`,
+      ...(token_usage && { token_usage }),
+    };
+  }
 
   // Normalize success (prompt says "true/false" string)
   const success =
