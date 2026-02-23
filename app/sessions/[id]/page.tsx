@@ -81,7 +81,9 @@ function matchResultSearch(r: EvalResult, q: string): boolean {
   const lower = q.trim().toLowerCase();
   const id = (r.test_case_id ?? "").toLowerCase();
   const title = (r.test_cases?.title ?? "").toLowerCase();
-  return id.includes(lower) || title.includes(lower);
+  const typeStr = r.test_cases?.type === "multi_turn" ? "multi turn multi-turn" : "single turn single-turn";
+  const turnsStr = (r.test_cases?.turns ?? []).join(" ").toLowerCase();
+  return id.includes(lower) || title.includes(lower) || typeStr.includes(lower) || turnsStr.includes(lower);
 }
 
 export default function SessionDetailPage() {
@@ -104,6 +106,7 @@ export default function SessionDetailPage() {
   const [expandedResultId, setExpandedResultId] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState("");
   const [passFailFilter, setPassFailFilter] = useState<"" | "pass" | "fail">("");
+  const [typeFilter, setTypeFilter] = useState<"" | "single_turn" | "multi_turn">("");
   const [sortBy, setSortBy] = useState<"id" | "score">("id");
   const router = useRouter();
 
@@ -112,6 +115,7 @@ export default function SessionDetailPage() {
       if (!matchResultSearch(r, searchQuery)) return false;
       if (passFailFilter === "pass" && !r.success) return false;
       if (passFailFilter === "fail" && r.success) return false;
+      if (typeFilter && r.test_cases?.type !== typeFilter) return false;
       return true;
     });
     const sorted = [...filtered];
@@ -121,7 +125,7 @@ export default function SessionDetailPage() {
       sorted.sort((a, b) => b.score - a.score);
     }
     return sorted;
-  }, [results, searchQuery, passFailFilter, sortBy]);
+  }, [results, searchQuery, passFailFilter, typeFilter, sortBy]);
 
   useEffect(() => {
     if (!id) return;
@@ -392,6 +396,16 @@ export default function SessionDetailPage() {
             <option value="fail">Fail</option>
           </select>
           <select
+            value={typeFilter}
+            onChange={(e) => setTypeFilter((e.target.value || "") as "" | "single_turn" | "multi_turn")}
+            className="rounded-lg border border-stone-200 bg-stone-50/50 px-3 py-2 text-sm text-stone-700 focus:border-stone-400 focus:bg-white focus:outline-none focus:ring-1 focus:ring-stone-400"
+            title="Filter by test case type"
+          >
+            <option value="">All types</option>
+            <option value="single_turn">Single turn</option>
+            <option value="multi_turn">Multi turn</option>
+          </select>
+          <select
             value={sortBy}
             onChange={(e) => setSortBy((e.target.value || "id") as "id" | "score")}
             className="rounded-lg border border-stone-200 bg-stone-50/50 px-3 py-2 text-sm text-stone-700 focus:border-stone-400 focus:bg-white focus:outline-none focus:ring-1 focus:ring-stone-400"
@@ -429,6 +443,9 @@ export default function SessionDetailPage() {
                 </span>
                 <span className="font-mono text-base font-semibold text-stone-900">
                   {r.test_case_id}
+                  <span className={`ml-2 rounded px-1.5 py-0.5 text-xs font-medium ${r.test_cases?.type === "multi_turn" ? "bg-violet-100 text-violet-800" : "bg-stone-100 text-stone-600"}`}>
+                    {r.test_cases?.type === "multi_turn" ? "Multi" : "Single"}
+                  </span>
                   {r.test_cases?.title?.trim() && (
                     <span className="ml-2 font-sans font-normal text-stone-600">· {r.test_cases.title.trim()}</span>
                   )}
@@ -506,104 +523,102 @@ export default function SessionDetailPage() {
             {isExpanded && (
             <div className="border-t border-stone-100 p-5 space-y-4">
               {r.test_cases && (
-                <div className="space-y-3">
-                  {r.test_cases.type === "multi_turn" && Array.isArray(r.test_cases.turns) && r.test_cases.turns.length > 0 ? (
-                    <div>
-                      <p className="text-xs font-medium uppercase tracking-wide text-stone-400">Inputs</p>
-                      <div className="mt-2 space-y-2">
-                        {r.test_cases.turns.map((input: string, i: number) => (
-                          <div key={i} className="rounded-lg border border-stone-200 bg-stone-50/50 px-3 py-2">
-                            <span className="text-xs font-medium text-stone-500">{i + 1}.</span>
-                            <p className="mt-1 text-sm text-stone-700 leading-relaxed whitespace-pre-wrap">{input?.trim() || "—"}</p>
-                          </div>
-                        ))}
-                      </div>
-                    </div>
-                  ) : (
-                    <div>
-                      <p className="text-xs font-medium uppercase tracking-wide text-stone-400">Input</p>
-                      <p className="mt-1 text-sm text-stone-700 leading-relaxed">
-                        {typeof r.test_cases.input_message === "string" ? r.test_cases.input_message : "—"}
-                      </p>
-                    </div>
-                  )}
+                <>
+                  {/* 1. Context */}
                   <div>
                     <p className="text-xs font-medium uppercase tracking-wide text-stone-400">Context</p>
                     <p className="mt-1 text-sm text-stone-700 leading-relaxed whitespace-pre-wrap">
                       {typeof r.test_cases.context === "string" && r.test_cases.context.trim() ? r.test_cases.context.trim() : "—"}
                     </p>
                   </div>
+
+                  {/* 2. Conversation: input / evren pairs */}
                   <div>
-                    <p className="text-xs font-medium uppercase tracking-wide text-stone-400">Expected state</p>
-                    <p className="mt-1 text-sm text-stone-700 leading-relaxed whitespace-pre-wrap">
-                      {typeof r.test_cases.expected_state === "string" && r.test_cases.expected_state.trim() ? r.test_cases.expected_state : "—"}
-                    </p>
+                    <p className="text-xs font-medium uppercase tracking-wide text-stone-400">Conversation</p>
+                    <div className="mt-2 space-y-3">
+                      {r.evren_responses && r.evren_responses.length > 0 ? (
+                        r.evren_responses.map((evrenItem: { response: string; detected_flags: string }, i: number) => (
+                          <div key={i} className="space-y-2">
+                            <div>
+                              <p className="text-xs font-medium text-stone-500">input:</p>
+                              <p className="mt-0.5 text-sm text-stone-700 leading-relaxed whitespace-pre-wrap">
+                                {r.test_cases?.type === "multi_turn" && Array.isArray(r.test_cases?.turns) && r.test_cases.turns[i] != null
+                                  ? (r.test_cases.turns[i]?.trim() || "—")
+                                  : (typeof r.test_cases?.input_message === "string" ? r.test_cases.input_message : "—")}
+                              </p>
+                            </div>
+                            <div>
+                              <p className="text-xs font-medium text-stone-500">evren:</p>
+                              <p className="mt-0.5 text-sm text-stone-700 leading-relaxed whitespace-pre-wrap">{evrenItem.response?.trim() || "—"}</p>
+                            </div>
+                          </div>
+                        ))
+                      ) : (
+                        <div className="space-y-2">
+                          <div>
+                            <p className="text-xs font-medium text-stone-500">input:</p>
+                            <p className="mt-0.5 text-sm text-stone-700 leading-relaxed whitespace-pre-wrap">
+                              {r.test_cases?.type === "multi_turn" && r.test_cases?.turns?.[0] != null
+                                ? (r.test_cases.turns[0]?.trim() || "—")
+                                : (typeof r.test_cases?.input_message === "string" ? r.test_cases.input_message : "—")}
+                            </p>
+                          </div>
+                          <div>
+                            <p className="text-xs font-medium text-stone-500">evren:</p>
+                            <p className="mt-0.5 text-sm text-stone-700 leading-relaxed">—</p>
+                          </div>
+                        </div>
+                      )}
+                    </div>
                   </div>
+
+                  {/* ---- */}
+                  <hr className="border-stone-200" />
+
+                  {/* 3. Expected behaviour */}
                   <div>
                     <p className="text-xs font-medium uppercase tracking-wide text-stone-400">Expected behaviour</p>
                     <p className="mt-1 text-sm text-stone-700 leading-relaxed whitespace-pre-wrap">
                       {typeof r.test_cases.expected_behavior === "string" && r.test_cases.expected_behavior.trim() ? r.test_cases.expected_behavior : "—"}
                     </p>
                   </div>
-                </div>
-              )}
-              <div className="border-t border-stone-200 pt-4" />
-              {r.evren_responses && r.evren_responses.length > 0 && (
-                <div className="space-y-3">
+                  {/* 4. Expected flags */}
                   <div>
-                    <p className="text-xs font-medium uppercase tracking-wide text-stone-400">Output</p>
-                    <p className="mt-1 text-sm text-stone-700 leading-relaxed">
-                      {((): string => {
-                        const arr = r.evren_responses!;
-                        const last = arr[arr.length - 1];
-                        const out = last?.response;
-                        return out != null && out !== "" ? `"${out}"` : "—";
-                      })()}
+                    <p className="text-xs font-medium uppercase tracking-wide text-stone-400">Expected flags</p>
+                    <p className="mt-1 text-sm text-stone-700 leading-relaxed whitespace-pre-wrap">
+                      {typeof r.test_cases.expected_state === "string" && r.test_cases.expected_state.trim() ? r.test_cases.expected_state : "—"}
                     </p>
                   </div>
+
+                  {/* ---- */}
+                  <hr className="border-stone-200" />
+
+                  {/* 5. The rest: Analysis */}
                   <div>
-                    <p className="text-xs font-medium uppercase tracking-wide text-stone-400">Detected flags</p>
-                    <p className="mt-1 text-sm text-stone-700 leading-relaxed whitespace-pre-wrap font-mono">
-                      {((): string => {
-                        const arr = r.evren_responses!;
-                        const last = arr[arr.length - 1];
-                        const flags = last?.detected_flags;
-                        if (flags == null || flags === "") return "—";
-                        try {
-                          const parsed = JSON.parse(flags) as unknown;
-                          return JSON.stringify(parsed, null, 2);
-                        } catch {
-                          return flags;
-                        }
-                      })()}
-                    </p>
+                    <p className="text-xs font-medium uppercase tracking-wide text-stone-400">Analysis</p>
+                    {editingReasonId === r.eval_result_id ? (
+                      <div className="mt-2">
+                        <textarea
+                          rows={4}
+                          value={editReason}
+                          onChange={(e) => setEditReason(e.target.value)}
+                          className="block w-full rounded-lg border border-stone-200 bg-white px-3 py-2 text-sm text-stone-900 leading-relaxed focus:border-stone-400 focus:outline-none focus:ring-1 focus:ring-stone-400"
+                        />
+                      </div>
+                    ) : (
+                      <div className="mt-1 space-y-3">
+                        {(r.reason ?? "—")
+                          .split(/\n\n+/)
+                          .map((para, i) => (
+                            <p key={i} className="text-sm text-stone-600 leading-relaxed">
+                              {para.trim() || (i === 0 ? "—" : null)}
+                            </p>
+                          ))}
+                      </div>
+                    )}
                   </div>
-                </div>
+                </>
               )}
-              <div className="border-t border-stone-200 pt-4" />
-              <div>
-                <p className="text-xs font-medium uppercase tracking-wide text-stone-400">Analysis</p>
-                {editingReasonId === r.eval_result_id ? (
-                  <div className="mt-2">
-                    <textarea
-                      rows={4}
-                      value={editReason}
-                      onChange={(e) => setEditReason(e.target.value)}
-                      className="block w-full rounded-lg border border-stone-200 bg-white px-3 py-2 text-sm text-stone-900 leading-relaxed focus:border-stone-400 focus:outline-none focus:ring-1 focus:ring-stone-400"
-                    />
-                  </div>
-                ) : (
-                  <div className="mt-1 space-y-3">
-                    {(r.reason ?? "—")
-                      .split(/\n\n+/)
-                      .map((para, i) => (
-                        <p key={i} className="text-sm text-stone-600 leading-relaxed">
-                          {para.trim() || (i === 0 ? "—" : null)}
-                        </p>
-                      ))}
-                  </div>
-                )}
-              </div>
             </div>
             )}
           </li>
