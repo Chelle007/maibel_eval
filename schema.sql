@@ -57,14 +57,15 @@ CREATE TABLE evren_responses (
 CREATE SEQUENCE IF NOT EXISTS session_short_id_seq START 1;
 
 CREATE TABLE test_sessions (
-  test_session_id TEXT PRIMARY KEY DEFAULT ('ES' || LPAD(nextval('session_short_id_seq')::text, 3, '0')),
-  user_id          UUID NOT NULL REFERENCES users(user_id) ON DELETE CASCADE,
-  title            TEXT,
-  total_cost_usd   DOUBLE PRECISION,
-  summary          TEXT,
-  manually_edited   BOOLEAN NOT NULL DEFAULT FALSE,
-  created_at       TIMESTAMPTZ NOT NULL DEFAULT now(),
-  updated_at       TIMESTAMPTZ NOT NULL DEFAULT now()
+  test_session_id        TEXT PRIMARY KEY DEFAULT ('ES' || LPAD(nextval('session_short_id_seq')::text, 3, '0')),
+  user_id                UUID NOT NULL REFERENCES users(user_id) ON DELETE CASCADE,
+  title                  TEXT,
+  total_cost_usd         DOUBLE PRECISION,
+  total_eval_time_seconds DOUBLE PRECISION,
+  summary                TEXT,
+  manually_edited        BOOLEAN NOT NULL DEFAULT FALSE,
+  created_at             TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at             TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
 CREATE TABLE eval_results (

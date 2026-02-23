@@ -12,6 +12,7 @@ type Session = {
   user_id: string;
   title: string | null;
   total_cost_usd: number | null;
+  total_eval_time_seconds?: number | null;
   summary: string | null;
   manually_edited: boolean;
   created_at?: string | null;
@@ -22,6 +23,13 @@ function formatSessionDate(iso: string | null | undefined): string {
   if (!iso) return "";
   const d = new Date(iso);
   return Number.isNaN(d.getTime()) ? "" : d.toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" });
+}
+
+function formatEvalTime(seconds: number): string {
+  if (seconds < 60) return `${Math.round(seconds)}s`;
+  const m = Math.floor(seconds / 60);
+  const s = Math.round(seconds % 60);
+  return s > 0 ? `${m}m ${s}s` : `${m}m`;
 }
 
 /** If the stored summary is raw JSON from the summarizer, extract the summary field and normalize newlines for display. */
@@ -268,6 +276,14 @@ export default function SessionDetailPage() {
             </svg>
             <span><strong className="font-medium text-stone-800">Score:</strong> {results.length ? (results.reduce((s, r) => s + r.score, 0) / results.length).toFixed(2) : "—"}</span>
           </div>
+          {(session.total_eval_time_seconds != null && session.total_eval_time_seconds >= 0) && (
+            <div className="flex items-center gap-2 text-sm text-stone-700">
+              <svg className="h-4 w-4 shrink-0 text-stone-400" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden>
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+              </svg>
+              <span><strong className="font-medium text-stone-800">Time taken:</strong> {formatEvalTime(session.total_eval_time_seconds)}</span>
+            </div>
+          )}
         </dl>
       </div>
 

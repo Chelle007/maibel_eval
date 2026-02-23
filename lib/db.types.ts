@@ -20,6 +20,7 @@ export interface TestSessionsRow {
   user_id: string;
   title: string | null;
   total_cost_usd: number | null;
+  total_eval_time_seconds: number | null;
   summary: string | null;
   manually_edited: boolean;
 }

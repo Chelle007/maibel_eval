@@ -124,6 +124,7 @@ export async function POST(request: Request) {
 
   const stream = new ReadableStream<Uint8Array>({
     async start(controller) {
+      const evalStartMs = Date.now();
       let totalCostUsd = 0;
       const richReportInputs: { testCase: TestCase; evrenOutput: EvrenOutput; result: EvaluationResult }[] = [];
       try {
@@ -247,7 +248,8 @@ export async function POST(request: Request) {
           title = summarizerResult.title || null;
         }
 
-        const sessionUpdate = { total_cost_usd: totalCostUsd, title, summary } as Database["public"]["Tables"]["test_sessions"]["Update"];
+        const totalEvalTimeSeconds = (Date.now() - evalStartMs) / 1000;
+        const sessionUpdate = { total_cost_usd: totalCostUsd, total_eval_time_seconds: totalEvalTimeSeconds, title, summary } as Database["public"]["Tables"]["test_sessions"]["Update"];
         await supabase
           .from("test_sessions")
           .update(sessionUpdate as unknown as never)
