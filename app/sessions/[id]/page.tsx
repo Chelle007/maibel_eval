@@ -63,7 +63,6 @@ type EvalResult = {
   eval_result_id: string;
   test_session_id: string;
   test_case_id: string;
-  evren_response_id: string;
   success: boolean;
   score: number;
   reason: string | null;
@@ -72,8 +71,9 @@ type EvalResult = {
   total_tokens: number | null;
   cost_usd: number | null;
   manually_edited: boolean;
-  test_cases?: { input_message: string; expected_state: string; expected_behavior: string; title?: string | null; context?: string | null } | null;
-  evren_responses?: { evren_response: string; detected_states: string | null } | { evren_response: string; detected_states: string | null }[] | null;
+  /** Array of { response, detected_flags } per turn. */
+  evren_responses?: { response: string; detected_flags: string }[] | null;
+  test_cases?: { input_message: string; expected_state: string; expected_behavior: string; title?: string | null; context?: string | null; type?: "single_turn" | "multi_turn"; turns?: string[] | null } | null;
 };
 
 function matchResultSearch(r: EvalResult, q: string): boolean {
@@ -507,12 +507,26 @@ export default function SessionDetailPage() {
             <div className="border-t border-stone-100 p-5 space-y-4">
               {r.test_cases && (
                 <div className="space-y-3">
-                  <div>
-                    <p className="text-xs font-medium uppercase tracking-wide text-stone-400">Input</p>
-                    <p className="mt-1 text-sm text-stone-700 leading-relaxed">
-                      {typeof r.test_cases.input_message === "string" ? r.test_cases.input_message : "—"}
-                    </p>
-                  </div>
+                  {r.test_cases.type === "multi_turn" && Array.isArray(r.test_cases.turns) && r.test_cases.turns.length > 0 ? (
+                    <div>
+                      <p className="text-xs font-medium uppercase tracking-wide text-stone-400">Inputs</p>
+                      <div className="mt-2 space-y-2">
+                        {r.test_cases.turns.map((input: string, i: number) => (
+                          <div key={i} className="rounded-lg border border-stone-200 bg-stone-50/50 px-3 py-2">
+                            <span className="text-xs font-medium text-stone-500">{i + 1}.</span>
+                            <p className="mt-1 text-sm text-stone-700 leading-relaxed whitespace-pre-wrap">{input?.trim() || "—"}</p>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  ) : (
+                    <div>
+                      <p className="text-xs font-medium uppercase tracking-wide text-stone-400">Input</p>
+                      <p className="mt-1 text-sm text-stone-700 leading-relaxed">
+                        {typeof r.test_cases.input_message === "string" ? r.test_cases.input_message : "—"}
+                      </p>
+                    </div>
+                  )}
                   <div>
                     <p className="text-xs font-medium uppercase tracking-wide text-stone-400">Context</p>
                     <p className="mt-1 text-sm text-stone-700 leading-relaxed whitespace-pre-wrap">
@@ -534,13 +548,15 @@ export default function SessionDetailPage() {
                 </div>
               )}
               <div className="border-t border-stone-200 pt-4" />
-              {r.evren_responses && (
+              {r.evren_responses && r.evren_responses.length > 0 && (
                 <div className="space-y-3">
                   <div>
                     <p className="text-xs font-medium uppercase tracking-wide text-stone-400">Output</p>
                     <p className="mt-1 text-sm text-stone-700 leading-relaxed">
                       {((): string => {
-                        const out = Array.isArray(r.evren_responses) ? r.evren_responses[0]?.evren_response : (r.evren_responses as { evren_response?: string }).evren_response;
+                        const arr = r.evren_responses!;
+                        const last = arr[arr.length - 1];
+                        const out = last?.response;
                         return out != null && out !== "" ? `"${out}"` : "—";
                       })()}
                     </p>
@@ -549,7 +565,9 @@ export default function SessionDetailPage() {
                     <p className="text-xs font-medium uppercase tracking-wide text-stone-400">Detected flags</p>
                     <p className="mt-1 text-sm text-stone-700 leading-relaxed whitespace-pre-wrap font-mono">
                       {((): string => {
-                        const flags = Array.isArray(r.evren_responses) ? r.evren_responses[0]?.detected_states : (r.evren_responses as { detected_states?: string | null }).detected_states;
+                        const arr = r.evren_responses!;
+                        const last = arr[arr.length - 1];
+                        const flags = last?.detected_flags;
                         if (flags == null || flags === "") return "—";
                         try {
                           const parsed = JSON.parse(flags) as unknown;

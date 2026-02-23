@@ -9,12 +9,31 @@ export async function PATCH(
   const supabase = await createClient();
   const body = await _request.json() as Record<string, unknown>;
   const allowed = [
-    "title", "category_id", "input_message", "img_url", "context",
+    "title", "category_id", "type", "input_message", "turns", "img_url", "context",
     "expected_state", "expected_behavior", "forbidden", "notes", "is_enabled",
   ];
   const updates: Record<string, unknown> = {};
   for (const key of allowed) {
     if (key in body) updates[key] = body[key];
+  }
+  if ("type" in updates && updates.type !== "multi_turn") {
+    updates.type = "single_turn";
+    updates.turns = null;
+  }
+  if ("turns" in updates && updates.turns != null) {
+    if (!Array.isArray(updates.turns) || updates.turns.length === 0) {
+      updates.turns = null;
+    } else {
+      const normalized: string[] = [];
+      for (const item of updates.turns as unknown[]) {
+        const s = item != null ? String(item).trim() : "";
+        if (s) normalized.push(s);
+      }
+      updates.turns = normalized.length > 0 ? normalized : null;
+      if (updates.type === "multi_turn" && normalized.length > 0) {
+        updates.input_message = normalized[0];
+      }
+    }
   }
   if (Object.keys(updates).length === 0) {
     return NextResponse.json({ error: "No fields to update" }, { status: 400 });

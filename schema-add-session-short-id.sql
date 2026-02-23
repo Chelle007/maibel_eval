@@ -21,7 +21,7 @@ CREATE TABLE eval_results (
   eval_result_id     UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   test_session_id    TEXT NOT NULL REFERENCES test_sessions(test_session_id) ON DELETE CASCADE,
   test_case_id       TEXT NOT NULL REFERENCES test_cases(test_case_id) ON DELETE CASCADE,
-  evren_response_id  UUID NOT NULL REFERENCES evren_responses(evren_response_id) ON DELETE CASCADE,
+  evren_responses    JSONB NOT NULL DEFAULT '[]',
   success            BOOLEAN NOT NULL,
   score              DOUBLE PRECISION NOT NULL,
   reason             TEXT,

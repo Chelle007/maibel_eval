@@ -25,11 +25,18 @@ export interface TestSessionsRow {
   manually_edited: boolean;
 }
 
+/** One Evren response item stored in eval_results.evren_responses array. */
+export interface EvrenResponseItem {
+  response: string;
+  detected_flags: string;
+}
+
 export interface EvalResultsRow {
   eval_result_id: string;
   test_session_id: string;
   test_case_id: string;
-  evren_response_id: string;
+  /** Array of { response, detected_flags } per turn. */
+  evren_responses: EvrenResponseItem[];
   success: boolean;
   score: number;
   reason: string | null;
@@ -50,21 +57,17 @@ export interface TestCasesRow {
   test_case_id: string;
   title: string | null;
   category_id: string | null;
+  type: "single_turn" | "multi_turn";
   input_message: string;
   img_url: string | null;
   context: string | null;
+  /** Multi-turn: array of user inputs only, e.g. ["input 1", "input 2"]. */
+  turns: string[] | null;
   expected_state: string;
   expected_behavior: string;
   forbidden: string | null;
   notes: string | null;
   is_enabled: boolean;
-}
-
-export interface EvrenResponsesRow {
-  evren_response_id: string;
-  test_case_id: string;
-  evren_response: string;
-  detected_states: string | null;
 }
 
 export interface DefaultSettingsRow {
@@ -84,7 +87,6 @@ export interface Database {
       test_sessions: { Row: TestSessionsRow; Insert: Omit<TestSessionsRow, "test_session_id"> & { test_session_id?: string }; Update: Partial<TestSessionsRow> };
       eval_results: { Row: EvalResultsRow; Insert: Omit<EvalResultsRow, "eval_result_id"> & { eval_result_id?: string }; Update: Partial<EvalResultsRow> };
       test_cases: { Row: TestCasesRow; Insert: Omit<TestCasesRow, "test_case_id"> & { test_case_id?: string }; Update: Partial<TestCasesRow> };
-      evren_responses: { Row: EvrenResponsesRow; Insert: Omit<EvrenResponsesRow, "evren_response_id"> & { evren_response_id?: string }; Update: Partial<EvrenResponsesRow> };
       default_settings: { Row: DefaultSettingsRow; Insert: Omit<DefaultSettingsRow, "default_setting_id"> & { default_setting_id?: string }; Update: Partial<DefaultSettingsRow> };
       categories: { Row: CategoriesRow; Insert: Omit<CategoriesRow, "category_id"> & { category_id?: string }; Update: Partial<CategoriesRow> };
     };

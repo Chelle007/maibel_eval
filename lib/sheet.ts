@@ -119,6 +119,7 @@ export const DEFAULT_SHEET_COLUMNS = {
   test_case_id: "test_case_id",
   title: "title",
   category: "category",
+  type: "type",
   input_message: "input_message",
   img_url: "img_url",
   context: "context",
@@ -172,12 +173,43 @@ export function sheetRowToTestCase(
     ? true
     : /^(1|true|yes|on)$/i.test(String(isEnabledRaw).trim());
 
+  const inputMessageRaw = get("input_message");
+  let type: "single_turn" | "multi_turn" = "single_turn";
+  let input_message = inputMessageRaw;
+  let turns: string[] | undefined = undefined;
+
+  const trimmed = inputMessageRaw.trim();
+  if (trimmed.startsWith("[") && trimmed.endsWith("]")) {
+    try {
+      const parsed = JSON.parse(trimmed) as unknown;
+      if (Array.isArray(parsed) && parsed.length > 0) {
+        const asStrings = parsed.map((item) => String(item ?? "").trim()).filter(Boolean);
+        if (asStrings.length > 0) {
+          type = "multi_turn";
+          turns = asStrings;
+          input_message = asStrings[0];
+        }
+      }
+    } catch {
+      /* Not valid JSON array, keep as single_turn */
+    }
+  }
+  if (type === "single_turn") {
+    const typeRaw = get("type").toLowerCase();
+    if (typeRaw === "multi_turn" || typeRaw === "multi turn") {
+      type = "multi_turn";
+      turns = input_message ? [input_message] : undefined;
+    }
+  }
+
   return {
     test_case_id: get("test_case_id"),
     title: get("title") || undefined,
-    input_message: get("input_message"),
+    type,
+    input_message,
     img_url: get("img_url") || undefined,
     context: get("context") || undefined,
+    turns,
     expected_state: get("expected_state"),
     expected_behavior: get("expected_behavior"),
     forbidden: get("forbidden") || undefined,

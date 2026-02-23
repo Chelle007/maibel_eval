@@ -2,9 +2,14 @@
 export interface TestCase {
   test_case_id: string;
   title?: string;
+  /** 'single_turn' = one user message; 'multi_turn' = sequence of user inputs. */
+  type?: "single_turn" | "multi_turn";
+  /** For single_turn: the user message. For multi_turn: first input (display/summary). */
   input_message: string;
   img_url?: string;
   context?: string;
+  /** For multi_turn only: array of user inputs in order, e.g. ["input 1", "input 2"]. */
+  turns?: string[];
   expected_state: string;
   expected_behavior: string;
   forbidden?: string;

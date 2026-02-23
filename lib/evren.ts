@@ -22,21 +22,67 @@ function evrenEndpoint(input: string): string {
 }
 
 /**
- * Call Evren model API with POST and JSON body (input_message, optional img_url, context).
- * Returns evren_response and detected_states (from API's detected_flags).
- * If evrenModelApiUrl is a base URL with no path (e.g. http://localhost:8000), /evren-eval is appended.
+ * Call Evren model API with POST and JSON body.
+ * Single-turn: one call, returns array of one EvrenOutput.
+ * Multi-turn: one call per input, returns array of EvrenOutput (one per turn).
+ * Each item has evren_response and detected_states (from API's detected_flags).
  */
 export async function callEvrenApi(
   evrenModelApiUrl: string,
   testCase: TestCase
-): Promise<EvrenOutput> {
+): Promise<EvrenOutput[]> {
+  const isMultiTurn = testCase.type === "multi_turn" && Array.isArray(testCase.turns) && testCase.turns.length > 0;
+
+  if (isMultiTurn) {
+    const inputs = testCase.turns!;
+    const messages: { role: "user" | "assistant"; content: string }[] = [];
+    const outputs: EvrenOutput[] = [];
+    const url = evrenEndpoint(evrenModelApiUrl);
+
+    for (const input of inputs) {
+      const content = String(input ?? "").trim();
+      if (!content) continue;
+      messages.push({ role: "user", content });
+
+      const body: Record<string, unknown> = { messages: [...messages] };
+      if (testCase.context) {
+        const ctx = testCase.context.trim();
+        if (ctx.startsWith("{")) {
+          try {
+            body.context = JSON.parse(ctx);
+          } catch {
+            body.context = { description: ctx };
+          }
+        } else {
+          body.context = { description: ctx };
+        }
+      }
+
+      const res = await fetch(url, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+      if (!res.ok) {
+        const text = await res.text();
+        throw new Error(`Evren API error: ${res.status} ${res.statusText}${text ? ` — ${text}` : ""}`);
+      }
+      const data = (await res.json()) as Record<string, unknown>;
+      const out: EvrenOutput = {
+        evren_response: String(data.evren_response ?? ""),
+        detected_states: String(data.detected_flags ?? ""),
+      };
+      outputs.push(out);
+      messages.push({ role: "assistant", content: out.evren_response });
+    }
+    return outputs;
+  }
+
   const body: Record<string, unknown> = {
     input_message: testCase.input_message,
   };
   if (testCase.img_url) body.img_url = testCase.img_url;
   if (testCase.context) {
-    // Evren API expects context as an object, not a string.
-    // If the sheet has JSON, parse it; otherwise wrap it.
     const ctx = testCase.context.trim();
     if (ctx.startsWith("{")) {
       try {
@@ -55,15 +101,15 @@ export async function callEvrenApi(
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
   });
-
   if (!res.ok) {
     const text = await res.text();
     throw new Error(`Evren API error: ${res.status} ${res.statusText}${text ? ` — ${text}` : ""}`);
   }
-
   const data = (await res.json()) as Record<string, unknown>;
-  return {
-    evren_response: String(data.evren_response ?? ""),
-    detected_states: String(data.detected_flags ?? ""),
-  };
+  return [
+    {
+      evren_response: String(data.evren_response ?? ""),
+      detected_states: String(data.detected_flags ?? ""),
+    },
+  ];
 }

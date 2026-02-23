@@ -5,7 +5,7 @@ import { evaluateOne } from "@/lib/evaluator";
 import { buildRichReport, runSummarizer } from "@/lib/summarizer";
 import { loadEvaluatorSystemPrompt, loadSummarizerSystemPrompt } from "@/lib/prompts";
 import type { TestCase, EvrenOutput, EvaluationResult } from "@/lib/types";
-import type { Database, TestCasesRow, EvrenResponsesRow } from "@/lib/db.types";
+import type { Database, TestCasesRow } from "@/lib/db.types";
 
 export const maxDuration = 300;
 
@@ -73,41 +73,32 @@ export async function POST(request: Request) {
   for (const row of rows) {
     const testCase: TestCase = {
       test_case_id: row.test_case_id,
+      type: row.type ?? "single_turn",
       input_message: row.input_message,
       img_url: row.img_url ?? undefined,
       context: row.context ?? undefined,
+      turns: row.turns ?? undefined,
       expected_state: row.expected_state ?? "",
       expected_behavior: row.expected_behavior ?? "",
       forbidden: row.forbidden ?? undefined,
     };
-    const evrenOutput = await callEvrenApi(evrenModelApiUrl, testCase);
+    const evrenOutputs = await callEvrenApi(evrenModelApiUrl, testCase);
+    const evrenResponsesColumn = evrenOutputs.map((o) => ({
+      response: o.evren_response,
+      detected_flags: o.detected_states,
+    }));
+    const lastOutput = evrenOutputs[evrenOutputs.length - 1] ?? { evren_response: "", detected_states: "" };
 
-    const evrenInsertPayload = {
-      test_case_id: row.test_case_id,
-      evren_response: evrenOutput.evren_response,
-      detected_states: evrenOutput.detected_states,
-    } as Database["public"]["Tables"]["evren_responses"]["Insert"];
-    const { data: evrenInsert, error: evrenErr } = await supabase
-      .from("evren_responses")
-      .insert(evrenInsertPayload as any)
-      .select("evren_response_id")
-      .single();
-    if (evrenErr || !evrenInsert) {
-      console.error("evren_responses insert error:", evrenErr);
-      continue;
-    }
-
-    const evrenRow = evrenInsert as Pick<EvrenResponsesRow, "evren_response_id">;
-    const result = await evaluateOne(testCase, evrenOutput, apiKey, modelName, systemPrompt);
+    const result = await evaluateOne(testCase, lastOutput, apiKey, modelName, systemPrompt);
     const costUsd = result.token_usage?.cost_usd ?? 0;
     totalCostUsd += costUsd;
 
-    richReportInputs.push({ testCase, evrenOutput, result });
+    richReportInputs.push({ testCase, evrenOutput: lastOutput, result });
 
     const evalPayload = {
       test_session_id: testSessionId,
       test_case_id: row.test_case_id,
-      evren_response_id: evrenRow.evren_response_id,
+      evren_responses: evrenResponsesColumn,
       success: result.success,
       score: result.score,
       reason: result.reason ?? null,
