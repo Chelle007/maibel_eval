@@ -158,7 +158,22 @@ export async function POST(request: Request) {
             message: "Waiting for Evren response…",
           });
 
-          const evrenOutputs = await callEvrenApi(evrenModelApiUrl, testCase);
+          let evrenOutputs: Awaited<ReturnType<typeof callEvrenApi>>;
+          try {
+            evrenOutputs = await callEvrenApi(evrenModelApiUrl, testCase);
+          } catch (evrenErr) {
+            const msg = evrenErr instanceof Error ? evrenErr.message : String(evrenErr);
+            console.error("[evaluate/run/stream] Evren error for", testCase.test_case_id, msg);
+            sendEvent(controller, "progress", {
+              stage: "error",
+              index,
+              total,
+              test_case_id: testCase.test_case_id,
+              message: `Evren API failed: ${msg.slice(0, 80)}${msg.length > 80 ? "…" : ""}`,
+            });
+            continue;
+          }
+
           const evrenResponsesColumn = evrenOutputs.map((o) => ({
             response: o.evren_response,
             detected_flags: o.detected_states,

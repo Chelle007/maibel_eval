@@ -82,7 +82,13 @@ export async function POST(request: Request) {
       expected_behavior: row.expected_behavior ?? "",
       forbidden: row.forbidden ?? undefined,
     };
-    const evrenOutputs = await callEvrenApi(evrenModelApiUrl, testCase);
+    let evrenOutputs: Awaited<ReturnType<typeof callEvrenApi>>;
+    try {
+      evrenOutputs = await callEvrenApi(evrenModelApiUrl, testCase);
+    } catch (evrenErr) {
+      console.error("[evaluate/run] Evren error for", row.test_case_id, evrenErr instanceof Error ? evrenErr.message : evrenErr);
+      continue;
+    }
     const evrenResponsesColumn = evrenOutputs.map((o) => ({
       response: o.evren_response,
       detected_flags: o.detected_states,

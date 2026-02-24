@@ -104,6 +104,7 @@ export default function SessionDetailPage() {
   const [refiningWording, setRefiningWording] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [expandedResultId, setExpandedResultId] = useState<string | null>(null);
+  const [expandedFlagsKeys, setExpandedFlagsKeys] = useState<Set<string>>(new Set());
   const [searchQuery, setSearchQuery] = useState("");
   const [passFailFilter, setPassFailFilter] = useState<"" | "pass" | "fail">("");
   const [typeFilter, setTypeFilter] = useState<"" | "single_turn" | "multi_turn">("");
@@ -537,22 +538,63 @@ export default function SessionDetailPage() {
                     <p className="text-xs font-medium uppercase tracking-wide text-stone-400">Conversation</p>
                     <div className="mt-2 space-y-3">
                       {r.evren_responses && r.evren_responses.length > 0 ? (
-                        r.evren_responses.map((evrenItem: { response: string; detected_flags: string }, i: number) => (
-                          <div key={i} className="space-y-2">
-                            <div>
-                              <p className="text-xs font-medium text-stone-500">input:</p>
-                              <p className="mt-0.5 text-sm text-stone-700 leading-relaxed whitespace-pre-wrap">
-                                {r.test_cases?.type === "multi_turn" && Array.isArray(r.test_cases?.turns) && r.test_cases.turns[i] != null
-                                  ? (r.test_cases.turns[i]?.trim() || "—")
-                                  : (typeof r.test_cases?.input_message === "string" ? r.test_cases.input_message : "—")}
-                              </p>
+                        r.evren_responses.map((evrenItem: { response: string; detected_flags: string }, i: number) => {
+                          const flagsKey = `${r.eval_result_id}-${i}`;
+                          const flagsExpanded = expandedFlagsKeys.has(flagsKey);
+                          const hasFlags = evrenItem.detected_flags != null && String(evrenItem.detected_flags).trim() !== "";
+                          return (
+                            <div key={i} className="space-y-2">
+                              <div>
+                                <p className="text-xs font-medium text-stone-500">input:</p>
+                                <p className="mt-0.5 text-sm text-stone-700 leading-relaxed whitespace-pre-wrap">
+                                  {r.test_cases?.type === "multi_turn" && Array.isArray(r.test_cases?.turns) && r.test_cases.turns[i] != null
+                                    ? (r.test_cases.turns[i]?.trim() || "—")
+                                    : (typeof r.test_cases?.input_message === "string" ? r.test_cases.input_message : "—")}
+                                </p>
+                              </div>
+                              <div>
+                                <p className="text-xs font-medium text-stone-500">evren:</p>
+                                <p className="mt-0.5 text-sm text-stone-700 leading-relaxed whitespace-pre-wrap">{evrenItem.response?.trim() || "—"}</p>
+                                {hasFlags && (
+                                  <div className="mt-2">
+                                    <button
+                                      type="button"
+                                      onClick={(e) => {
+                                        e.stopPropagation();
+                                        setExpandedFlagsKeys((prev) => {
+                                          const next = new Set(prev);
+                                          if (next.has(flagsKey)) next.delete(flagsKey);
+                                          else next.add(flagsKey);
+                                          return next;
+                                        });
+                                      }}
+                                      className="inline-flex items-center gap-1 rounded border border-stone-200 bg-stone-50 px-2 py-1 text-xs font-medium text-stone-600 hover:bg-stone-100"
+                                    >
+                                      <span className={`shrink-0 transition-transform ${flagsExpanded ? "rotate-90" : ""}`} aria-hidden>▶</span>
+                                      Detected flags
+                                    </button>
+                                    {flagsExpanded && (
+                                      <div className="mt-2 rounded-lg border border-stone-200 bg-stone-50/80 px-3 py-2">
+                                        <p className="text-xs font-medium text-stone-500">Detected flags</p>
+                                        <pre className="mt-1 whitespace-pre-wrap break-words text-xs text-stone-700 font-mono">
+                                          {(() => {
+                                            const flags = String(evrenItem.detected_flags ?? "").trim();
+                                            try {
+                                              const parsed = JSON.parse(flags) as unknown;
+                                              return JSON.stringify(parsed, null, 2);
+                                            } catch {
+                                              return flags || "—";
+                                            }
+                                          })()}
+                                        </pre>
+                                      </div>
+                                    )}
+                                  </div>
+                                )}
+                              </div>
                             </div>
-                            <div>
-                              <p className="text-xs font-medium text-stone-500">evren:</p>
-                              <p className="mt-0.5 text-sm text-stone-700 leading-relaxed whitespace-pre-wrap">{evrenItem.response?.trim() || "—"}</p>
-                            </div>
-                          </div>
-                        ))
+                          );
+                        })
                       ) : (
                         <div className="space-y-2">
                           <div>
