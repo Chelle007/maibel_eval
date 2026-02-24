@@ -55,6 +55,13 @@ function inputPreview(tc: TestCase, maxLen = 80): string {
   return msg.slice(0, maxLen) + (msg.length > maxLen ? "…" : "");
 }
 
+/** For multi_turn cards: last message in turns, truncated, to show as "last message… (N inputs)". */
+function lastTurnPreview(tc: TestCase, maxLen = 60): string {
+  if (tc.type !== "multi_turn" || !tc.turns?.length) return "";
+  const last = tc.turns[tc.turns.length - 1] ?? "";
+  return (last.slice(0, maxLen) ?? "") + (last.length > maxLen ? "…" : "");
+}
+
 export default function TestCasesPage() {
   const [list, setList] = useState<TestCase[]>([]);
   const [loading, setLoading] = useState(true);
@@ -573,16 +580,20 @@ export default function TestCasesPage() {
               </div>
             ) : (
               <div>
-                <p className="text-xs font-medium uppercase tracking-wide text-stone-400">Inputs (in order) *</p>
-                <div className="mt-2 space-y-3">
+                <p className="text-xs font-medium uppercase tracking-wide text-stone-400">Inputs *</p>
+                <div className="mt-1 space-y-3">
                   {form.turns.map((input, i) => (
-                    <div key={i} className="flex gap-2 items-start rounded-lg border border-stone-200 bg-stone-50/50 p-3">
-                      <span className="shrink-0 mt-2 text-xs font-medium text-stone-500">{i + 1}.</span>
-                      <textarea rows={2} value={input} onChange={(e) => setForm((f) => ({ ...f, turns: f.turns.map((s, j) => j === i ? e.target.value : s) }))} className="flex-1 min-w-0 rounded-lg border border-stone-200 bg-white px-3 py-2 text-sm text-stone-900 focus:border-stone-400 focus:outline-none focus:ring-1 focus:ring-stone-400" placeholder="User input" />
-                      <button type="button" onClick={() => setForm((f) => ({ ...f, turns: f.turns.filter((_, j) => j !== i) }))} className="shrink-0 rounded-lg border border-red-200 p-2 text-red-600 hover:bg-red-50" title="Remove input">×</button>
+                    <div key={i} className="flex gap-2 items-start">
+                      <span className="shrink-0 pt-3 text-xs text-stone-400">{i + 1}.</span>
+                      <div className="flex-1 min-w-0 flex gap-2 items-start">
+                        <textarea rows={3} value={input} onChange={(e) => setForm((f) => ({ ...f, turns: f.turns.map((s, j) => j === i ? e.target.value : s) }))} className={inputClass} placeholder="User input" />
+                        {form.turns.length > 1 && (
+                          <button type="button" onClick={() => setForm((f) => ({ ...f, turns: f.turns.filter((_, j) => j !== i) }))} className="shrink-0 mt-1 rounded p-1.5 text-stone-400 hover:text-red-600 hover:bg-red-50" title="Remove input" aria-label="Remove input">×</button>
+                        )}
+                      </div>
                     </div>
                   ))}
-                  <button type="button" onClick={() => setForm((f) => ({ ...f, turns: [...f.turns, ""] }))} className="rounded-lg border border-stone-200 bg-white px-3 py-2 text-sm font-medium text-stone-700 hover:bg-stone-50">
+                  <button type="button" onClick={() => setForm((f) => ({ ...f, turns: [...f.turns, ""] }))} className="text-sm text-stone-500 hover:text-stone-700">
                     + Add input
                   </button>
                 </div>
@@ -677,13 +688,18 @@ export default function TestCasesPage() {
                       )}
                     </div>
                     {!isExpanded && (tc.input_message?.trim() || (tc.type === "multi_turn" && tc.turns?.length)) && !isEditingThis && (
-                      <p className="mt-1 text-sm text-stone-500 truncate max-w-full" title={tc.type === "multi_turn" ? `${tc.turns?.length ?? 0} inputs` : tc.input_message}>
-                        {tc.type === "multi_turn" ? `Multi-turn (${tc.turns?.length ?? 0} inputs)` : inputPreview(tc)}
+                      <p className="mt-1 text-sm text-stone-500 truncate max-w-full" title={tc.type === "multi_turn" ? (tc.turns ?? []).join(" → ") : tc.input_message}>
+                        {tc.type === "multi_turn" ? `${lastTurnPreview(tc)} (${tc.turns?.length ?? 0} inputs)` : inputPreview(tc)}
                       </p>
                     )}
                     {!isExpanded && isEditingThis && (
-                      <p className="mt-1 text-sm text-stone-500 truncate max-w-full" title={form.type === "multi_turn" ? `${form.turns.length} inputs` : form.input_message}>
-                        {form.type === "multi_turn" ? `Multi-turn (${form.turns.length} inputs)` : (form.input_message?.slice(0, 80) ?? "") + (form.input_message && form.input_message.length > 80 ? "…" : "")}
+                      <p className="mt-1 text-sm text-stone-500 truncate max-w-full" title={form.type === "multi_turn" ? form.turns.join(" → ") : form.input_message}>
+                        {form.type === "multi_turn"
+                          ? (() => {
+                              const last = form.turns[form.turns.length - 1] ?? "";
+                              return `${last.slice(0, 60)}${last.length > 60 ? "…" : ""} (${form.turns.length} inputs)`;
+                            })()
+                          : (form.input_message?.slice(0, 80) ?? "") + (form.input_message && form.input_message.length > 80 ? "…" : "")}
                       </p>
                     )}
                   </div>
@@ -794,17 +810,20 @@ export default function TestCasesPage() {
                         </div>
                       ) : (
                         <div>
-                          <p className="text-xs font-medium uppercase tracking-wide text-stone-400">Inputs (in order) *</p>
-                          <p className="mt-0.5 text-xs text-stone-500">Evren responds to each input in sequence; the last response is evaluated.</p>
-                          <div className="mt-2 space-y-3">
+                          <p className="text-xs font-medium uppercase tracking-wide text-stone-400">Inputs *</p>
+                          <div className="mt-1 space-y-3">
                             {form.turns.map((input, i) => (
-                              <div key={i} className="flex gap-2 items-start rounded-lg border border-stone-200 bg-stone-50/50 p-3">
-                                <span className="shrink-0 mt-2 text-xs font-medium text-stone-500">{i + 1}.</span>
-                                <textarea rows={2} value={input} onChange={(e) => setForm((f) => ({ ...f, turns: f.turns.map((s, j) => j === i ? e.target.value : s) }))} className="flex-1 min-w-0 rounded-lg border border-stone-200 bg-white px-3 py-2 text-sm text-stone-900 focus:border-stone-400 focus:outline-none focus:ring-1 focus:ring-stone-400" placeholder="User input" />
-                                <button type="button" onClick={() => setForm((f) => ({ ...f, turns: f.turns.filter((_, j) => j !== i) }))} className="shrink-0 rounded-lg border border-red-200 p-2 text-red-600 hover:bg-red-50">×</button>
+                              <div key={i} className="flex gap-2 items-start">
+                                <span className="shrink-0 pt-3 text-xs text-stone-400">{i + 1}.</span>
+                                <div className="flex-1 min-w-0 flex gap-2 items-start">
+                                  <textarea rows={3} value={input} onChange={(e) => setForm((f) => ({ ...f, turns: f.turns.map((s, j) => j === i ? e.target.value : s) }))} className="mt-1 block w-full rounded-lg border border-stone-200 bg-white px-3 py-2 text-sm text-stone-900 focus:border-stone-400 focus:outline-none focus:ring-1 focus:ring-stone-400" placeholder="User input" />
+                                  {form.turns.length > 1 && (
+                                    <button type="button" onClick={() => setForm((f) => ({ ...f, turns: f.turns.filter((_, j) => j !== i) }))} className="shrink-0 mt-1 rounded p-1.5 text-stone-400 hover:text-red-600 hover:bg-red-50" title="Remove input" aria-label="Remove input">×</button>
+                                  )}
+                                </div>
                               </div>
                             ))}
-                            <button type="button" onClick={() => setForm((f) => ({ ...f, turns: [...f.turns, ""] }))} className="rounded-lg border border-stone-200 bg-white px-3 py-2 text-sm font-medium text-stone-700 hover:bg-stone-50">+ Add input</button>
+                            <button type="button" onClick={() => setForm((f) => ({ ...f, turns: [...f.turns, ""] }))} className="text-sm text-stone-500 hover:text-stone-700">+ Add input</button>
                           </div>
                         </div>
                       )}
@@ -861,13 +880,12 @@ export default function TestCasesPage() {
                     <div className="space-y-3">
                       {tc.type === "multi_turn" && tc.turns?.length ? (
                         <div>
-                          <p className="text-xs font-medium uppercase tracking-wide text-stone-400">Inputs (Evren responds to each in order)</p>
-                          <div className="mt-2 space-y-2">
+                          <p className="text-xs font-medium uppercase tracking-wide text-stone-400">Inputs</p>
+                          <div className="mt-1 space-y-2">
                             {tc.turns.map((input, i) => (
-                              <div key={i} className="rounded-lg border border-stone-200 bg-stone-50/50 px-3 py-2">
-                                <span className="text-xs font-medium text-stone-500">{i + 1}.</span>
-                                <p className="mt-1 text-sm text-stone-700 leading-relaxed whitespace-pre-wrap">{input?.trim() || "—"}</p>
-                              </div>
+                              <p key={i} className="text-sm text-stone-700 leading-relaxed whitespace-pre-wrap">
+                                <span className="text-stone-400">{i + 1}.</span> {input?.trim() || "—"}
+                              </p>
                             ))}
                           </div>
                         </div>
