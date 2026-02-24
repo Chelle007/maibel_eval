@@ -55,6 +55,8 @@ export async function POST(request: Request) {
     model_name?: string;
     summarizer_model?: string;
     system_prompt?: string;
+    /** When set (e.g. client-side Evren for local URL), server uses these instead of calling Evren. Key = test_case_id. */
+    evren_outputs_by_id?: Record<string, { evren_response: string; detected_states: string }[]>;
   };
   try {
     body = await request.json();
@@ -159,19 +161,29 @@ export async function POST(request: Request) {
           });
 
           let evrenOutputs: Awaited<ReturnType<typeof callEvrenApi>>;
-          try {
-            evrenOutputs = await callEvrenApi(evrenModelApiUrl, testCase);
-          } catch (evrenErr) {
-            const msg = evrenErr instanceof Error ? evrenErr.message : String(evrenErr);
-            console.error("[evaluate/run/stream] Evren error for", testCase.test_case_id, msg);
-            sendEvent(controller, "progress", {
-              stage: "error",
-              index,
-              total,
-              test_case_id: testCase.test_case_id,
-              message: `Evren API failed: ${msg.slice(0, 80)}${msg.length > 80 ? "…" : ""}`,
-            });
-            continue;
+          const clientEvren = body.evren_outputs_by_id?.[testCase.test_case_id];
+          if (Array.isArray(clientEvren) && clientEvren.length > 0) {
+            evrenOutputs = clientEvren.map((o) => ({
+              evren_response: String(o?.evren_response ?? ""),
+              detected_states: String(o?.detected_states ?? ""),
+            }));
+          } else if (clientEvren !== undefined && !Array.isArray(clientEvren)) {
+            evrenOutputs = [{ evren_response: "", detected_states: "" }];
+          } else {
+            try {
+              evrenOutputs = await callEvrenApi(evrenModelApiUrl, testCase);
+            } catch (evrenErr) {
+              const msg = evrenErr instanceof Error ? evrenErr.message : String(evrenErr);
+              console.error("[evaluate/run/stream] Evren error for", testCase.test_case_id, msg);
+              sendEvent(controller, "progress", {
+                stage: "error",
+                index,
+                total,
+                test_case_id: testCase.test_case_id,
+                message: `Evren API failed: ${msg.slice(0, 80)}${msg.length > 80 ? "…" : ""}`,
+              });
+              continue;
+            }
           }
 
           const evrenResponsesColumn = evrenOutputs.map((o) => ({
