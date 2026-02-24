@@ -167,12 +167,13 @@ export function EvalRunProvider({ children }: { children: ReactNode }) {
                 error?: string;
               };
               if (data.type === "progress" && data.stage != null) {
+                const stage = data.stage;
                 setRunState((prev) => ({
                   ...prev,
                   sessionId: data.test_session_id ?? prev.sessionId,
                   total: data.total ?? prev.total,
                   progress: {
-                    stage: data.stage,
+                    stage,
                     index: data.index,
                     total: data.total,
                     test_case_id: data.test_case_id,
