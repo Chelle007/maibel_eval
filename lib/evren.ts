@@ -52,11 +52,21 @@ export async function callEvrenApi(
   }
 
   const url = evrenEndpoint(evrenModelApiUrl);
-  const res = await fetch(url, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(body),
-  });
+  let res: Response;
+  try {
+    res = await fetch(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+  } catch (fetchErr) {
+    const cause = fetchErr instanceof Error ? fetchErr.message : String(fetchErr);
+    const details =
+      fetchErr instanceof Error && "cause" in fetchErr && fetchErr.cause instanceof Error
+        ? ` (${fetchErr.cause.message})`
+        : "";
+    throw new Error(`Evren request to ${url} failed: ${cause}${details}`);
+  }
 
   if (!res.ok) {
     const text = await res.text();
