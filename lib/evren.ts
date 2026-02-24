@@ -1,42 +1,44 @@
 import type { TestCase, EvrenOutput } from "./types";
 
-/** Path for the Evren eval endpoint (POST only). Server returns 405 if called with GET. */
-const EVREN_EVAL_PATH = "/evren-eval";
+/** Path for the Evren evals endpoint (POST /evren-evals). */
+const EVREN_EVALS_PATH = "/evren-evals";
 
-/** Build the Evren API endpoint URL. Also replaces localhost with 127.0.0.1
- *  to avoid IPv6 resolution issues in Node.js server-side fetch.
- *  If the base URL has no path (e.g. http://localhost:8000), appends EVREN_EVAL_PATH
- *  so the request goes to POST /evren-eval, not to the root (which would 405). */
+/** Build the Evren API endpoint URL. Replaces localhost with 127.0.0.1 to avoid IPv6 issues.
+ *  If the base URL has no path, appends EVREN_EVALS_PATH. */
 function evrenEndpoint(input: string): string {
   let url = input.trim().replace(/\/+$/, "");
-  // Node.js may resolve "localhost" to ::1 (IPv6) which often fails
   url = url.replace(/\/\/localhost([:\/])/g, "//127.0.0.1$1");
   url = url.replace(/\/\/localhost$/, "//127.0.0.1");
   const parsed = new URL(url);
   const path = parsed.pathname;
   if (!path || path === "/") {
-    parsed.pathname = EVREN_EVAL_PATH;
+    parsed.pathname = EVREN_EVALS_PATH;
     return parsed.toString();
   }
   return url;
 }
 
 /**
- * Call Evren model API with POST and JSON body (input_message, optional img_url, context).
- * Returns evren_response and detected_states (from API's detected_flags).
- * If evrenModelApiUrl is a base URL with no path (e.g. http://localhost:8000), /evren-eval is appended.
+ * Call Evren evals API (POST /evren-evals).
+ * Request: { messages: string[], context?: string|object } — ordered list of user messages.
+ * Response: { evren_responses: [{ response, detected_flags }, ...] } — one per message.
+ * Single-turn = messages of length 1; multi-turn = multiple messages. One API call for both.
  */
 export async function callEvrenApi(
   evrenModelApiUrl: string,
   testCase: TestCase
-): Promise<EvrenOutput> {
-  const body: Record<string, unknown> = {
-    input_message: testCase.input_message,
-  };
-  if (testCase.img_url) body.img_url = testCase.img_url;
+): Promise<EvrenOutput[]> {
+  const messages: string[] =
+    testCase.type === "multi_turn" && Array.isArray(testCase.turns) && testCase.turns.length > 0
+      ? testCase.turns.map((s) => String(s ?? "").trim()).filter(Boolean)
+      : [testCase.input_message?.trim() ?? ""].filter(Boolean);
+
+  if (messages.length === 0) {
+    return [{ evren_response: "", detected_states: "" }];
+  }
+
+  const body: Record<string, unknown> = { messages };
   if (testCase.context) {
-    // Evren API expects context as an object, not a string.
-    // If the sheet has JSON, parse it; otherwise wrap it.
     const ctx = testCase.context.trim();
     if (ctx.startsWith("{")) {
       try {
@@ -45,7 +47,7 @@ export async function callEvrenApi(
         body.context = { description: ctx };
       }
     } else {
-      body.context = { description: ctx };
+      body.context = ctx;
     }
   }
 
@@ -62,8 +64,14 @@ export async function callEvrenApi(
   }
 
   const data = (await res.json()) as Record<string, unknown>;
-  return {
-    evren_response: String(data.evren_response ?? ""),
-    detected_states: String(data.detected_flags ?? ""),
-  };
+  const evrenResponses = data.evren_responses as Array<{ response?: string; detected_flags?: string }> | undefined;
+
+  if (!Array.isArray(evrenResponses)) {
+    return [{ evren_response: "", detected_states: "" }];
+  }
+
+  return evrenResponses.map((item) => ({
+    evren_response: String(item?.response ?? ""),
+    detected_states: String(item?.detected_flags ?? ""),
+  }));
 }

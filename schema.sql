@@ -29,13 +29,17 @@ CREATE TABLE categories (
 CREATE UNIQUE INDEX idx_categories_name_not_deleted ON categories (name) WHERE deleted_at IS NULL;
 
 -- test_case_id is a text identifier you supply (e.g. P0_001), not a UUID
+-- type: 'single_turn' (one user message → one Evren response) or 'multi_turn' (conversation)
+-- turns: for multi_turn, JSONB array of user inputs only, e.g. ["input 1", "input 2"]; null for single_turn
 CREATE TABLE test_cases (
   test_case_id      TEXT PRIMARY KEY,
   title             TEXT,
   category_id       UUID REFERENCES categories(category_id) ON DELETE SET NULL,
+  type              TEXT NOT NULL DEFAULT 'single_turn' CHECK (type IN ('single_turn', 'multi_turn')),
   input_message     TEXT NOT NULL,
   img_url           TEXT,
   context           TEXT,
+  turns             JSONB,
   expected_state   TEXT NOT NULL,
   expected_behavior TEXT NOT NULL,
   forbidden         TEXT,
@@ -45,33 +49,26 @@ CREATE TABLE test_cases (
   updated_at        TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
-CREATE TABLE evren_responses (
-  evren_response_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  test_case_id      TEXT NOT NULL REFERENCES test_cases(test_case_id) ON DELETE CASCADE,
-  evren_response    TEXT NOT NULL,
-  detected_states   TEXT,
-  created_at        TIMESTAMPTZ NOT NULL DEFAULT now(),
-  updated_at        TIMESTAMPTZ NOT NULL DEFAULT now()
-);
-
 CREATE SEQUENCE IF NOT EXISTS session_short_id_seq START 1;
 
 CREATE TABLE test_sessions (
-  test_session_id TEXT PRIMARY KEY DEFAULT ('ES' || LPAD(nextval('session_short_id_seq')::text, 3, '0')),
-  user_id          UUID NOT NULL REFERENCES users(user_id) ON DELETE CASCADE,
-  title            TEXT,
-  total_cost_usd   DOUBLE PRECISION,
-  summary          TEXT,
-  manually_edited   BOOLEAN NOT NULL DEFAULT FALSE,
-  created_at       TIMESTAMPTZ NOT NULL DEFAULT now(),
-  updated_at       TIMESTAMPTZ NOT NULL DEFAULT now()
+  test_session_id        TEXT PRIMARY KEY DEFAULT ('ES' || LPAD(nextval('session_short_id_seq')::text, 3, '0')),
+  user_id                UUID NOT NULL REFERENCES users(user_id) ON DELETE CASCADE,
+  title                  TEXT,
+  total_cost_usd         DOUBLE PRECISION,
+  total_eval_time_seconds DOUBLE PRECISION,
+  summary                TEXT,
+  manually_edited        BOOLEAN NOT NULL DEFAULT FALSE,
+  created_at             TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at             TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
+-- evren_responses: JSONB array of { "response": "...", "detected_flags": "..." } (one per turn)
 CREATE TABLE eval_results (
   eval_result_id     UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   test_session_id    TEXT NOT NULL REFERENCES test_sessions(test_session_id) ON DELETE CASCADE,
   test_case_id       TEXT NOT NULL REFERENCES test_cases(test_case_id) ON DELETE CASCADE,
-  evren_response_id  UUID NOT NULL REFERENCES evren_responses(evren_response_id) ON DELETE CASCADE,
+  evren_responses    JSONB NOT NULL DEFAULT '[]',
   success            BOOLEAN NOT NULL,
   score              DOUBLE PRECISION NOT NULL,
   reason             TEXT,
@@ -113,8 +110,6 @@ CREATE TRIGGER categories_updated_at
   BEFORE UPDATE ON categories FOR EACH ROW EXECUTE FUNCTION set_updated_at();
 CREATE TRIGGER test_cases_updated_at
   BEFORE UPDATE ON test_cases FOR EACH ROW EXECUTE FUNCTION set_updated_at();
-CREATE TRIGGER evren_responses_updated_at
-  BEFORE UPDATE ON evren_responses FOR EACH ROW EXECUTE FUNCTION set_updated_at();
 CREATE TRIGGER test_sessions_updated_at
   BEFORE UPDATE ON test_sessions FOR EACH ROW EXECUTE FUNCTION set_updated_at();
 CREATE TRIGGER eval_results_updated_at
@@ -129,7 +124,6 @@ CREATE TRIGGER default_settings_updated_at
 CREATE INDEX idx_test_sessions_user_id ON test_sessions(user_id);
 CREATE INDEX idx_eval_results_test_session_id ON eval_results(test_session_id);
 CREATE INDEX idx_eval_results_test_case_id ON eval_results(test_case_id);
-CREATE INDEX idx_evren_responses_test_case_id ON evren_responses(test_case_id);
 CREATE INDEX idx_test_cases_category_id ON test_cases(category_id);
 
 -- =============================================================================
@@ -141,7 +135,6 @@ ALTER TABLE categories ENABLE ROW LEVEL SECURITY;
 ALTER TABLE test_sessions ENABLE ROW LEVEL SECURITY;
 ALTER TABLE eval_results ENABLE ROW LEVEL SECURITY;
 ALTER TABLE test_cases ENABLE ROW LEVEL SECURITY;
-ALTER TABLE evren_responses ENABLE ROW LEVEL SECURITY;
 ALTER TABLE default_settings ENABLE ROW LEVEL SECURITY;
 
 -- service_role bypasses RLS and has full access (e.g. backend with service key).
@@ -190,18 +183,6 @@ CREATE POLICY "Test cases: service_role all"
 -- Authenticated users (logged in) can do everything on test_cases
 CREATE POLICY "Test cases: authenticated all"
   ON test_cases FOR ALL
-  TO authenticated
-  USING (true)
-  WITH CHECK (true);
-
-CREATE POLICY "Evren responses: service_role all"
-  ON evren_responses FOR ALL
-  TO service_role
-  USING (true)
-  WITH CHECK (true);
-
-CREATE POLICY "Evren responses: authenticated all"
-  ON evren_responses FOR ALL
   TO authenticated
   USING (true)
   WITH CHECK (true);
@@ -258,7 +239,6 @@ GRANT SELECT, UPDATE, DELETE ON users TO authenticated;
 GRANT INSERT ON users TO authenticated;  -- RLS restricts to owner only
 GRANT SELECT, INSERT, UPDATE, DELETE ON categories TO service_role, authenticated;
 GRANT SELECT, INSERT, UPDATE, DELETE ON test_cases TO service_role, authenticated;
-GRANT SELECT, INSERT, UPDATE, DELETE ON evren_responses TO service_role, authenticated;
 GRANT SELECT, INSERT, UPDATE, DELETE ON test_sessions TO service_role, authenticated;
 GRANT SELECT, INSERT, UPDATE, DELETE ON eval_results TO service_role, authenticated;
 GRANT SELECT, INSERT, UPDATE, DELETE ON default_settings TO service_role, authenticated;

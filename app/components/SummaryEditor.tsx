@@ -1,7 +1,7 @@
 "use client";
 
 import { useRef, useEffect } from "react";
-import { useEditor, EditorContent } from "@tiptap/react";
+import { useEditor, EditorContent, type Editor } from "@tiptap/react";
 import StarterKit from "@tiptap/starter-kit";
 import { Markdown } from "@tiptap/markdown";
 
@@ -12,7 +12,7 @@ type SummaryEditorProps = {
   className?: string;
 };
 
-function Toolbar({ editor }: { editor: ReturnType<typeof useEditor> }) {
+function Toolbar({ editor }: { editor: Editor | null }) {
   if (!editor) return null;
   return (
     <div className="flex flex-wrap items-center gap-0.5 rounded-t-lg border border-stone-200 border-b-0 bg-stone-50 px-2 py-1.5">

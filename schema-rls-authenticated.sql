@@ -19,15 +19,6 @@ CREATE POLICY "Test cases: authenticated all"
 
 GRANT SELECT, INSERT, UPDATE, DELETE ON test_cases TO authenticated;
 
--- evren_responses
-CREATE POLICY "Evren responses: authenticated all"
-  ON evren_responses FOR ALL
-  TO authenticated
-  USING (true)
-  WITH CHECK (true);
-
-GRANT SELECT, INSERT, UPDATE, DELETE ON evren_responses TO authenticated;
-
 -- test_sessions
 CREATE POLICY "Test sessions: authenticated all"
   ON test_sessions FOR ALL

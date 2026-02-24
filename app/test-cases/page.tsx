@@ -11,9 +11,12 @@ type TestCase = {
   test_case_id: string;
   title: string | null;
   category_id: string | null;
+  type: "single_turn" | "multi_turn";
   input_message: string;
   img_url: string | null;
   context: string | null;
+  /** Multi-turn: array of user inputs only, e.g. ["input 1", "input 2"]. */
+  turns: string[] | null;
   expected_state: string;
   expected_behavior: string;
   forbidden: string | null;
@@ -27,10 +30,14 @@ const inputClass =
 function matchSearch(tc: TestCase, q: string): boolean {
   if (!q.trim()) return true;
   const lower = q.trim().toLowerCase();
+  const typeStr = tc.type === "multi_turn" ? "multi turn multi-turn" : "single turn single-turn";
+  const turnsStr = (tc.turns ?? []).join(" ");
   const fields = [
     tc.test_case_id,
     tc.title ?? "",
     tc.input_message,
+    typeStr,
+    turnsStr,
     tc.expected_state,
     tc.expected_behavior,
     tc.forbidden ?? "",
@@ -38,8 +45,13 @@ function matchSearch(tc: TestCase, q: string): boolean {
   return fields.some((s) => s.includes(lower));
 }
 
-function inputPreview(msg: string, maxLen = 80): string {
-  if (!msg?.trim()) return "";
+function inputPreview(tc: TestCase, maxLen = 80): string {
+  if (tc.type === "multi_turn" && tc.turns?.length) {
+    const first = tc.turns[0] ?? "";
+    return (first.slice(0, maxLen) ?? "") + (first.length > maxLen ? "…" : "");
+  }
+  const msg = tc.input_message ?? "";
+  if (!msg.trim()) return "";
   return msg.slice(0, maxLen) + (msg.length > maxLen ? "…" : "");
 }
 
@@ -53,6 +65,7 @@ export default function TestCasesPage() {
   const [categories, setCategories] = useState<Category[]>([]);
   const [searchQuery, setSearchQuery] = useState("");
   const [categoryFilter, setCategoryFilter] = useState("");
+  const [typeFilter, setTypeFilter] = useState<"" | "single_turn" | "multi_turn">("");
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const selectAllRef = useRef<HTMLInputElement | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
@@ -62,7 +75,9 @@ export default function TestCasesPage() {
     test_case_id: "",
     title: "",
     category_id: "",
+    type: "single_turn" as "single_turn" | "multi_turn",
     input_message: "",
+    turns: [] as string[],
     img_url: "",
     context: "",
     expected_state: "",
@@ -76,9 +91,10 @@ export default function TestCasesPage() {
     return list.filter((tc) => {
       if (!matchSearch(tc, searchQuery)) return false;
       if (categoryFilter && tc.category_id !== categoryFilter) return false;
+      if (typeFilter && tc.type !== typeFilter) return false;
       return true;
     });
-  }, [list, searchQuery, categoryFilter]);
+  }, [list, searchQuery, categoryFilter, typeFilter]);
 
   const filteredIds = useMemo(() => new Set(filteredList.map((tc) => tc.test_case_id)), [filteredList]);
   const allFilteredSelected = filteredList.length > 0 && filteredList.every((tc) => selectedIds.has(tc.test_case_id));
@@ -116,7 +132,10 @@ export default function TestCasesPage() {
       test_case_id: tc.test_case_id,
       title: tc.title ?? "",
       category: tc.category_id ? categoryNameById.get(tc.category_id) ?? tc.category_id : "",
-      input_message: tc.input_message,
+      type: tc.type ?? "single_turn",
+      input_message: tc.type === "multi_turn" && tc.turns?.length
+        ? JSON.stringify(tc.turns)
+        : tc.input_message,
       img_url: tc.img_url ?? "",
       context: tc.context ?? "",
       expected_state: tc.expected_state,
@@ -154,11 +173,21 @@ export default function TestCasesPage() {
   function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     setError(null);
+    if (form.type === "multi_turn") {
+      const validInputs = form.turns.filter((s) => String(s).trim());
+      if (validInputs.length === 0) {
+        setError("Multi-turn requires at least one input.");
+        return;
+      }
+    } else if (!form.input_message?.trim()) {
+      setError("Input message is required for single-turn.");
+      return;
+    }
     const url = editing ? `/api/test-cases/${encodeURIComponent(editing.test_case_id)}` : "/api/test-cases";
     const method = editing ? "PATCH" : "POST";
     const body = editing
-      ? { ...form, title: form.title || null, category_id: form.category_id || null, img_url: form.img_url || null, context: form.context || null, forbidden: form.forbidden || null, notes: form.notes || null, is_enabled: form.is_enabled }
-      : { ...form, test_case_id: form.test_case_id.trim(), title: form.title || null, category_id: form.category_id || null, img_url: form.img_url || null, context: form.context || null, forbidden: form.forbidden || null, notes: form.notes || null, is_enabled: form.is_enabled };
+      ? { ...form, title: form.title || null, category_id: form.category_id || null, type: form.type, turns: form.type === "multi_turn" ? form.turns : null, img_url: form.img_url || null, context: form.context || null, forbidden: form.forbidden || null, notes: form.notes || null, is_enabled: form.is_enabled }
+      : { ...form, test_case_id: form.test_case_id.trim(), title: form.title || null, category_id: form.category_id || null, type: form.type, turns: form.type === "multi_turn" ? form.turns : null, img_url: form.img_url || null, context: form.context || null, forbidden: form.forbidden || null, notes: form.notes || null, is_enabled: form.is_enabled };
     fetch(url, {
       method,
       headers: { "Content-Type": "application/json" },
@@ -170,7 +199,7 @@ export default function TestCasesPage() {
         setShowForm(false);
         setEditing(null);
         setExpandedTestCaseId(null);
-        setForm({ test_case_id: "", title: "", category_id: "", input_message: "", img_url: "", context: "", expected_state: "", expected_behavior: "", forbidden: "", notes: "", is_enabled: true });
+        setForm({ test_case_id: "", title: "", category_id: "", type: "single_turn", input_message: "", turns: [], img_url: "", context: "", expected_state: "", expected_behavior: "", forbidden: "", notes: "", is_enabled: true });
         load();
       })
       .catch((e) => setError(e instanceof Error ? e.message : String(e)));
@@ -331,7 +360,7 @@ export default function TestCasesPage() {
         <div>
           <PageHeader
             title="Test cases"
-            description="Add, edit, delete, or bulk upload via Excel (.xlsx)."
+            description="Single-turn (one input) or multi-turn (sequence of inputs; Evren responds to each in order). Add, edit, delete, or bulk upload via Excel (.xlsx)."
           />
         </div>
         <div className="flex gap-3">
@@ -357,8 +386,8 @@ export default function TestCasesPage() {
             type="button"
             onClick={() => {
               setEditing(null);
-setForm({ test_case_id: "", title: "", category_id: "", input_message: "", img_url: "", context: "", expected_state: "", expected_behavior: "", forbidden: "", notes: "", is_enabled: true });
-            setShowForm(true);
+              setForm({ test_case_id: "", title: "", category_id: "", type: "single_turn", input_message: "", turns: [], img_url: "", context: "", expected_state: "", expected_behavior: "", forbidden: "", notes: "", is_enabled: true });
+              setShowForm(true);
             }}
             className="inline-flex items-center gap-2 rounded-lg bg-stone-900 px-4 py-2.5 text-sm font-medium text-white shadow-sm transition hover:bg-stone-800"
           >
@@ -440,6 +469,16 @@ setForm({ test_case_id: "", title: "", category_id: "", input_message: "", img_u
                 </option>
               ))}
             </select>
+            <select
+              value={typeFilter}
+              onChange={(e) => setTypeFilter((e.target.value || "") as "" | "single_turn" | "multi_turn")}
+              className="rounded-lg border border-stone-200 bg-stone-50/50 px-3 py-2 text-sm text-stone-700 focus:border-stone-400 focus:bg-white focus:outline-none focus:ring-1 focus:ring-stone-400"
+              title="Filter by type"
+            >
+              <option value="">All types</option>
+              <option value="single_turn">Single turn</option>
+              <option value="multi_turn">Multi turn</option>
+            </select>
           {!allFilteredSelected && selectedIds.size === 0 && (
             <label className="flex cursor-pointer items-center gap-2 rounded-lg border border-stone-200 bg-stone-50/50 px-3 py-2 text-sm font-medium text-stone-700 hover:bg-stone-100">
               <input
@@ -519,11 +558,36 @@ setForm({ test_case_id: "", title: "", category_id: "", input_message: "", img_u
                   {categories.map((c) => <option key={c.category_id} value={c.category_id}>{c.name}</option>)}
                 </select>
               </div>
+              <div>
+                <p className="text-xs font-medium uppercase tracking-wide text-stone-400">Type</p>
+                <select value={form.type} onChange={(e) => setForm((f) => ({ ...f, type: e.target.value === "multi_turn" ? "multi_turn" : "single_turn", turns: e.target.value === "multi_turn" && f.turns.length === 0 ? [""] : f.turns }))} className={inputClass} title="Single = one user input. Multi = sequence of inputs; Evren responds to each, last response is evaluated.">
+                  <option value="single_turn">Single turn (one input)</option>
+                  <option value="multi_turn">Multi turn (sequence of inputs)</option>
+                </select>
+              </div>
             </div>
-            <div>
-              <p className="text-xs font-medium uppercase tracking-wide text-stone-400">Input *</p>
-              <textarea rows={3} required value={form.input_message} onChange={(e) => setForm((f) => ({ ...f, input_message: e.target.value }))} className={inputClass} />
-            </div>
+            {form.type === "single_turn" ? (
+              <div>
+                <p className="text-xs font-medium uppercase tracking-wide text-stone-400">Input *</p>
+                <textarea rows={3} required value={form.input_message} onChange={(e) => setForm((f) => ({ ...f, input_message: e.target.value }))} className={inputClass} />
+              </div>
+            ) : (
+              <div>
+                <p className="text-xs font-medium uppercase tracking-wide text-stone-400">Inputs (in order) *</p>
+                <div className="mt-2 space-y-3">
+                  {form.turns.map((input, i) => (
+                    <div key={i} className="flex gap-2 items-start rounded-lg border border-stone-200 bg-stone-50/50 p-3">
+                      <span className="shrink-0 mt-2 text-xs font-medium text-stone-500">{i + 1}.</span>
+                      <textarea rows={2} value={input} onChange={(e) => setForm((f) => ({ ...f, turns: f.turns.map((s, j) => j === i ? e.target.value : s) }))} className="flex-1 min-w-0 rounded-lg border border-stone-200 bg-white px-3 py-2 text-sm text-stone-900 focus:border-stone-400 focus:outline-none focus:ring-1 focus:ring-stone-400" placeholder="User input" />
+                      <button type="button" onClick={() => setForm((f) => ({ ...f, turns: f.turns.filter((_, j) => j !== i) }))} className="shrink-0 rounded-lg border border-red-200 p-2 text-red-600 hover:bg-red-50" title="Remove input">×</button>
+                    </div>
+                  ))}
+                  <button type="button" onClick={() => setForm((f) => ({ ...f, turns: [...f.turns, ""] }))} className="rounded-lg border border-stone-200 bg-white px-3 py-2 text-sm font-medium text-stone-700 hover:bg-stone-50">
+                    + Add input
+                  </button>
+                </div>
+              </div>
+            )}
             <div>
               <p className="text-xs font-medium uppercase tracking-wide text-stone-400">Context</p>
               <textarea rows={2} value={form.context} onChange={(e) => setForm((f) => ({ ...f, context: e.target.value }))} className={inputClass} />
@@ -594,6 +658,9 @@ setForm({ test_case_id: "", title: "", category_id: "", input_message: "", img_u
                   <div className="min-w-0 flex-1">
                     <div className="font-mono text-base font-semibold text-stone-900 flex flex-wrap items-center gap-2">
                       {tc.test_case_id}
+                      <span className={`rounded px-1.5 py-0.5 text-xs font-medium ${(isEditingThis ? form.type : tc.type) === "multi_turn" ? "bg-violet-100 text-violet-800" : "bg-stone-100 text-stone-600"}`}>
+                        {(isEditingThis ? form.type : tc.type) === "multi_turn" ? "Multi" : "Single"}
+                      </span>
                       {isEditingThis ? (
                         <input
                           type="text"
@@ -609,14 +676,14 @@ setForm({ test_case_id: "", title: "", category_id: "", input_message: "", img_u
                         )
                       )}
                     </div>
-                    {!isExpanded && tc.input_message?.trim() && !isEditingThis && (
-                      <p className="mt-1 text-sm text-stone-500 truncate max-w-full" title={tc.input_message}>
-                        {inputPreview(tc.input_message)}
+                    {!isExpanded && (tc.input_message?.trim() || (tc.type === "multi_turn" && tc.turns?.length)) && !isEditingThis && (
+                      <p className="mt-1 text-sm text-stone-500 truncate max-w-full" title={tc.type === "multi_turn" ? `${tc.turns?.length ?? 0} inputs` : tc.input_message}>
+                        {tc.type === "multi_turn" ? `Multi-turn (${tc.turns?.length ?? 0} inputs)` : inputPreview(tc)}
                       </p>
                     )}
                     {!isExpanded && isEditingThis && (
-                      <p className="mt-1 text-sm text-stone-500 truncate max-w-full" title={form.input_message}>
-                        {inputPreview(form.input_message)}
+                      <p className="mt-1 text-sm text-stone-500 truncate max-w-full" title={form.type === "multi_turn" ? `${form.turns.length} inputs` : form.input_message}>
+                        {form.type === "multi_turn" ? `Multi-turn (${form.turns.length} inputs)` : (form.input_message?.slice(0, 80) ?? "") + (form.input_message && form.input_message.length > 80 ? "…" : "")}
                       </p>
                     )}
                   </div>
@@ -664,7 +731,9 @@ setForm({ test_case_id: "", title: "", category_id: "", input_message: "", img_u
                           test_case_id: tc.test_case_id,
                           title: tc.title ?? "",
                           category_id: tc.category_id ?? "",
+                          type: tc.type ?? "single_turn",
                           input_message: tc.input_message,
+                          turns: tc.turns ?? [],
                           img_url: tc.img_url ?? "",
                           context: tc.context ?? "",
                           expected_state: tc.expected_state,
@@ -710,15 +779,35 @@ setForm({ test_case_id: "", title: "", category_id: "", input_message: "", img_u
                             {categories.map((c) => <option key={c.category_id} value={c.category_id}>{c.name}</option>)}
                           </select>
                         </div>
+                        <div>
+                          <p className="text-xs font-medium uppercase tracking-wide text-stone-400">Type</p>
+                          <select value={form.type} onChange={(e) => setForm((f) => ({ ...f, type: e.target.value === "multi_turn" ? "multi_turn" : "single_turn", turns: e.target.value === "multi_turn" && f.turns.length === 0 ? [""] : f.turns }))} className="mt-1 rounded-lg border border-stone-200 bg-white px-3 py-2 text-sm text-stone-900 focus:border-stone-400 focus:outline-none focus:ring-1 focus:ring-stone-400">
+                            <option value="single_turn">Single turn (one input)</option>
+                            <option value="multi_turn">Multi turn (sequence of inputs)</option>
+                          </select>
+                        </div>
                       </div>
-                      <div>
-                        <p className="text-xs font-medium uppercase tracking-wide text-stone-400">Input *</p>
-                        {isEditingThis ? (
+                      {form.type === "single_turn" ? (
+                        <div>
+                          <p className="text-xs font-medium uppercase tracking-wide text-stone-400">Input *</p>
                           <textarea rows={3} value={form.input_message} onChange={(e) => setForm((f) => ({ ...f, input_message: e.target.value }))} required className="mt-1 block w-full rounded-lg border border-stone-200 bg-white px-3 py-2 text-sm text-stone-900 focus:border-stone-400 focus:outline-none focus:ring-1 focus:ring-stone-400" />
-                        ) : (
-                          <p className="mt-1 text-sm text-stone-700 leading-relaxed">{tc.input_message?.trim() || "—"}</p>
-                        )}
-                      </div>
+                        </div>
+                      ) : (
+                        <div>
+                          <p className="text-xs font-medium uppercase tracking-wide text-stone-400">Inputs (in order) *</p>
+                          <p className="mt-0.5 text-xs text-stone-500">Evren responds to each input in sequence; the last response is evaluated.</p>
+                          <div className="mt-2 space-y-3">
+                            {form.turns.map((input, i) => (
+                              <div key={i} className="flex gap-2 items-start rounded-lg border border-stone-200 bg-stone-50/50 p-3">
+                                <span className="shrink-0 mt-2 text-xs font-medium text-stone-500">{i + 1}.</span>
+                                <textarea rows={2} value={input} onChange={(e) => setForm((f) => ({ ...f, turns: f.turns.map((s, j) => j === i ? e.target.value : s) }))} className="flex-1 min-w-0 rounded-lg border border-stone-200 bg-white px-3 py-2 text-sm text-stone-900 focus:border-stone-400 focus:outline-none focus:ring-1 focus:ring-stone-400" placeholder="User input" />
+                                <button type="button" onClick={() => setForm((f) => ({ ...f, turns: f.turns.filter((_, j) => j !== i) }))} className="shrink-0 rounded-lg border border-red-200 p-2 text-red-600 hover:bg-red-50">×</button>
+                              </div>
+                            ))}
+                            <button type="button" onClick={() => setForm((f) => ({ ...f, turns: [...f.turns, ""] }))} className="rounded-lg border border-stone-200 bg-white px-3 py-2 text-sm font-medium text-stone-700 hover:bg-stone-50">+ Add input</button>
+                          </div>
+                        </div>
+                      )}
                       <div>
                         <p className="text-xs font-medium uppercase tracking-wide text-stone-400">Context</p>
                         {isEditingThis ? (
@@ -770,10 +859,24 @@ setForm({ test_case_id: "", title: "", category_id: "", input_message: "", img_u
                     </form>
                   ) : (
                     <div className="space-y-3">
-                      <div>
-                        <p className="text-xs font-medium uppercase tracking-wide text-stone-400">Input</p>
-                        <p className="mt-1 text-sm text-stone-700 leading-relaxed">{tc.input_message?.trim() || "—"}</p>
-                      </div>
+                      {tc.type === "multi_turn" && tc.turns?.length ? (
+                        <div>
+                          <p className="text-xs font-medium uppercase tracking-wide text-stone-400">Inputs (Evren responds to each in order)</p>
+                          <div className="mt-2 space-y-2">
+                            {tc.turns.map((input, i) => (
+                              <div key={i} className="rounded-lg border border-stone-200 bg-stone-50/50 px-3 py-2">
+                                <span className="text-xs font-medium text-stone-500">{i + 1}.</span>
+                                <p className="mt-1 text-sm text-stone-700 leading-relaxed whitespace-pre-wrap">{input?.trim() || "—"}</p>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      ) : (
+                        <div>
+                          <p className="text-xs font-medium uppercase tracking-wide text-stone-400">Input</p>
+                          <p className="mt-1 text-sm text-stone-700 leading-relaxed">{tc.input_message?.trim() || "—"}</p>
+                        </div>
+                      )}
                       <div>
                         <p className="text-xs font-medium uppercase tracking-wide text-stone-400">Context</p>
                         <p className="mt-1 text-sm text-stone-700 leading-relaxed whitespace-pre-wrap">{tc.context?.trim() || "—"}</p>
