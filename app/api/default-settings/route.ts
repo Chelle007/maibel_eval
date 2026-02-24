@@ -21,10 +21,8 @@ export async function GET() {
   }
 
   const row = data as Pick<DefaultSettingsRow, "evren_api_url" | "evaluator_model" | "evaluator_prompt" | "summarizer_model" | "summarizer_prompt"> | null;
-  // When DB has no Evren URL, use env so production (e.g. Vercel) can set a default reachable URL
-  const evrenApiUrl = row?.evren_api_url?.trim() || process.env.EVREN_API_URL?.trim() || null;
   return NextResponse.json({
-    evren_api_url: evrenApiUrl,
+    evren_api_url: row?.evren_api_url ?? null,
     evaluator_model: row?.evaluator_model ?? null,
     evaluator_prompt: row?.evaluator_prompt ?? null,
     summarizer_model: row?.summarizer_model ?? null,

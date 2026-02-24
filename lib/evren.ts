@@ -3,9 +3,42 @@ import type { TestCase, EvrenOutput } from "./types";
 /** Path for the Evren evals endpoint (POST /evren-evals). */
 const EVREN_EVALS_PATH = "/evren-evals";
 
+/** True if the URL is localhost or 127.0.0.1 (so the browser can call it when the app is hosted elsewhere). */
+export function isLocalEvrenUrl(url: string): boolean {
+  try {
+    const u = new URL(url.trim());
+    const host = u.hostname.toLowerCase();
+    return host === "localhost" || host === "127.0.0.1";
+  } catch {
+    return false;
+  }
+}
+
+/** Build request body for Evren API. Use from client to call Evren from the browser (e.g. when app is on Vercel, Evren is local). */
+export function buildEvrenRequestBody(testCase: TestCase): { messages: string[]; context?: unknown } {
+  const messages: string[] =
+    testCase.type === "multi_turn" && Array.isArray(testCase.turns) && testCase.turns.length > 0
+      ? testCase.turns.map((s) => String(s ?? "").trim()).filter(Boolean)
+      : [testCase.input_message?.trim() ?? ""].filter(Boolean);
+  const body: { messages: string[]; context?: unknown } = { messages };
+  if (testCase.context) {
+    const ctx = testCase.context.trim();
+    if (ctx.startsWith("{")) {
+      try {
+        body.context = JSON.parse(ctx);
+      } catch {
+        body.context = { description: ctx };
+      }
+    } else {
+      body.context = ctx;
+    }
+  }
+  return body;
+}
+
 /** Build the Evren API endpoint URL. Replaces localhost with 127.0.0.1 to avoid IPv6 issues.
- *  If the base URL has no path, appends EVREN_EVALS_PATH. */
-function evrenEndpoint(input: string): string {
+ *  If the base URL has no path, appends EVREN_EVALS_PATH. Export for client-side Evren calls. */
+export function getEvrenEvalsUrl(input: string): string {
   let url = input.trim().replace(/\/+$/, "");
   url = url.replace(/\/\/localhost([:\/])/g, "//127.0.0.1$1");
   url = url.replace(/\/\/localhost$/, "//127.0.0.1");
@@ -18,6 +51,10 @@ function evrenEndpoint(input: string): string {
   return url;
 }
 
+function evrenEndpoint(input: string): string {
+  return getEvrenEvalsUrl(input);
+}
+
 /**
  * Call Evren evals API (POST /evren-evals).
  * Request: { messages: string[], context?: string|object } — ordered list of user messages.
@@ -28,27 +65,9 @@ export async function callEvrenApi(
   evrenModelApiUrl: string,
   testCase: TestCase
 ): Promise<EvrenOutput[]> {
-  const messages: string[] =
-    testCase.type === "multi_turn" && Array.isArray(testCase.turns) && testCase.turns.length > 0
-      ? testCase.turns.map((s) => String(s ?? "").trim()).filter(Boolean)
-      : [testCase.input_message?.trim() ?? ""].filter(Boolean);
-
-  if (messages.length === 0) {
+  const body = buildEvrenRequestBody(testCase);
+  if (body.messages.length === 0) {
     return [{ evren_response: "", detected_states: "" }];
-  }
-
-  const body: Record<string, unknown> = { messages };
-  if (testCase.context) {
-    const ctx = testCase.context.trim();
-    if (ctx.startsWith("{")) {
-      try {
-        body.context = JSON.parse(ctx);
-      } catch {
-        body.context = { description: ctx };
-      }
-    } else {
-      body.context = ctx;
-    }
   }
 
   const url = evrenEndpoint(evrenModelApiUrl);
