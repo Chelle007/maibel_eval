@@ -52,11 +52,17 @@ export async function callEvrenApi(
   }
 
   const url = evrenEndpoint(evrenModelApiUrl);
+  const evrenApiKey = process.env.EVREN_API_KEY;
+  const headers: Record<string, string> = { "Content-Type": "application/json" };
+  if (evrenApiKey) {
+    headers["x-api-key"] = evrenApiKey;
+  }
+  console.log("[Evren API] request", { url, messages, messageCount: messages.length });
   let res: Response;
   try {
     res = await fetch(url, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers,
       body: JSON.stringify(body),
     });
   } catch (fetchErr) {
@@ -75,6 +81,13 @@ export async function callEvrenApi(
 
   const data = (await res.json()) as Record<string, unknown>;
   const evrenResponses = data.evren_responses as Array<{ response?: string; detected_flags?: string }> | undefined;
+
+  console.log("[Evren API] response", {
+    evren_responsesCount: Array.isArray(evrenResponses) ? evrenResponses.length : 0,
+    evren_responses: Array.isArray(evrenResponses)
+      ? evrenResponses.map((r, i) => ({ turn: i + 1, response: r?.response ?? "", detected_flags: r?.detected_flags ?? "" }))
+      : "(not an array)",
+  });
 
   if (!Array.isArray(evrenResponses)) {
     return [{ evren_response: "", detected_states: "" }];

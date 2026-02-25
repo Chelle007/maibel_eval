@@ -7,92 +7,109 @@ This document describes the HTTP API that the **Evren** model service must expos
 ## Base URL
 
 - Configurable in the eval app (e.g. `http://localhost:8000` or your deployed Evren service URL).
-- The eval app will **always call the path `/evren`**. If the base URL does not end with `/evren`, the app appends it.
-- **Example**: If base URL is `http://localhost:8000`, the app sends requests to `http://localhost:8000/evren`.
+- The eval app calls **`POST /evren-evals`**. If the base URL has no path or path is `/`, the app appends **`/evren-evals`**.
+- **Example**: If base URL is `http://localhost:8000`, the app sends requests to `http://localhost:8000/evren-evals`.
 
 ---
 
-## Endpoint
+## Endpoint: `POST /evren-evals`
 
-### `POST /evren`
+Processes a list of user messages (one turn or a full conversation) and returns one Evren response plus detected flags **per message**. This single endpoint is used for both single-turn and multi-turn test cases.
 
-Processes one user input (and optional image/context) and returns Evren’s reply plus any detected flags.
-
-#### Request
+### Request
 
 - **Method**: `POST`
-- **Headers**: `Content-Type: application/json`
+- **Headers**:
+  - `Content-Type: application/json` (required)
+  - `x-api-key: <key>` — required if the Evren service uses API key auth. The eval app sends this when `EVREN_API_KEY` is set; the value must match the service’s auth key (e.g. `AUTH_KEY` in the Evren server env).
 - **Body**: JSON object with the following fields.
 
-| Field            | Type   | Required | Description |
-|------------------|--------|----------|-------------|
-| `input_message`  | string | **Yes**  | The user message / prompt for Evren. |
-| `img_url`        | string | No       | Optional URL of an image (e.g. user-uploaded). |
-| `context`        | object | No       | Optional context. If the eval app has JSON, it sends it as an object; otherwise it sends `{ "description": "<string>" }`. |
+| Field       | Type     | Required | Description |
+|------------|----------|----------|-------------|
+| `messages` | string[] | **Yes**  | Ordered list of user messages. Single-turn = 1 element; multi-turn = 2+ elements (conversation in order). |
+| `context`  | object or string | No | Optional. Pre-conversation context (e.g. memory). If the eval app has JSON context, it sends an object; otherwise `{ "description": "<string>" }`. |
 
-**Example request body:**
+**Example — single-turn:**
 
 ```json
 {
-  "input_message": "I've been feeling really anxious lately and can't sleep.",
-  "img_url": "https://example.com/some-image.png",
+  "messages": ["Hey, how are you?"]
+}
+```
+
+**Example — multi-turn:**
+
+```json
+{
+  "messages": [
+    "Hello!",
+    "Who are you?",
+    "I'm Michelle, nice to meet you!"
+  ],
   "context": {
-    "description": "User has mentioned sleep issues in previous messages."
+    "description": "First time user."
   }
 }
 ```
 
-Minimal request (no image, no context):
-
-```json
-{
-  "input_message": "Hey, how are you?"
-}
-```
-
-#### Response
+### Response
 
 - **Status**: `200 OK` on success. Any non-2xx status is treated as an error by the eval app.
 - **Headers**: `Content-Type: application/json` (recommended).
-- **Body**: JSON object with exactly these two fields (both strings):
+- **Body**: JSON object with one field:
 
-| Field             | Type   | Required | Description |
-|-------------------|--------|----------|-------------|
-| `evren_response`  | string | **Yes**  | Evren’s reply to the user (full text). |
-| `detected_flags`  | string | **Yes**  | Comma-separated or otherwise formatted list of flags that Evren detected for this input (e.g. `"P0_CRISIS, SAFE"` or `""` if none). |
+| Field               | Type    | Required | Description |
+|---------------------|---------|----------|-------------|
+| `evren_responses`   | array   | **Yes**  | Array of objects, **one per element in `messages`**. Each object has `response` and `detected_flags`. |
 
-**Example response body:**
+Each element of `evren_responses` must be an object with:
 
-```json
-{
-  "evren_response": "I hear you — that sounds really tough. When did the anxiety around sleep start feeling this intense?",
-  "detected_flags": "SAFE, P1_DISTRESS"
-}
-```
+| Field            | Type   | Required | Description |
+|------------------|--------|----------|-------------|
+| `response`       | string | **Yes**  | Evren’s reply to that turn (full text). |
+| `detected_flags` | string | **Yes**  | Flags detected for that turn (e.g. comma-separated or `""` if none). |
 
-If no flags are detected:
+**Example — single-turn response:**
 
 ```json
 {
-  "evren_response": "Hey! I'm doing okay, thanks for asking. How about you?",
-  "detected_flags": ""
+  "evren_responses": [
+    {
+      "response": "Hey! I'm doing okay, thanks for asking. How about you?",
+      "detected_flags": ""
+    }
+  ]
 }
 ```
 
-#### Errors
+**Example — multi-turn response (one object per message):**
 
-- Return an HTTP status code **≥ 400** (e.g. `400`, `500`) and optionally a JSON or text body.
+```json
+{
+  "evren_responses": [
+    { "response": "hey there. how's your day going so far?", "detected_flags": "" },
+    { "response": "i'm just a friend who's here to listen. what's on your mind?", "detected_flags": "" },
+    { "response": "nice to meet you too, michelle.", "detected_flags": "" }
+  ]
+}
+```
+
+- The length of `evren_responses` must equal the length of `messages`. The eval app pairs `messages[i]` with `evren_responses[i]`.
+- **Multi-turn semantics**: Each reply should be generated as part of a single conversation. For turn *i*, Evren should “see” the prior turns (user and Evren) as context. So turn 1 = reply to `messages[0]`; turn 2 = reply to `messages[1]` with history `[messages[0], response_0]`; turn 3 = reply to `messages[2]` with history `[messages[0], response_0, messages[1], response_1]`; etc. Returning the same `response` for every turn is incorrect.
+
+### Errors
+
+- Return HTTP status **≥ 400** (e.g. `400`, `500`) and optionally a JSON or text body.
 - The eval app will surface something like: `Evren API error: <status> <statusText> — <body>`.
 
 ---
 
 ## Summary checklist for implementers
 
-1. Expose **`POST /evren`** (or mount it so the full URL is `<base>/evren`).
-2. Accept JSON body with at least **`input_message`**; optionally **`img_url`** and **`context`** (object).
-3. Return **200** with JSON body containing:
-   - **`evren_response`** (string): Evren’s reply.
-   - **`detected_flags`** (string): Flags detected for this turn (e.g. comma-separated or empty string).
-4. Use **JSON** for request and response and `Content-Type: application/json` where applicable.
+1. Expose **`POST /evren-evals`** (or mount it so the full URL is `<base>/evren-evals`).
+2. Accept JSON body with **`messages`** (array of strings); optionally **`context`** (object or string).
+3. Return **200** with JSON body containing **`evren_responses`**: an array of objects, each with **`response`** (string) and **`detected_flags`** (string). Array length must equal `messages.length`.
+4. For multi-turn, generate each response with full conversation history so replies are distinct and contextually correct.
+5. Use **JSON** for request and response and `Content-Type: application/json` where applicable.
 
 Once this is implemented, the Maibel evaluation app can use your Evren service by setting the “Evren API URL” to your base URL (e.g. `http://localhost:8000` or `https://your-evren-service.com`).
