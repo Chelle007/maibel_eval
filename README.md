@@ -1,36 +1,71 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# MAIBEL Eval
 
-## Getting Started
+A Next.js app for running and evaluating test cases against the **Evren** model. It sends test cases to your Evren API, then uses Google Gemini as an evaluator. Results are stored in Supabase and organized into sessions with summaries.
 
-First, run the development server:
+## Tech stack
+
+- **Next.js 16** (App Router), **React 19**, **TypeScript**
+- **Supabase** — auth, database (PostgreSQL)
+- **Google Generative AI (Gemini)** — evaluation and summarization
+- **Tailwind CSS** — styling
+
+## Features
+
+- **Test cases** — Manage single-turn and multi-turn cases with expected state/behavior, categories, and optional context/images
+- **Run evaluation** — Configure Evren API URL and model; run all enabled test cases; stream progress and save results to a new session
+- **Sessions** — View past runs, session summaries (with optional AI summarization and manual edits), and per-case scores
+- **Settings** — Persist default Evren URL and model preferences
+- **Auth** — Email/password login; owner can add users and manage access
+
+## Getting started
+
+### 1. Install dependencies
+
+```bash
+npm install
+```
+
+### 2. Environment variables
+
+Copy `.env.example` to `.env.local` and fill in:
+
+| Variable | Description |
+|----------|-------------|
+| `GEMINI_API_KEY` | From [Google AI Studio](https://aistudio.google.com/apikey) — used for evaluator and summarizer |
+| `NEXT_PUBLIC_SUPABASE_URL` | Supabase project URL (Settings → API) |
+| `NEXT_PUBLIC_SUPABASE_ANON_KEY` | Supabase anon/public key |
+| `SUPABASE_SERVICE_ROLE_KEY` | Supabase service role key (server-only; for auth sync and add-user) |
+| `DEFAULT_USER_ID` | (Optional) Fallback user UUID when running evaluations without a logged-in user |
+
+### 3. Database
+
+Use a Supabase project and apply the schema under the repo root (e.g. `schema.sql` and any `schema-migration-*.sql` as needed). See `schema.sql` for tables: `users`, `categories`, `test_cases`, `test_sessions`, `eval_results`, etc.
+
+### 4. Run the app
 
 ```bash
 npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+Open [http://localhost:3000](http://localhost:3000). You can run evaluations from the home page (Evren API URL, e.g. `http://localhost:8000`), manage test cases, and view sessions.
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+## Evren API
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+The app calls your Evren service at a configurable base URL. It always uses the path `/evren` (appended if the base URL doesn’t include it). Request/response format is described in **[docs/evren-api-spec.md](docs/evren-api-spec.md)**.
 
-## Learn More
+## Scripts
 
-To learn more about Next.js, take a look at the following resources:
+| Command | Description |
+|---------|-------------|
+| `npm run dev` | Start development server |
+| `npm run build` | Build for production |
+| `npm run start` | Start production server |
+| `npm run lint` | Run ESLint |
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+## Project structure (high level)
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
-
-## Deploy on Vercel
-
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
-
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+- `app/` — Routes and UI: home (run eval), test cases, sessions, settings, login
+- `app/api/` — API routes: auth, test cases, sessions, evaluate/run (and stream), default-settings, Gemini proxy, etc.
+- `lib/` — DB types, Supabase client/server/admin, evaluator, summarizer, Evren client, prompts, token-cost
+- `content/prompts/` — System prompts for evaluator, summarizer, base
+- `schema.sql`, `schema-migration-*.sql` — Database schema and migrations

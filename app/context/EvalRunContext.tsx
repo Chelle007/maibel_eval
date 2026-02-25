@@ -9,8 +9,6 @@ import {
   type ReactNode,
 } from "react";
 import { useRouter } from "next/navigation";
-import { isLocalEvrenUrl, buildEvrenRequestBody, getEvrenEvalsUrl } from "@/lib/evren";
-import type { TestCase } from "@/lib/types";
 
 function playCompletionSound() {
   try {
@@ -109,94 +107,19 @@ export function EvalRunProvider({ children }: { children: ReactNode }) {
       abortControllerRef.current?.abort();
       const controller = new AbortController();
       abortControllerRef.current = controller;
-      const evrenUrl = params.evren_model_api_url.trim();
       setRunState({
         ...initialState,
         loading: true,
       });
 
       try {
-        let evrenOutputsById: Record<string, { evren_response: string; detected_states: string }[]> = {};
-
-        if (isLocalEvrenUrl(evrenUrl)) {
-          setRunState((prev) => ({
-            ...prev,
-            progress: { stage: "evren", message: "Fetching test cases…", total: 0 },
-          }));
-          const tcRes = await fetch("/api/evaluate/run/enabled-test-cases", {
-            signal: controller.signal,
-          });
-          if (!tcRes.ok) {
-            const data = await tcRes.json().catch(() => ({}));
-            setRunState((prev) => ({
-              ...prev,
-              loading: false,
-              error: (data as { error?: string }).error ?? "Failed to load test cases",
-            }));
-            return;
-          }
-          const { test_cases: testCases } = (await tcRes.json()) as { test_cases: TestCase[] };
-          if (!Array.isArray(testCases) || testCases.length === 0) {
-            setRunState((prev) => ({
-              ...prev,
-              loading: false,
-              error: "No enabled test cases",
-            }));
-            return;
-          }
-          const evrenEvalsUrl = getEvrenEvalsUrl(evrenUrl);
-          for (let i = 0; i < testCases.length; i++) {
-            const tc = testCases[i]!;
-            setRunState((prev) => ({
-              ...prev,
-              total: testCases.length,
-              progress: {
-                stage: "evren",
-                index: i,
-                total: testCases.length,
-                test_case_id: tc.test_case_id,
-                message: `Calling Evren for ${tc.test_case_id}…`,
-              },
-            }));
-            const body = buildEvrenRequestBody(tc);
-            if (body.messages.length === 0) {
-              evrenOutputsById[tc.test_case_id] = [{ evren_response: "", detected_states: "" }];
-              continue;
-            }
-            const evrenRes = await fetch(evrenEvalsUrl, {
-              method: "POST",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify(body),
-              signal: controller.signal,
-            });
-            if (!evrenRes.ok) {
-              const text = await evrenRes.text();
-              setRunState((prev) => ({
-                ...prev,
-                loading: false,
-                error: `Evren error for ${tc.test_case_id}: ${evrenRes.status} ${text.slice(0, 80)}`,
-              }));
-              return;
-            }
-            const data = (await evrenRes.json()) as { evren_responses?: Array<{ response?: string; detected_flags?: string }> };
-            const responses = data.evren_responses;
-            evrenOutputsById[tc.test_case_id] = Array.isArray(responses)
-              ? responses.map((item) => ({
-                  evren_response: String(item?.response ?? ""),
-                  detected_states: String(item?.detected_flags ?? ""),
-                }))
-              : [{ evren_response: "", detected_states: "" }];
-          }
-        }
-
         const res = await fetch("/api/evaluate/run/stream", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
-            evren_model_api_url: evrenUrl,
+            evren_model_api_url: params.evren_model_api_url.trim(),
             model_name: params.model_name || undefined,
             summarizer_model: params.summarizer_model || undefined,
-            ...(Object.keys(evrenOutputsById).length > 0 ? { evren_outputs_by_id: evrenOutputsById } : {}),
           }),
           signal: controller.signal,
         });
