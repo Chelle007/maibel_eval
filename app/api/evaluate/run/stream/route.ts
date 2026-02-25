@@ -71,6 +71,27 @@ export async function POST(request: Request) {
       { status: 400, headers: { "Content-Type": "application/json" } }
     );
 
+  // On Vercel (and similar), localhost is this server—Evren must be a reachable URL.
+  const isProduction = process.env.VERCEL === "1";
+  if (isProduction) {
+    try {
+      const u = new URL(evrenModelApiUrl);
+      const host = u.hostname.toLowerCase();
+      if (host === "localhost" || host === "127.0.0.1")
+        return new Response(
+          JSON.stringify({
+            error:
+              "Evren API URL cannot be localhost on Vercel. Set Evren API URL in Settings to your deployed Evren service (or set NEXT_PUBLIC_EVREN_API_URL in Vercel).",
+            code: "LOCALHOST_ON_VERCEL",
+            status: 400,
+          }),
+          { status: 400, headers: { "Content-Type": "application/json" } }
+        );
+    } catch {
+      /* invalid URL already; let callEvrenApi surface it */
+    }
+  }
+
   const { data: testCasesRows, error: fetchError } = await supabase
     .from("test_cases")
     .select("*")

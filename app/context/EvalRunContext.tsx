@@ -125,11 +125,14 @@ export function EvalRunProvider({ children }: { children: ReactNode }) {
         });
 
         if (!res.ok) {
-          const data = await res.json().catch(() => ({}));
+          const data = await res.json().catch(() => ({})) as { error?: string; code?: string; status?: number };
+          const msg = data.error ?? `Request failed (${res.status})`;
+          const code = data.code ? ` [${data.code}]` : "";
+          const status = data.status ?? res.status;
           setRunState((prev) => ({
             ...prev,
             loading: false,
-            error: (data as { error?: string }).error ?? `Request failed (${res.status})`,
+            error: `${msg} (${status})${code}`,
           }));
           return;
         }
