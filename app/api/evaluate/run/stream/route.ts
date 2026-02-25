@@ -197,7 +197,7 @@ export async function POST(request: Request) {
           }
 
           const evrenResponsesColumn = evrenOutputs.map((o) => ({
-            response: o.evren_response,
+            response: Array.isArray(o.evren_response) ? o.evren_response : [o.evren_response],
             detected_flags: o.detected_states,
           }));
           const lastOutput = evrenOutputs[evrenOutputs.length - 1] ?? { evren_response: "", detected_states: "" };

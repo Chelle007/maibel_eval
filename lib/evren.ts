@@ -80,21 +80,16 @@ export async function callEvrenApi(
   }
 
   const data = (await res.json()) as Record<string, unknown>;
-  const evrenResponses = data.evren_responses as Array<{ response?: string; detected_flags?: string }> | undefined;
+  const evrenResponses = data.evren_responses as Array<{ response?: string | string[]; detected_flags?: string }> | undefined;
 
-  console.log("[Evren API] response", {
-    evren_responsesCount: Array.isArray(evrenResponses) ? evrenResponses.length : 0,
-    evren_responses: Array.isArray(evrenResponses)
-      ? evrenResponses.map((r, i) => ({ turn: i + 1, response: r?.response ?? "", detected_flags: r?.detected_flags ?? "" }))
-      : "(not an array)",
-  });
+  console.log("[Evren API] raw response:", JSON.stringify(data, null, 2));
 
   if (!Array.isArray(evrenResponses)) {
     return [{ evren_response: "", detected_states: "" }];
   }
 
   return evrenResponses.map((item) => ({
-    evren_response: String(item?.response ?? ""),
+    evren_response: item?.response ?? "",
     detected_states: String(item?.detected_flags ?? ""),
   }));
 }

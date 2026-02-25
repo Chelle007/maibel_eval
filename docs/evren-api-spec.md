@@ -66,8 +66,8 @@ Each element of `evren_responses` must be an object with:
 
 | Field            | Type   | Required | Description |
 |------------------|--------|----------|-------------|
-| `response`       | string | **Yes**  | Evren’s reply to that turn (full text). |
-| `detected_flags` | string | **Yes**  | Flags detected for that turn (e.g. comma-separated or `""` if none). |
+| `response`       | string or array | **Yes**  | Evren’s reply to that turn Either a single string or an array of strings (one per bubble); first element = first bubble, second = second, etc. |
+| `detected_flags` | string          | **Yes**  | Flags detected for that turn (e.g. comma-separated or `""` if none). |
 
 **Example — single-turn response:**
 
@@ -90,6 +90,19 @@ Each element of `evren_responses` must be an object with:
     { "response": "hey there. how's your day going so far?", "detected_flags": "" },
     { "response": "i'm just a friend who's here to listen. what's on your mind?", "detected_flags": "" },
     { "response": "nice to meet you too, michelle.", "detected_flags": "" }
+  ]
+}
+```
+
+**Example — response as bubbles (array of strings):**
+
+```json
+{
+  "evren_responses": [
+    {
+      "response": ["blabla from bubble 1", "blabla from bubble 2"],
+      "detected_flags": ""
+    }
   ]
 }
 ```

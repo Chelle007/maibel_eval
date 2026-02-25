@@ -9,7 +9,7 @@ type EvalResultRow = {
   eval_result_id: string;
   session_id: string;
   test_case_uuid: string;
-  evren_responses: { response: string; detected_flags: string }[];
+  evren_responses: { response: string | string[]; detected_flags: string }[];
   success: boolean;
   score: number;
   reason: string | null;
@@ -82,7 +82,7 @@ export async function POST(
       img_url: tc.img_url ?? undefined,
     };
     const evrenOutput: EvrenOutput = {
-      evren_response: last.response ?? "",
+      evren_response: Array.isArray(last.response) ? last.response.join("\n") : (last.response ?? ""),
       detected_states: last.detected_flags ?? "",
     };
     const evalResult: EvaluationResult = {

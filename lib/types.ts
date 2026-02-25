@@ -21,7 +21,8 @@ export interface TestCase {
 
 /** Evren model output for one test case. */
 export interface EvrenOutput {
-  evren_response: string;
+  /** Single string or array of strings (one per bubble). */
+  evren_response: string | string[];
   detected_states: string;
 }
 

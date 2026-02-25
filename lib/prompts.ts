@@ -55,9 +55,10 @@ export function buildEvaluatorUserMessage(
     const n = i + 1;
     const userMsg = userMessages[i] ?? "(no user message)";
     const out = outputs[i] ?? { evren_response: "", detected_states: "" };
+    const responseText = Array.isArray(out.evren_response) ? out.evren_response.join("\n") : out.evren_response;
     sections.push(`--- Turn ${n} ---`);
     sections.push(`User: ${userMsg}`);
-    sections.push(`Evren response: ${out.evren_response}`);
+    sections.push(`Evren response: ${responseText}`);
     sections.push(`Detected flags: ${out.detected_states}`);
     sections.push("");
   }

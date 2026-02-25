@@ -36,7 +36,7 @@ export function buildRichReport(
       expected_state: testCase.expected_state,
     },
     results: {
-      evren_response: evrenOutput.evren_response,
+      evren_response: Array.isArray(evrenOutput.evren_response) ? evrenOutput.evren_response.join("\n") : evrenOutput.evren_response,
       detected_states: evrenOutput.detected_states,
     },
     evaluator_verdict: {

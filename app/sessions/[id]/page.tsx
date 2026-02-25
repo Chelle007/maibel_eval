@@ -71,8 +71,8 @@ type EvalResult = {
   total_tokens: number | null;
   cost_usd: number | null;
   manually_edited: boolean;
-  /** Array of { response, detected_flags } per turn. */
-  evren_responses?: { response: string; detected_flags: string }[] | null;
+  /** Array of { response, detected_flags } per turn. response is string or string[] (one per bubble). */
+  evren_responses?: { response: string | string[]; detected_flags: string }[] | null;
   test_cases?: { input_message: string; expected_state: string; expected_behavior: string; title?: string | null; context?: string | null; type?: "single_turn" | "multi_turn"; turns?: string[] | null } | null;
 };
 
@@ -681,10 +681,11 @@ export default function SessionDetailPage() {
                     <p className="text-xs font-medium uppercase tracking-wide text-stone-400">Conversation</p>
                     <div className="mt-2 space-y-3">
                       {r.evren_responses && r.evren_responses.length > 0 ? (
-                        r.evren_responses.map((evrenItem: { response: string; detected_flags: string }, i: number) => {
+                        r.evren_responses.map((evrenItem: { response: string | string[]; detected_flags: string }, i: number) => {
                           const flagsKey = `${r.eval_result_id}-${i}`;
                           const flagsExpanded = expandedFlagsKeys.has(flagsKey);
                           const hasFlags = evrenItem.detected_flags != null && String(evrenItem.detected_flags).trim() !== "";
+                          const bubbles = Array.isArray(evrenItem.response) ? evrenItem.response : [evrenItem.response ?? ""];
                           return (
                             <div key={i} className="space-y-2">
                               <div>
@@ -697,7 +698,16 @@ export default function SessionDetailPage() {
                               </div>
                               <div>
                                 <p className="text-xs font-medium text-stone-500">evren:</p>
-                                <p className="mt-0.5 text-sm text-stone-700 leading-relaxed whitespace-pre-wrap">{evrenItem.response?.trim() || "—"}</p>
+                                <div className="mt-1 space-y-2">
+                                  {bubbles.map((bubble, j) => (
+                                    <blockquote
+                                      key={j}
+                                      className="border-l-2 border-stone-300 bg-stone-50/80 pl-3 py-1.5 pr-2 text-sm text-stone-700 leading-relaxed whitespace-pre-wrap rounded-r"
+                                    >
+                                      {bubble?.trim() || "—"}
+                                    </blockquote>
+                                  ))}
+                                </div>
                                 {hasFlags && (
                                   <div className="mt-2">
                                     <button

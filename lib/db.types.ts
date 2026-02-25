@@ -28,7 +28,8 @@ export interface TestSessionsRow {
 
 /** One Evren response item stored in eval_results.evren_responses array. */
 export interface EvrenResponseItem {
-  response: string;
+  /** Single string (legacy) or array of strings (one per bubble). */
+  response: string | string[];
   detected_flags: string;
 }
 
