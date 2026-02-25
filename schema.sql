@@ -28,7 +28,7 @@ CREATE TABLE categories (
 -- Unique name only for non-deleted rows (enforced in app or partial unique index)
 CREATE UNIQUE INDEX idx_categories_name_not_deleted ON categories (name) WHERE deleted_at IS NULL;
 
--- id: stable UUID PK. test_case_id: editable display id (e.g. P0_001)
+-- id: stable UUID PK. test_case_id: editable display id (e.g. P0-001)
 -- type: 'single_turn' (one user message → one Evren response) or 'multi_turn' (conversation)
 -- turns: for multi_turn, JSONB array of user inputs only, e.g. ["input 1", "input 2"]; null for single_turn
 CREATE TABLE test_cases (

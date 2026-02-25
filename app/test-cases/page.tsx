@@ -193,7 +193,7 @@ export default function TestCasesPage() {
     const url = editing ? `/api/test-cases/${encodeURIComponent(editing.test_case_id)}` : "/api/test-cases";
     const method = editing ? "PATCH" : "POST";
     const body = editing
-      ? { ...form, title: form.title || null, category_id: form.category_id || null, type: form.type, turns: form.type === "multi_turn" ? form.turns : null, img_url: form.img_url || null, context: form.context || null, forbidden: form.forbidden || null, notes: form.notes || null, is_enabled: form.is_enabled }
+      ? { ...form, test_case_id: form.test_case_id.trim(), title: form.title || null, category_id: form.category_id || null, type: form.type, turns: form.type === "multi_turn" ? form.turns : null, img_url: form.img_url || null, context: form.context || null, forbidden: form.forbidden || null, notes: form.notes || null, is_enabled: form.is_enabled }
       : { ...form, test_case_id: form.test_case_id.trim(), title: form.title || null, category_id: form.category_id || null, type: form.type, turns: form.type === "multi_turn" ? form.turns : null, img_url: form.img_url || null, context: form.context || null, forbidden: form.forbidden || null, notes: form.notes || null, is_enabled: form.is_enabled };
     fetch(url, {
       method,
@@ -552,7 +552,7 @@ export default function TestCasesPage() {
             <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
               <div>
                 <p className="text-xs font-medium uppercase tracking-wide text-stone-400">Test case ID</p>
-                <input type="text" value={form.test_case_id} onChange={(e) => setForm((f) => ({ ...f, test_case_id: e.target.value }))} className={inputClass} placeholder="e.g. P0_001" required />
+                <input type="text" value={form.test_case_id} onChange={(e) => setForm((f) => ({ ...f, test_case_id: e.target.value }))} className={inputClass} placeholder="e.g. P0-001" required />
               </div>
               <div>
                 <p className="text-xs font-medium uppercase tracking-wide text-stone-400">Title</p>
@@ -668,7 +668,19 @@ export default function TestCasesPage() {
                   </label>
                   <div className="min-w-0 flex-1">
                     <div className="font-mono text-base font-semibold text-stone-900 flex flex-wrap items-center gap-2">
-                      {tc.test_case_id}
+                      {isEditingThis ? (
+                        <input
+                          type="text"
+                          value={form.test_case_id}
+                          onChange={(e) => setForm((f) => ({ ...f, test_case_id: e.target.value }))}
+                          onClick={(e) => e.stopPropagation()}
+                          className="min-w-[80px] max-w-[140px] rounded-lg border border-stone-200 bg-white px-2.5 py-1 text-sm font-mono font-semibold text-stone-900 focus:border-stone-400 focus:outline-none focus:ring-1 focus:ring-stone-400"
+                          placeholder="e.g. P0-001"
+                          required
+                        />
+                      ) : (
+                        tc.test_case_id
+                      )}
                       <span className={`rounded px-1.5 py-0.5 text-xs font-medium ${(isEditingThis ? form.type : tc.type) === "multi_turn" ? "bg-violet-100 text-violet-800" : "bg-stone-100 text-stone-600"}`}>
                         {(isEditingThis ? form.type : tc.type) === "multi_turn" ? "Multi" : "Single"}
                       </span>

@@ -9,12 +9,32 @@ export async function PATCH(
   const supabase = await createClient();
   const body = await _request.json() as Record<string, unknown>;
   const allowed = [
-    "title", "category_id", "type", "input_message", "turns", "img_url", "context",
+    "test_case_id", "title", "category_id", "type", "input_message", "turns", "img_url", "context",
     "expected_state", "expected_behavior", "forbidden", "notes", "is_enabled",
   ];
   const updates: Record<string, unknown> = {};
   for (const key of allowed) {
     if (key in body) updates[key] = body[key];
+  }
+  if ("test_case_id" in updates) {
+    const newId = typeof updates.test_case_id === "string" ? updates.test_case_id.trim() : "";
+    if (!newId) {
+      return NextResponse.json({ error: "Test case ID cannot be empty" }, { status: 400 });
+    }
+    if (newId !== id) {
+      const { data: existing } = await supabase
+        .from("test_cases")
+        .select("test_case_id")
+        .eq("test_case_id", newId)
+        .maybeSingle();
+      if (existing) {
+        return NextResponse.json(
+          { error: "A test case with this ID already exists." },
+          { status: 409 }
+        );
+      }
+    }
+    updates.test_case_id = newId;
   }
   if ("type" in updates && updates.type !== "multi_turn") {
     updates.type = "single_turn";
