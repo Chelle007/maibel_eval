@@ -55,12 +55,13 @@ export async function POST(request: Request) {
   const { data: sessionRow, error: sessionError } = await supabase
     .from("test_sessions")
     .insert(sessionInsert as any)
-    .select("test_session_id")
+    .select("session_id, test_session_id")
     .single();
   if (sessionError || !sessionRow) {
     return NextResponse.json({ error: sessionError?.message ?? "Failed to create session" }, { status: 500 });
   }
-  const session = sessionRow as { test_session_id: string };
+  const session = sessionRow as { session_id: string; test_session_id: string };
+  const sessionId = session.session_id;
   const testSessionId = session.test_session_id;
   const evalStartMs = Date.now();
 
@@ -102,8 +103,8 @@ export async function POST(request: Request) {
     richReportInputs.push({ testCase, evrenOutput: lastOutput, result });
 
     const evalPayload = {
-      test_session_id: testSessionId,
-      test_case_id: row.test_case_id,
+      session_id: sessionId,
+      test_case_uuid: row.id,
       evren_responses: evrenResponsesColumn,
       success: result.success,
       score: result.score,
@@ -139,7 +140,7 @@ export async function POST(request: Request) {
   await supabase
     .from("test_sessions")
     .update(sessionUpdate as unknown as never)
-    .eq("test_session_id", testSessionId);
+    .eq("session_id", sessionId);
 
   return NextResponse.json({
     test_session_id: testSessionId,

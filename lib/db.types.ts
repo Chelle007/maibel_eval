@@ -16,6 +16,7 @@ export interface UsersRow {
 }
 
 export interface TestSessionsRow {
+  session_id: string;
   test_session_id: string;
   user_id: string;
   title: string | null;
@@ -33,8 +34,8 @@ export interface EvrenResponseItem {
 
 export interface EvalResultsRow {
   eval_result_id: string;
-  test_session_id: string;
-  test_case_id: string;
+  session_id: string;
+  test_case_uuid: string;
   /** Array of { response, detected_flags } per turn. */
   evren_responses: EvrenResponseItem[];
   success: boolean;
@@ -54,6 +55,7 @@ export interface CategoriesRow {
 }
 
 export interface TestCasesRow {
+  id: string;
   test_case_id: string;
   title: string | null;
   category_id: string | null;
@@ -84,9 +86,9 @@ export interface Database {
   public: {
     Tables: {
       users: { Row: UsersRow; Insert: Omit<UsersRow, "user_id"> & { user_id?: string }; Update: Partial<UsersRow> };
-      test_sessions: { Row: TestSessionsRow; Insert: Omit<TestSessionsRow, "test_session_id"> & { test_session_id?: string }; Update: Partial<TestSessionsRow> };
+      test_sessions: { Row: TestSessionsRow; Insert: Omit<TestSessionsRow, "session_id" | "test_session_id"> & { session_id?: string; test_session_id?: string }; Update: Partial<TestSessionsRow> };
       eval_results: { Row: EvalResultsRow; Insert: Omit<EvalResultsRow, "eval_result_id"> & { eval_result_id?: string }; Update: Partial<EvalResultsRow> };
-      test_cases: { Row: TestCasesRow; Insert: Omit<TestCasesRow, "test_case_id"> & { test_case_id?: string }; Update: Partial<TestCasesRow> };
+      test_cases: { Row: TestCasesRow; Insert: Omit<TestCasesRow, "id" | "test_case_id"> & { id?: string; test_case_id?: string }; Update: Partial<TestCasesRow> };
       default_settings: { Row: DefaultSettingsRow; Insert: Omit<DefaultSettingsRow, "default_setting_id"> & { default_setting_id?: string }; Update: Partial<DefaultSettingsRow> };
       categories: { Row: CategoriesRow; Insert: Omit<CategoriesRow, "category_id"> & { category_id?: string }; Update: Partial<CategoriesRow> };
     };

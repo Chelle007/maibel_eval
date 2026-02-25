@@ -4,7 +4,6 @@ import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
 import ReactMarkdown from "react-markdown";
-import { PageHeader } from "@/app/components/PageHeader";
 import { SummaryEditor } from "@/app/components/SummaryEditor";
 
 type Session = {
@@ -103,6 +102,11 @@ export default function SessionDetailPage() {
   const [savingSummary, setSavingSummary] = useState(false);
   const [refiningWording, setRefiningWording] = useState(false);
   const [deleting, setDeleting] = useState(false);
+  const [editingHeader, setEditingHeader] = useState(false);
+  const [editSessionId, setEditSessionId] = useState("");
+  const [editTitle, setEditTitle] = useState("");
+  const [savingHeader, setSavingHeader] = useState(false);
+  const [headerError, setHeaderError] = useState<string | null>(null);
   const [expandedResultId, setExpandedResultId] = useState<string | null>(null);
   const [expandedFlagsKeys, setExpandedFlagsKeys] = useState<Set<string>>(new Set());
   const [searchQuery, setSearchQuery] = useState("");
@@ -196,6 +200,36 @@ export default function SessionDetailPage() {
       .finally(() => setSavingSummary(false));
   }
 
+  function saveHeader() {
+    const sessionIdTrimmed = editSessionId.trim();
+    if (!sessionIdTrimmed) {
+      setHeaderError("Session ID cannot be empty");
+      return;
+    }
+    setSavingHeader(true);
+    setHeaderError(null);
+    fetch(`/api/sessions/${id}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ test_session_id: sessionIdTrimmed, title: editTitle.trim() || null }),
+    })
+      .then((res) => res.json())
+      .then((data) => {
+        if (data.error) throw new Error(data.error);
+        setSession((s) =>
+          s
+            ? { ...s, test_session_id: data.session?.test_session_id ?? sessionIdTrimmed, title: (data.session?.title ?? editTitle.trim()) || null }
+            : null
+        );
+        setEditingHeader(false);
+        if (data.redirect_id && data.redirect_id !== id) {
+          router.push(`/sessions/${data.redirect_id}`);
+        }
+      })
+      .catch((e) => setHeaderError(e.message))
+      .finally(() => setSavingHeader(false));
+  }
+
   function refineWording() {
     setRefiningWording(true);
     setError(null);
@@ -239,10 +273,80 @@ export default function SessionDetailPage() {
           {deleting ? "Deleting…" : "Delete session"}
         </button>
       </div>
-      <PageHeader
-        title={`${session.test_session_id} · ${session.title?.trim() || "Untitled session"}`}
-        headingClassName="mt-2"
-      />
+      <header className="mt-2">
+        {!editingHeader ? (
+          <div className="flex flex-wrap items-center gap-2">
+            <h1 className="text-2xl font-semibold text-stone-900">
+              {session.test_session_id} · {session.title?.trim() || "Untitled session"}
+            </h1>
+            <button
+              type="button"
+              onClick={() => {
+                setEditSessionId(session.test_session_id);
+                setEditTitle(session.title?.trim() ?? "");
+                setHeaderError(null);
+                setEditingHeader(true);
+              }}
+              className="inline-flex items-center gap-1.5 rounded-lg border border-stone-300 bg-stone-50 px-2.5 py-1.5 text-sm font-medium text-stone-700 shadow-sm hover:bg-stone-100 hover:border-stone-400"
+              title="Edit session ID and title"
+            >
+              <span aria-hidden className="text-stone-500">✎</span>
+              Edit
+            </button>
+          </div>
+        ) : (
+          <div className="space-y-3">
+            <div className="flex flex-wrap items-center gap-3 gap-y-2">
+              <label className="sr-only" htmlFor="edit-session-id">Session ID</label>
+              <input
+                id="edit-session-id"
+                type="text"
+                value={editSessionId}
+                onChange={(e) => setEditSessionId(e.target.value)}
+                placeholder="e.g. ES120"
+                className="rounded-lg border border-stone-200 bg-white px-3 py-2 text-lg font-semibold text-stone-900 focus:border-stone-400 focus:outline-none focus:ring-1 focus:ring-stone-400"
+              />
+              <span className="text-stone-400 font-medium">·</span>
+              <label className="sr-only" htmlFor="edit-session-title">Title</label>
+              <input
+                id="edit-session-title"
+                type="text"
+                value={editTitle}
+                onChange={(e) => setEditTitle(e.target.value)}
+                placeholder="Session title"
+                className="min-w-[200px] flex-1 rounded-lg border border-stone-200 bg-white px-3 py-2 text-lg font-semibold text-stone-900 focus:border-stone-400 focus:outline-none focus:ring-1 focus:ring-stone-400"
+              />
+            </div>
+            {headerError && (
+              <p className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-800" role="alert">
+                {headerError}
+              </p>
+            )}
+            <div className="flex flex-wrap gap-2">
+              <button
+                type="button"
+                onClick={saveHeader}
+                disabled={savingHeader}
+                className="rounded-lg bg-stone-900 px-4 py-2 text-sm font-medium text-white hover:bg-stone-800 disabled:opacity-50"
+              >
+                {savingHeader ? "Saving…" : "Save"}
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setEditingHeader(false);
+                  setEditSessionId(session.test_session_id);
+                  setEditTitle(session.title?.trim() ?? "");
+                  setHeaderError(null);
+                }}
+                className="rounded-lg border border-stone-200 px-4 py-2 text-sm font-medium text-stone-600 hover:bg-stone-50"
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
+        )}
+      </header>
 
       <div className="mt-6 rounded-xl border border-stone-200 bg-white p-5 shadow-sm">
         <h2 className="text-xl font-semibold tracking-tight text-stone-900">Session details</h2>

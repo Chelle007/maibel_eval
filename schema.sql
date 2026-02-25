@@ -28,46 +28,49 @@ CREATE TABLE categories (
 -- Unique name only for non-deleted rows (enforced in app or partial unique index)
 CREATE UNIQUE INDEX idx_categories_name_not_deleted ON categories (name) WHERE deleted_at IS NULL;
 
--- test_case_id is a text identifier you supply (e.g. P0_001), not a UUID
+-- id: stable UUID PK. test_case_id: editable display id (e.g. P0_001)
 -- type: 'single_turn' (one user message → one Evren response) or 'multi_turn' (conversation)
 -- turns: for multi_turn, JSONB array of user inputs only, e.g. ["input 1", "input 2"]; null for single_turn
 CREATE TABLE test_cases (
-  test_case_id      TEXT PRIMARY KEY,
-  title             TEXT,
-  category_id       UUID REFERENCES categories(category_id) ON DELETE SET NULL,
-  type              TEXT NOT NULL DEFAULT 'single_turn' CHECK (type IN ('single_turn', 'multi_turn')),
-  input_message     TEXT NOT NULL,
-  img_url           TEXT,
-  context           TEXT,
-  turns             JSONB,
-  expected_state   TEXT NOT NULL,
-  expected_behavior TEXT NOT NULL,
-  forbidden         TEXT,
-  is_enabled        BOOLEAN NOT NULL DEFAULT TRUE,
-  notes             TEXT,
-  created_at        TIMESTAMPTZ NOT NULL DEFAULT now(),
-  updated_at        TIMESTAMPTZ NOT NULL DEFAULT now()
+  id                 UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  test_case_id       TEXT NOT NULL UNIQUE,
+  title              TEXT,
+  category_id        UUID REFERENCES categories(category_id) ON DELETE SET NULL,
+  type               TEXT NOT NULL DEFAULT 'single_turn' CHECK (type IN ('single_turn', 'multi_turn')),
+  input_message      TEXT NOT NULL,
+  img_url            TEXT,
+  context            TEXT,
+  turns              JSONB,
+  expected_state     TEXT NOT NULL,
+  expected_behavior  TEXT NOT NULL,
+  forbidden          TEXT,
+  is_enabled         BOOLEAN NOT NULL DEFAULT TRUE,
+  notes              TEXT,
+  created_at         TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at         TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
 CREATE SEQUENCE IF NOT EXISTS session_short_id_seq START 1;
 
+-- session_id: stable UUID PK. test_session_id: editable display id (e.g. ES001)
 CREATE TABLE test_sessions (
-  test_session_id        TEXT PRIMARY KEY DEFAULT ('ES' || LPAD(nextval('session_short_id_seq')::text, 3, '0')),
-  user_id                UUID NOT NULL REFERENCES users(user_id) ON DELETE CASCADE,
-  title                  TEXT,
-  total_cost_usd         DOUBLE PRECISION,
+  session_id         UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  test_session_id    TEXT NOT NULL UNIQUE DEFAULT ('ES' || LPAD(nextval('session_short_id_seq')::text, 3, '0')),
+  user_id            UUID NOT NULL REFERENCES users(user_id) ON DELETE CASCADE,
+  title              TEXT,
+  total_cost_usd     DOUBLE PRECISION,
   total_eval_time_seconds DOUBLE PRECISION,
-  summary                TEXT,
-  manually_edited        BOOLEAN NOT NULL DEFAULT FALSE,
-  created_at             TIMESTAMPTZ NOT NULL DEFAULT now(),
-  updated_at             TIMESTAMPTZ NOT NULL DEFAULT now()
+  summary            TEXT,
+  manually_edited    BOOLEAN NOT NULL DEFAULT FALSE,
+  created_at         TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at         TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
 -- evren_responses: JSONB array of { "response": "...", "detected_flags": "..." } (one per turn)
 CREATE TABLE eval_results (
   eval_result_id     UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  test_session_id    TEXT NOT NULL REFERENCES test_sessions(test_session_id) ON DELETE CASCADE,
-  test_case_id       TEXT NOT NULL REFERENCES test_cases(test_case_id) ON DELETE CASCADE,
+  session_id         UUID NOT NULL REFERENCES test_sessions(session_id) ON DELETE CASCADE,
+  test_case_uuid     UUID NOT NULL REFERENCES test_cases(id) ON DELETE CASCADE,
   evren_responses    JSONB NOT NULL DEFAULT '[]',
   success            BOOLEAN NOT NULL,
   score              DOUBLE PRECISION NOT NULL,
@@ -122,9 +125,11 @@ CREATE TRIGGER default_settings_updated_at
 -- =============================================================================
 
 CREATE INDEX idx_test_sessions_user_id ON test_sessions(user_id);
-CREATE INDEX idx_eval_results_test_session_id ON eval_results(test_session_id);
-CREATE INDEX idx_eval_results_test_case_id ON eval_results(test_case_id);
+CREATE INDEX idx_test_sessions_test_session_id ON test_sessions(test_session_id);
+CREATE INDEX idx_eval_results_session_id ON eval_results(session_id);
+CREATE INDEX idx_eval_results_test_case_uuid ON eval_results(test_case_uuid);
 CREATE INDEX idx_test_cases_category_id ON test_cases(category_id);
+CREATE INDEX idx_test_cases_test_case_id ON test_cases(test_case_id);
 
 -- =============================================================================
 -- ROW LEVEL SECURITY (Supabase)
