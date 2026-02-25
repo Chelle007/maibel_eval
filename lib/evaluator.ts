@@ -94,10 +94,10 @@ function extractEvaluatorFieldsFallback(
 
 const DEFAULT_MODEL = "gemini-2.5-flash";
 
-/** Run evaluator on one test case + Evren output; returns parsed evaluation result. */
+/** Run evaluator on one test case + Evren output(s). For multi_turn pass all outputs to evaluate whole conversation. */
 export async function evaluateOne(
   testCase: TestCase,
-  evrenOutput: EvrenOutput,
+  evrenOutputOrOutputs: EvrenOutput | EvrenOutput[],
   apiKey: string,
   modelName: string = DEFAULT_MODEL,
   systemPrompt?: string
@@ -109,7 +109,7 @@ export async function evaluateOne(
     systemInstruction,
   });
 
-  const userMessage = buildEvaluatorUserMessage(testCase, evrenOutput);
+  const userMessage = buildEvaluatorUserMessage(testCase, evrenOutputOrOutputs);
   const result = await model.generateContent(userMessage);
   const response = result.response;
   const text = response.text();

@@ -16,13 +16,20 @@ export async function POST(request: Request) {
       model_name?: string;
       system_prompt?: string;
     };
-    const { test_case: testCase, evren_output: evrenOutput } = body;
+    const { test_case: testCase, evren_output: evrenOutput, evren_outputs: evrenOutputs } = body;
 
-    if (!testCase || !evrenOutput) {
+    if (!testCase) {
+      return NextResponse.json(
+        { error: "Request body must include 'test_case'. See lib/types.ts for shape." },
+        { status: 400 }
+      );
+    }
+    const hasOutputs = Array.isArray(evrenOutputs) && evrenOutputs.length > 0;
+    if (!hasOutputs && !evrenOutput) {
       return NextResponse.json(
         {
           error:
-            "Request body must include 'test_case' and 'evren_output'. See lib/types.ts for shape.",
+            "Request body must include 'evren_output' (single) or 'evren_outputs' (multi-turn). See lib/types.ts.",
         },
         { status: 400 }
       );
@@ -30,7 +37,13 @@ export async function POST(request: Request) {
 
     const modelName = body.model_name ?? "gemini-2.5-flash";
     const systemPrompt = body.system_prompt;
-    const result = await evaluateOne(testCase, evrenOutput, apiKey, modelName, systemPrompt);
+    const result = await evaluateOne(
+      testCase,
+      hasOutputs ? evrenOutputs : evrenOutput!,
+      apiKey,
+      modelName,
+      systemPrompt
+    );
     return NextResponse.json(result);
   } catch (err) {
     console.error("Evaluate API error:", err);

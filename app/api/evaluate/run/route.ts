@@ -95,8 +95,10 @@ export async function POST(request: Request) {
       detected_flags: o.detected_states,
     }));
     const lastOutput = evrenOutputs[evrenOutputs.length - 1] ?? { evren_response: "", detected_states: "" };
+    const evalInput =
+      testCase.type === "multi_turn" && evrenOutputs.length > 1 ? evrenOutputs : lastOutput;
 
-    const result = await evaluateOne(testCase, lastOutput, apiKey, modelName, systemPrompt);
+    const result = await evaluateOne(testCase, evalInput, apiKey, modelName, systemPrompt);
     const costUsd = result.token_usage?.cost_usd ?? 0;
     totalCostUsd += costUsd;
 

@@ -25,10 +25,13 @@ export interface EvrenOutput {
   detected_states: string;
 }
 
-/** Payload sent to the evaluator: one test case + Evren's output. */
+/** Payload sent to the evaluator: one test case + Evren's output(s). */
 export interface EvaluateInput {
   test_case: TestCase;
-  evren_output: EvrenOutput;
+  /** Single-turn: one output. Omit when evren_outputs is provided. */
+  evren_output?: EvrenOutput;
+  /** Multi-turn: full conversation, one output per turn. Use this to evaluate whole conversation. */
+  evren_outputs?: EvrenOutput[];
 }
 
 /** Token usage and cost for one evaluation call. */

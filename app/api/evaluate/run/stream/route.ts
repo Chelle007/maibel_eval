@@ -201,6 +201,8 @@ export async function POST(request: Request) {
             detected_flags: o.detected_states,
           }));
           const lastOutput = evrenOutputs[evrenOutputs.length - 1] ?? { evren_response: "", detected_states: "" };
+          const evalInput =
+            testCase.type === "multi_turn" && evrenOutputs.length > 1 ? evrenOutputs : lastOutput;
 
           sendEvent(controller, "progress", {
             stage: "evaluating",
@@ -212,7 +214,7 @@ export async function POST(request: Request) {
 
           const result = await evaluateOne(
             testCase,
-            lastOutput,
+            evalInput,
             apiKey,
             modelName,
             systemPrompt
