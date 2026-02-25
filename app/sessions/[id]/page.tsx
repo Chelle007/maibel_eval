@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import { Pencil, RefreshCw, Save, X } from "lucide-react";
 import { useParams, useRouter } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
 import ReactMarkdown from "react-markdown";
@@ -101,6 +102,7 @@ export default function SessionDetailPage() {
   const [editingSummary, setEditingSummary] = useState(false);
   const [savingSummary, setSavingSummary] = useState(false);
   const [refiningWording, setRefiningWording] = useState(false);
+  const [resummarizing, setResummarizing] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [editingHeader, setEditingHeader] = useState(false);
   const [editSessionId, setEditSessionId] = useState("");
@@ -245,6 +247,31 @@ export default function SessionDetailPage() {
       })
       .catch((e) => setError(e.message))
       .finally(() => setRefiningWording(false));
+  }
+
+  function resummarize() {
+    setResummarizing(true);
+    setError(null);
+    fetch(`/api/sessions/${id}/resummarize`, { method: "POST" })
+      .then((res) => res.json())
+      .then((data) => {
+        if (data.error) throw new Error(data.error);
+        const newSummary = typeof data.summary === "string" ? data.summary : "";
+        setSummary(summaryForDisplay(newSummary));
+        setSession((s) =>
+          s
+            ? {
+                ...s,
+                summary: newSummary,
+                title: typeof data.title === "string" ? data.title : s.title,
+                manually_edited: false,
+              }
+            : null
+        );
+        setEditingSummary(true);
+      })
+      .catch((e) => setError(e.message))
+      .finally(() => setResummarizing(false));
   }
 
   if (loading) return <div className="mx-auto max-w-4xl px-4 py-8 text-stone-500">Loading…</div>;
@@ -428,23 +455,35 @@ export default function SessionDetailPage() {
                 type="button"
                 onClick={saveSummary}
                 disabled={savingSummary}
-                className="rounded-lg bg-stone-900 px-4 py-2 text-sm font-medium text-white hover:bg-stone-800 disabled:opacity-50"
+                className="inline-flex items-center gap-1.5 rounded-lg bg-stone-900 px-4 py-2 text-sm font-medium text-white hover:bg-stone-800 disabled:opacity-50"
               >
+                <Save className="h-4 w-4 shrink-0" aria-hidden />
                 {savingSummary ? "Saving…" : "Save summary"}
+              </button>
+              <button
+                type="button"
+                onClick={resummarize}
+                disabled={resummarizing}
+                className="inline-flex items-center gap-1.5 rounded-lg border border-emerald-300 bg-emerald-50 px-4 py-2 text-sm font-medium text-emerald-700 hover:bg-emerald-100 hover:border-emerald-400 disabled:opacity-50"
+              >
+                <RefreshCw className="h-4 w-4 shrink-0" aria-hidden />
+                {resummarizing ? "Resummarizing…" : "Resummarize"}
               </button>
               <button
                 type="button"
                 onClick={refineWording}
                 disabled={refiningWording}
-                className="rounded-lg border border-violet-300 bg-violet-50 px-4 py-2 text-sm font-medium text-violet-700 hover:bg-violet-100 hover:border-violet-400 disabled:opacity-50"
+                className="inline-flex items-center gap-1.5 rounded-lg border border-violet-300 bg-violet-50 px-4 py-2 text-sm font-medium text-violet-700 hover:bg-violet-100 hover:border-violet-400 disabled:opacity-50"
               >
+                <Pencil className="h-4 w-4 shrink-0" aria-hidden />
                 {refiningWording ? "Refining…" : "Refine wording"}
               </button>
               <button
                 type="button"
                 onClick={() => { setEditingSummary(false); setSummary(summaryForDisplay(session?.summary ?? "")); }}
-                className="rounded-lg border border-stone-200 px-4 py-2 text-sm font-medium text-stone-600 hover:bg-stone-50"
+                className="inline-flex items-center gap-1.5 rounded-lg border border-stone-200 px-4 py-2 text-sm font-medium text-stone-600 hover:bg-stone-50"
               >
+                <X className="h-4 w-4 shrink-0" aria-hidden />
                 Cancel
               </button>
             </div>
