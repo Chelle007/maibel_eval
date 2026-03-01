@@ -43,7 +43,6 @@ export function buildEvaluatorUserMessage(
   sections.push("=== TEST CASE ===");
   sections.push(`test_case_id: ${tc.test_case_id}`);
   if (tc.img_url) sections.push(`Img url: ${tc.img_url}`);
-  if (tc.context) sections.push(`Context: ${tc.context}`);
   sections.push(`Expected states: ${tc.expected_state}`);
   sections.push(`Expected behavior: ${tc.expected_behavior}`);
   if (tc.forbidden) sections.push(`Forbidden: ${tc.forbidden}`);

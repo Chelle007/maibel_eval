@@ -21,7 +21,6 @@ type EvalResultRow = {
     expected_behavior: string;
     forbidden?: string | null;
     title?: string | null;
-    context?: string | null;
     type?: "single_turn" | "multi_turn" | null;
     turns?: string[] | null;
     img_url?: string | null;
@@ -52,7 +51,7 @@ export async function POST(
   const { data: rows, error: resultsError } = await supabase
     .from("eval_results")
     .select(
-      "eval_result_id, session_id, test_case_uuid, evren_responses, success, score, reason, test_cases(id, test_case_id, input_message, expected_state, expected_behavior, forbidden, title, context, type, turns, img_url)"
+      "eval_result_id, session_id, test_case_uuid, evren_responses, success, score, reason, test_cases(id, test_case_id, input_message, expected_state, expected_behavior, forbidden, title, type, turns, img_url)"
     )
     .eq("session_id", sessionId)
     .order("eval_result_id");
@@ -77,7 +76,6 @@ export async function POST(
       expected_behavior: tc.expected_behavior,
       forbidden: tc.forbidden ?? undefined,
       title: tc.title ?? undefined,
-      context: tc.context ?? undefined,
       turns: tc.turns ?? undefined,
       img_url: tc.img_url ?? undefined,
     };

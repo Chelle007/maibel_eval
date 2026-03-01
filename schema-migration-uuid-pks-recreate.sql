@@ -23,7 +23,6 @@ CREATE TABLE test_cases_new (
   type               TEXT NOT NULL DEFAULT 'single_turn' CHECK (type IN ('single_turn', 'multi_turn')),
   input_message      TEXT NOT NULL,
   img_url            TEXT,
-  context            TEXT,
   turns              JSONB,
   expected_state     TEXT NOT NULL,
   expected_behavior  TEXT NOT NULL,
@@ -72,7 +71,7 @@ CREATE TABLE eval_results_new (
 
 -- test_cases: generate new id, keep test_case_id and all other columns
 INSERT INTO test_cases_new (
-  id, test_case_id, title, category_id, type, input_message, img_url, context,
+  id, test_case_id, title, category_id, type, input_message, img_url,
   turns, expected_state, expected_behavior, forbidden, is_enabled, notes, created_at, updated_at
 )
 SELECT
@@ -83,7 +82,6 @@ SELECT
   COALESCE(type, 'single_turn'),
   input_message,
   img_url,
-  context,
   turns,
   expected_state,
   expected_behavior,

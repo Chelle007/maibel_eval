@@ -165,7 +165,6 @@ export async function POST(request: Request) {
             type: row.type ?? "single_turn",
             input_message: row.input_message,
             img_url: row.img_url ?? undefined,
-            context: row.context ?? undefined,
             turns: row.turns ?? undefined,
             expected_state: row.expected_state ?? "",
             expected_behavior: row.expected_behavior ?? "",

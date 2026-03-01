@@ -73,7 +73,7 @@ type EvalResult = {
   manually_edited: boolean;
   /** Array of { response, detected_flags } per turn. response is string or string[] (one per bubble). */
   evren_responses?: { response: string | string[]; detected_flags: string }[] | null;
-  test_cases?: { input_message: string; expected_state: string; expected_behavior: string; title?: string | null; context?: string | null; type?: "single_turn" | "multi_turn"; turns?: string[] | null } | null;
+  test_cases?: { input_message: string; expected_state: string; expected_behavior: string; title?: string | null; type?: "single_turn" | "multi_turn"; turns?: string[] | null } | null;
 };
 
 function matchResultSearch(r: EvalResult, q: string): boolean {
@@ -668,15 +668,7 @@ export default function SessionDetailPage() {
             <div className="border-t border-stone-100 p-5 space-y-4">
               {r.test_cases && (
                 <>
-                  {/* 1. Context */}
-                  <div>
-                    <p className="text-xs font-medium uppercase tracking-wide text-stone-400">Context</p>
-                    <p className="mt-1 text-sm text-stone-700 leading-relaxed whitespace-pre-wrap">
-                      {typeof r.test_cases.context === "string" && r.test_cases.context.trim() ? r.test_cases.context.trim() : "—"}
-                    </p>
-                  </div>
-
-                  {/* 2. Conversation: input / evren pairs */}
+                  {/* Conversation: input / evren pairs */}
                   <div>
                     <p className="text-xs font-medium uppercase tracking-wide text-stone-400">Conversation</p>
                     <div className="mt-2 space-y-3">

@@ -9,7 +9,7 @@ export async function PATCH(
   const supabase = await createClient();
   const body = await _request.json() as Record<string, unknown>;
   const allowed = [
-    "test_case_id", "title", "category_id", "type", "input_message", "turns", "img_url", "context",
+    "test_case_id", "title", "category_id", "type", "input_message", "turns", "img_url",
     "expected_state", "expected_behavior", "forbidden", "notes", "is_enabled",
   ];
   const updates: Record<string, unknown> = {};

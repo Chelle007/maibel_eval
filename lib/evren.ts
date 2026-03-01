@@ -20,7 +20,7 @@ function evrenEndpoint(input: string): string {
 
 /**
  * Call Evren evals API (POST /evren-evals).
- * Request: { messages: string[], context?: string|object } — ordered list of user messages.
+ * Request: { messages: string[] } — ordered list of user messages.
  * Response: { evren_responses: [{ response, detected_flags }, ...] } — one per message.
  * Single-turn = messages of length 1; multi-turn = multiple messages. One API call for both.
  */
@@ -38,18 +38,6 @@ export async function callEvrenApi(
   }
 
   const body: Record<string, unknown> = { messages };
-  if (testCase.context) {
-    const ctx = testCase.context.trim();
-    if (ctx.startsWith("{")) {
-      try {
-        body.context = JSON.parse(ctx);
-      } catch {
-        body.context = { description: ctx };
-      }
-    } else {
-      body.context = ctx;
-    }
-  }
 
   const url = evrenEndpoint(evrenModelApiUrl);
   const evrenApiKey = process.env.EVREN_API_KEY;

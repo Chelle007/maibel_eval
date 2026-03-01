@@ -63,7 +63,6 @@ export interface TestCasesRow {
   type: "single_turn" | "multi_turn";
   input_message: string;
   img_url: string | null;
-  context: string | null;
   /** Multi-turn: array of user inputs only, e.g. ["input 1", "input 2"]. */
   turns: string[] | null;
   expected_state: string;

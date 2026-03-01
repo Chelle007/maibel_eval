@@ -39,7 +39,6 @@ CREATE TABLE test_cases (
   type               TEXT NOT NULL DEFAULT 'single_turn' CHECK (type IN ('single_turn', 'multi_turn')),
   input_message      TEXT NOT NULL,
   img_url            TEXT,
-  context            TEXT,
   turns              JSONB,
   expected_state     TEXT NOT NULL,
   expected_behavior  TEXT NOT NULL,
