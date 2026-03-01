@@ -1,10 +1,10 @@
 "use client";
 
 import Link from "next/link";
+import { Pencil, RefreshCw, Save, X } from "lucide-react";
 import { useParams, useRouter } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
 import ReactMarkdown from "react-markdown";
-import { PageHeader } from "@/app/components/PageHeader";
 import { SummaryEditor } from "@/app/components/SummaryEditor";
 
 type Session = {
@@ -71,9 +71,9 @@ type EvalResult = {
   total_tokens: number | null;
   cost_usd: number | null;
   manually_edited: boolean;
-  /** Array of { response, detected_flags } per turn. */
-  evren_responses?: { response: string; detected_flags: string }[] | null;
-  test_cases?: { input_message: string; expected_state: string; expected_behavior: string; title?: string | null; context?: string | null; type?: "single_turn" | "multi_turn"; turns?: string[] | null } | null;
+  /** Array of { response, detected_flags } per turn. response is string or string[] (one per bubble). */
+  evren_responses?: { response: string | string[]; detected_flags: string }[] | null;
+  test_cases?: { input_message: string; expected_state: string; expected_behavior: string; title?: string | null; type?: "single_turn" | "multi_turn"; turns?: string[] | null } | null;
 };
 
 function matchResultSearch(r: EvalResult, q: string): boolean {
@@ -102,7 +102,13 @@ export default function SessionDetailPage() {
   const [editingSummary, setEditingSummary] = useState(false);
   const [savingSummary, setSavingSummary] = useState(false);
   const [refiningWording, setRefiningWording] = useState(false);
+  const [resummarizing, setResummarizing] = useState(false);
   const [deleting, setDeleting] = useState(false);
+  const [editingHeader, setEditingHeader] = useState(false);
+  const [editSessionId, setEditSessionId] = useState("");
+  const [editTitle, setEditTitle] = useState("");
+  const [savingHeader, setSavingHeader] = useState(false);
+  const [headerError, setHeaderError] = useState<string | null>(null);
   const [expandedResultId, setExpandedResultId] = useState<string | null>(null);
   const [expandedFlagsKeys, setExpandedFlagsKeys] = useState<Set<string>>(new Set());
   const [searchQuery, setSearchQuery] = useState("");
@@ -196,6 +202,36 @@ export default function SessionDetailPage() {
       .finally(() => setSavingSummary(false));
   }
 
+  function saveHeader() {
+    const sessionIdTrimmed = editSessionId.trim();
+    if (!sessionIdTrimmed) {
+      setHeaderError("Session ID cannot be empty");
+      return;
+    }
+    setSavingHeader(true);
+    setHeaderError(null);
+    fetch(`/api/sessions/${id}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ test_session_id: sessionIdTrimmed, title: editTitle.trim() || null }),
+    })
+      .then((res) => res.json())
+      .then((data) => {
+        if (data.error) throw new Error(data.error);
+        setSession((s) =>
+          s
+            ? { ...s, test_session_id: data.session?.test_session_id ?? sessionIdTrimmed, title: (data.session?.title ?? editTitle.trim()) || null }
+            : null
+        );
+        setEditingHeader(false);
+        if (data.redirect_id && data.redirect_id !== id) {
+          router.push(`/sessions/${data.redirect_id}`);
+        }
+      })
+      .catch((e) => setHeaderError(e.message))
+      .finally(() => setSavingHeader(false));
+  }
+
   function refineWording() {
     setRefiningWording(true);
     setError(null);
@@ -211,6 +247,31 @@ export default function SessionDetailPage() {
       })
       .catch((e) => setError(e.message))
       .finally(() => setRefiningWording(false));
+  }
+
+  function resummarize() {
+    setResummarizing(true);
+    setError(null);
+    fetch(`/api/sessions/${id}/resummarize`, { method: "POST" })
+      .then((res) => res.json())
+      .then((data) => {
+        if (data.error) throw new Error(data.error);
+        const newSummary = typeof data.summary === "string" ? data.summary : "";
+        setSummary(summaryForDisplay(newSummary));
+        setSession((s) =>
+          s
+            ? {
+                ...s,
+                summary: newSummary,
+                title: typeof data.title === "string" ? data.title : s.title,
+                manually_edited: false,
+              }
+            : null
+        );
+        setEditingSummary(true);
+      })
+      .catch((e) => setError(e.message))
+      .finally(() => setResummarizing(false));
   }
 
   if (loading) return <div className="mx-auto max-w-4xl px-4 py-8 text-stone-500">Loading…</div>;
@@ -239,10 +300,80 @@ export default function SessionDetailPage() {
           {deleting ? "Deleting…" : "Delete session"}
         </button>
       </div>
-      <PageHeader
-        title={`${session.test_session_id} · ${session.title?.trim() || "Untitled session"}`}
-        headingClassName="mt-2"
-      />
+      <header className="mt-2">
+        {!editingHeader ? (
+          <div className="flex flex-wrap items-center gap-2">
+            <h1 className="text-2xl font-semibold text-stone-900">
+              {session.test_session_id} · {session.title?.trim() || "Untitled session"}
+            </h1>
+            <button
+              type="button"
+              onClick={() => {
+                setEditSessionId(session.test_session_id);
+                setEditTitle(session.title?.trim() ?? "");
+                setHeaderError(null);
+                setEditingHeader(true);
+              }}
+              className="inline-flex items-center gap-1.5 rounded-lg border border-stone-300 bg-stone-50 px-2.5 py-1.5 text-sm font-medium text-stone-700 shadow-sm hover:bg-stone-100 hover:border-stone-400"
+              title="Edit session ID and title"
+            >
+              <span aria-hidden className="text-stone-500">✎</span>
+              Edit
+            </button>
+          </div>
+        ) : (
+          <div className="space-y-3">
+            <div className="flex flex-wrap items-center gap-3 gap-y-2">
+              <label className="sr-only" htmlFor="edit-session-id">Session ID</label>
+              <input
+                id="edit-session-id"
+                type="text"
+                value={editSessionId}
+                onChange={(e) => setEditSessionId(e.target.value)}
+                placeholder="e.g. ES120"
+                className="rounded-lg border border-stone-200 bg-white px-3 py-2 text-lg font-semibold text-stone-900 focus:border-stone-400 focus:outline-none focus:ring-1 focus:ring-stone-400"
+              />
+              <span className="text-stone-400 font-medium">·</span>
+              <label className="sr-only" htmlFor="edit-session-title">Title</label>
+              <input
+                id="edit-session-title"
+                type="text"
+                value={editTitle}
+                onChange={(e) => setEditTitle(e.target.value)}
+                placeholder="Session title"
+                className="min-w-[200px] flex-1 rounded-lg border border-stone-200 bg-white px-3 py-2 text-lg font-semibold text-stone-900 focus:border-stone-400 focus:outline-none focus:ring-1 focus:ring-stone-400"
+              />
+            </div>
+            {headerError && (
+              <p className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-800" role="alert">
+                {headerError}
+              </p>
+            )}
+            <div className="flex flex-wrap gap-2">
+              <button
+                type="button"
+                onClick={saveHeader}
+                disabled={savingHeader}
+                className="rounded-lg bg-stone-900 px-4 py-2 text-sm font-medium text-white hover:bg-stone-800 disabled:opacity-50"
+              >
+                {savingHeader ? "Saving…" : "Save"}
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setEditingHeader(false);
+                  setEditSessionId(session.test_session_id);
+                  setEditTitle(session.title?.trim() ?? "");
+                  setHeaderError(null);
+                }}
+                className="rounded-lg border border-stone-200 px-4 py-2 text-sm font-medium text-stone-600 hover:bg-stone-50"
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
+        )}
+      </header>
 
       <div className="mt-6 rounded-xl border border-stone-200 bg-white p-5 shadow-sm">
         <h2 className="text-xl font-semibold tracking-tight text-stone-900">Session details</h2>
@@ -324,23 +455,35 @@ export default function SessionDetailPage() {
                 type="button"
                 onClick={saveSummary}
                 disabled={savingSummary}
-                className="rounded-lg bg-stone-900 px-4 py-2 text-sm font-medium text-white hover:bg-stone-800 disabled:opacity-50"
+                className="inline-flex items-center gap-1.5 rounded-lg bg-stone-900 px-4 py-2 text-sm font-medium text-white hover:bg-stone-800 disabled:opacity-50"
               >
+                <Save className="h-4 w-4 shrink-0" aria-hidden />
                 {savingSummary ? "Saving…" : "Save summary"}
+              </button>
+              <button
+                type="button"
+                onClick={resummarize}
+                disabled={resummarizing}
+                className="inline-flex items-center gap-1.5 rounded-lg border border-emerald-300 bg-emerald-50 px-4 py-2 text-sm font-medium text-emerald-700 hover:bg-emerald-100 hover:border-emerald-400 disabled:opacity-50"
+              >
+                <RefreshCw className="h-4 w-4 shrink-0" aria-hidden />
+                {resummarizing ? "Resummarizing…" : "Resummarize"}
               </button>
               <button
                 type="button"
                 onClick={refineWording}
                 disabled={refiningWording}
-                className="rounded-lg border border-violet-300 bg-violet-50 px-4 py-2 text-sm font-medium text-violet-700 hover:bg-violet-100 hover:border-violet-400 disabled:opacity-50"
+                className="inline-flex items-center gap-1.5 rounded-lg border border-violet-300 bg-violet-50 px-4 py-2 text-sm font-medium text-violet-700 hover:bg-violet-100 hover:border-violet-400 disabled:opacity-50"
               >
+                <Pencil className="h-4 w-4 shrink-0" aria-hidden />
                 {refiningWording ? "Refining…" : "Refine wording"}
               </button>
               <button
                 type="button"
                 onClick={() => { setEditingSummary(false); setSummary(summaryForDisplay(session?.summary ?? "")); }}
-                className="rounded-lg border border-stone-200 px-4 py-2 text-sm font-medium text-stone-600 hover:bg-stone-50"
+                className="inline-flex items-center gap-1.5 rounded-lg border border-stone-200 px-4 py-2 text-sm font-medium text-stone-600 hover:bg-stone-50"
               >
+                <X className="h-4 w-4 shrink-0" aria-hidden />
                 Cancel
               </button>
             </div>
@@ -525,23 +668,16 @@ export default function SessionDetailPage() {
             <div className="border-t border-stone-100 p-5 space-y-4">
               {r.test_cases && (
                 <>
-                  {/* 1. Context */}
-                  <div>
-                    <p className="text-xs font-medium uppercase tracking-wide text-stone-400">Context</p>
-                    <p className="mt-1 text-sm text-stone-700 leading-relaxed whitespace-pre-wrap">
-                      {typeof r.test_cases.context === "string" && r.test_cases.context.trim() ? r.test_cases.context.trim() : "—"}
-                    </p>
-                  </div>
-
-                  {/* 2. Conversation: input / evren pairs */}
+                  {/* Conversation: input / evren pairs */}
                   <div>
                     <p className="text-xs font-medium uppercase tracking-wide text-stone-400">Conversation</p>
                     <div className="mt-2 space-y-3">
                       {r.evren_responses && r.evren_responses.length > 0 ? (
-                        r.evren_responses.map((evrenItem: { response: string; detected_flags: string }, i: number) => {
+                        r.evren_responses.map((evrenItem: { response: string | string[]; detected_flags: string }, i: number) => {
                           const flagsKey = `${r.eval_result_id}-${i}`;
                           const flagsExpanded = expandedFlagsKeys.has(flagsKey);
                           const hasFlags = evrenItem.detected_flags != null && String(evrenItem.detected_flags).trim() !== "";
+                          const bubbles = Array.isArray(evrenItem.response) ? evrenItem.response : [evrenItem.response ?? ""];
                           return (
                             <div key={i} className="space-y-2">
                               <div>
@@ -554,7 +690,16 @@ export default function SessionDetailPage() {
                               </div>
                               <div>
                                 <p className="text-xs font-medium text-stone-500">evren:</p>
-                                <p className="mt-0.5 text-sm text-stone-700 leading-relaxed whitespace-pre-wrap">{evrenItem.response?.trim() || "—"}</p>
+                                <div className="mt-1 space-y-2">
+                                  {bubbles.map((bubble, j) => (
+                                    <blockquote
+                                      key={j}
+                                      className="border-l-2 border-stone-300 bg-stone-50/80 pl-3 py-1.5 pr-2 text-sm text-stone-700 leading-relaxed whitespace-pre-wrap rounded-r"
+                                    >
+                                      {bubble?.trim() || "—"}
+                                    </blockquote>
+                                  ))}
+                                </div>
                                 {hasFlags && (
                                   <div className="mt-2">
                                     <button

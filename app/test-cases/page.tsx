@@ -14,7 +14,6 @@ type TestCase = {
   type: "single_turn" | "multi_turn";
   input_message: string;
   img_url: string | null;
-  context: string | null;
   /** Multi-turn: array of user inputs only, e.g. ["input 1", "input 2"]. */
   turns: string[] | null;
   expected_state: string;
@@ -86,7 +85,6 @@ export default function TestCasesPage() {
     input_message: "",
     turns: [] as string[],
     img_url: "",
-    context: "",
     expected_state: "",
     expected_behavior: "",
     forbidden: "",
@@ -144,7 +142,6 @@ export default function TestCasesPage() {
         ? JSON.stringify(tc.turns)
         : tc.input_message,
       img_url: tc.img_url ?? "",
-      context: tc.context ?? "",
       expected_state: tc.expected_state,
       expected_behavior: tc.expected_behavior,
       forbidden: tc.forbidden ?? "",
@@ -193,8 +190,8 @@ export default function TestCasesPage() {
     const url = editing ? `/api/test-cases/${encodeURIComponent(editing.test_case_id)}` : "/api/test-cases";
     const method = editing ? "PATCH" : "POST";
     const body = editing
-      ? { ...form, title: form.title || null, category_id: form.category_id || null, type: form.type, turns: form.type === "multi_turn" ? form.turns : null, img_url: form.img_url || null, context: form.context || null, forbidden: form.forbidden || null, notes: form.notes || null, is_enabled: form.is_enabled }
-      : { ...form, test_case_id: form.test_case_id.trim(), title: form.title || null, category_id: form.category_id || null, type: form.type, turns: form.type === "multi_turn" ? form.turns : null, img_url: form.img_url || null, context: form.context || null, forbidden: form.forbidden || null, notes: form.notes || null, is_enabled: form.is_enabled };
+      ? { ...form, test_case_id: form.test_case_id.trim(), title: form.title || null, category_id: form.category_id || null, type: form.type, turns: form.type === "multi_turn" ? form.turns : null, img_url: form.img_url || null, forbidden: form.forbidden || null, notes: form.notes || null, is_enabled: form.is_enabled }
+      : { ...form, test_case_id: form.test_case_id.trim(), title: form.title || null, category_id: form.category_id || null, type: form.type, turns: form.type === "multi_turn" ? form.turns : null, img_url: form.img_url || null, forbidden: form.forbidden || null, notes: form.notes || null, is_enabled: form.is_enabled };
     fetch(url, {
       method,
       headers: { "Content-Type": "application/json" },
@@ -206,7 +203,7 @@ export default function TestCasesPage() {
         setShowForm(false);
         setEditing(null);
         setExpandedTestCaseId(null);
-        setForm({ test_case_id: "", title: "", category_id: "", type: "single_turn", input_message: "", turns: [], img_url: "", context: "", expected_state: "", expected_behavior: "", forbidden: "", notes: "", is_enabled: true });
+        setForm({ test_case_id: "", title: "", category_id: "", type: "single_turn", input_message: "", turns: [], img_url: "", expected_state: "", expected_behavior: "", forbidden: "", notes: "", is_enabled: true });
         load();
       })
       .catch((e) => setError(e instanceof Error ? e.message : String(e)));
@@ -393,7 +390,7 @@ export default function TestCasesPage() {
             type="button"
             onClick={() => {
               setEditing(null);
-              setForm({ test_case_id: "", title: "", category_id: "", type: "single_turn", input_message: "", turns: [], img_url: "", context: "", expected_state: "", expected_behavior: "", forbidden: "", notes: "", is_enabled: true });
+              setForm({ test_case_id: "", title: "", category_id: "", type: "single_turn", input_message: "", turns: [], img_url: "", expected_state: "", expected_behavior: "", forbidden: "", notes: "", is_enabled: true });
               setShowForm(true);
             }}
             className="inline-flex items-center gap-2 rounded-lg bg-stone-900 px-4 py-2.5 text-sm font-medium text-white shadow-sm transition hover:bg-stone-800"
@@ -552,7 +549,7 @@ export default function TestCasesPage() {
             <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
               <div>
                 <p className="text-xs font-medium uppercase tracking-wide text-stone-400">Test case ID</p>
-                <input type="text" value={form.test_case_id} onChange={(e) => setForm((f) => ({ ...f, test_case_id: e.target.value }))} className={inputClass} placeholder="e.g. P0_001" required />
+                <input type="text" value={form.test_case_id} onChange={(e) => setForm((f) => ({ ...f, test_case_id: e.target.value }))} className={inputClass} placeholder="e.g. P0-001" required />
               </div>
               <div>
                 <p className="text-xs font-medium uppercase tracking-wide text-stone-400">Title</p>
@@ -599,10 +596,6 @@ export default function TestCasesPage() {
                 </div>
               </div>
             )}
-            <div>
-              <p className="text-xs font-medium uppercase tracking-wide text-stone-400">Context</p>
-              <textarea rows={2} value={form.context} onChange={(e) => setForm((f) => ({ ...f, context: e.target.value }))} className={inputClass} />
-            </div>
             <div>
               <p className="text-xs font-medium uppercase tracking-wide text-stone-400">Expected state *</p>
               <textarea rows={3} required value={form.expected_state} onChange={(e) => setForm((f) => ({ ...f, expected_state: e.target.value }))} className={inputClass} />
@@ -668,7 +661,19 @@ export default function TestCasesPage() {
                   </label>
                   <div className="min-w-0 flex-1">
                     <div className="font-mono text-base font-semibold text-stone-900 flex flex-wrap items-center gap-2">
-                      {tc.test_case_id}
+                      {isEditingThis ? (
+                        <input
+                          type="text"
+                          value={form.test_case_id}
+                          onChange={(e) => setForm((f) => ({ ...f, test_case_id: e.target.value }))}
+                          onClick={(e) => e.stopPropagation()}
+                          className="min-w-[80px] max-w-[140px] rounded-lg border border-stone-200 bg-white px-2.5 py-1 text-sm font-mono font-semibold text-stone-900 focus:border-stone-400 focus:outline-none focus:ring-1 focus:ring-stone-400"
+                          placeholder="e.g. P0-001"
+                          required
+                        />
+                      ) : (
+                        tc.test_case_id
+                      )}
                       <span className={`rounded px-1.5 py-0.5 text-xs font-medium ${(isEditingThis ? form.type : tc.type) === "multi_turn" ? "bg-violet-100 text-violet-800" : "bg-stone-100 text-stone-600"}`}>
                         {(isEditingThis ? form.type : tc.type) === "multi_turn" ? "Multi" : "Single"}
                       </span>
@@ -751,7 +756,6 @@ export default function TestCasesPage() {
                           input_message: tc.input_message,
                           turns: tc.turns ?? [],
                           img_url: tc.img_url ?? "",
-                          context: tc.context ?? "",
                           expected_state: tc.expected_state,
                           expected_behavior: tc.expected_behavior,
                           forbidden: tc.forbidden ?? "",
@@ -828,14 +832,6 @@ export default function TestCasesPage() {
                         </div>
                       )}
                       <div>
-                        <p className="text-xs font-medium uppercase tracking-wide text-stone-400">Context</p>
-                        {isEditingThis ? (
-                          <textarea rows={2} value={form.context} onChange={(e) => setForm((f) => ({ ...f, context: e.target.value }))} className="mt-1 block w-full rounded-lg border border-stone-200 bg-white px-3 py-2 text-sm text-stone-900 focus:border-stone-400 focus:outline-none focus:ring-1 focus:ring-stone-400" />
-                        ) : (
-                          <p className="mt-1 text-sm text-stone-700 leading-relaxed whitespace-pre-wrap">{tc.context?.trim() || "—"}</p>
-                        )}
-                      </div>
-                      <div>
                         <p className="text-xs font-medium uppercase tracking-wide text-stone-400">Expected state *</p>
                         {isEditingThis ? (
                           <textarea rows={3} value={form.expected_state} onChange={(e) => setForm((f) => ({ ...f, expected_state: e.target.value }))} required className="mt-1 block w-full rounded-lg border border-stone-200 bg-white px-3 py-2 text-sm text-stone-900 focus:border-stone-400 focus:outline-none focus:ring-1 focus:ring-stone-400" />
@@ -895,10 +891,6 @@ export default function TestCasesPage() {
                           <p className="mt-1 text-sm text-stone-700 leading-relaxed">{tc.input_message?.trim() || "—"}</p>
                         </div>
                       )}
-                      <div>
-                        <p className="text-xs font-medium uppercase tracking-wide text-stone-400">Context</p>
-                        <p className="mt-1 text-sm text-stone-700 leading-relaxed whitespace-pre-wrap">{tc.context?.trim() || "—"}</p>
-                      </div>
                       <div>
                         <p className="text-xs font-medium uppercase tracking-wide text-stone-400">Expected state</p>
                         <p className="mt-1 text-sm text-stone-700 leading-relaxed whitespace-pre-wrap">{tc.expected_state?.trim() || "—"}</p>

@@ -25,7 +25,6 @@ export async function POST(request: Request) {
     type: "single_turn" | "multi_turn";
     input_message: string;
     img_url: string | null;
-    context: string | null;
     turns: string[] | null;
     expected_state: string;
     expected_behavior: string;
@@ -53,7 +52,6 @@ export async function POST(request: Request) {
       type,
       input_message: tc.input_message,
       img_url: tc.img_url ?? null,
-      context: tc.context ?? null,
       turns: type === "multi_turn" && hasTurns ? tc.turns! : null,
       expected_state: tc.expected_state ?? "",
       expected_behavior: tc.expected_behavior ?? "",

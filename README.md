@@ -51,7 +51,7 @@ Open [http://localhost:3000](http://localhost:3000). You can run evaluations fro
 
 ## Evren API
 
-The app calls your Evren service at a configurable base URL. It always uses the path `/evren` (appended if the base URL doesn’t include it). Request/response format is described in **[docs/evren-api-spec.md](docs/evren-api-spec.md)**.
+The app calls your Evren service at a configurable base URL, using the path **`/evren-evals`** (appended if the base URL has no path). Full request/response format and multi-turn behavior are in **[docs/evren-api-spec.md](docs/evren-api-spec.md)**.
 
 ## Scripts
 

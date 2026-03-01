@@ -71,6 +71,27 @@ export async function POST(request: Request) {
       { status: 400, headers: { "Content-Type": "application/json" } }
     );
 
+  // On Vercel (and similar), localhost is this server—Evren must be a reachable URL.
+  const isProduction = process.env.VERCEL === "1";
+  if (isProduction) {
+    try {
+      const u = new URL(evrenModelApiUrl);
+      const host = u.hostname.toLowerCase();
+      if (host === "localhost" || host === "127.0.0.1")
+        return new Response(
+          JSON.stringify({
+            error:
+              "Evren API URL cannot be localhost on Vercel. Set Evren API URL in Settings to your deployed Evren service (or set NEXT_PUBLIC_EVREN_API_URL in Vercel).",
+            code: "LOCALHOST_ON_VERCEL",
+            status: 400,
+          }),
+          { status: 400, headers: { "Content-Type": "application/json" } }
+        );
+    } catch {
+      /* invalid URL already; let callEvrenApi surface it */
+    }
+  }
+
   const { data: testCasesRows, error: fetchError } = await supabase
     .from("test_cases")
     .select("*")
@@ -96,7 +117,7 @@ export async function POST(request: Request) {
   const { data: sessionRow, error: sessionError } = await supabase
     .from("test_sessions")
     .insert(sessionInsert as any)
-    .select("test_session_id")
+    .select("session_id, test_session_id")
     .single();
   if (sessionError || !sessionRow)
     return new Response(
@@ -105,7 +126,8 @@ export async function POST(request: Request) {
       }),
       { status: 500, headers: { "Content-Type": "application/json" } }
     );
-  const session = sessionRow as { test_session_id: string };
+  const session = sessionRow as { session_id: string; test_session_id: string };
+  const sessionId = session.session_id;
   const testSessionId = session.test_session_id;
   const total = testCasesRows.length;
   const modelName = body.model_name ?? "gemini-2.5-flash";
@@ -143,7 +165,6 @@ export async function POST(request: Request) {
             type: row.type ?? "single_turn",
             input_message: row.input_message,
             img_url: row.img_url ?? undefined,
-            context: row.context ?? undefined,
             turns: row.turns ?? undefined,
             expected_state: row.expected_state ?? "",
             expected_behavior: row.expected_behavior ?? "",
@@ -175,10 +196,12 @@ export async function POST(request: Request) {
           }
 
           const evrenResponsesColumn = evrenOutputs.map((o) => ({
-            response: o.evren_response,
+            response: Array.isArray(o.evren_response) ? o.evren_response : [o.evren_response],
             detected_flags: o.detected_states,
           }));
           const lastOutput = evrenOutputs[evrenOutputs.length - 1] ?? { evren_response: "", detected_states: "" };
+          const evalInput =
+            testCase.type === "multi_turn" && evrenOutputs.length > 1 ? evrenOutputs : lastOutput;
 
           sendEvent(controller, "progress", {
             stage: "evaluating",
@@ -190,7 +213,7 @@ export async function POST(request: Request) {
 
           const result = await evaluateOne(
             testCase,
-            lastOutput,
+            evalInput,
             apiKey,
             modelName,
             systemPrompt
@@ -201,8 +224,8 @@ export async function POST(request: Request) {
           richReportInputs.push({ testCase, evrenOutput: lastOutput, result });
 
           const evalPayload = {
-            test_session_id: testSessionId,
-            test_case_id: row.test_case_id,
+            session_id: sessionId,
+            test_case_uuid: row.id,
             evren_responses: evrenResponsesColumn,
             success: result.success,
             score: result.score,
@@ -251,7 +274,7 @@ export async function POST(request: Request) {
         await supabase
           .from("test_sessions")
           .update(sessionUpdate as unknown as never)
-          .eq("test_session_id", testSessionId);
+          .eq("session_id", sessionId);
 
         sendEvent(controller, "complete", {
           test_session_id: testSessionId,

@@ -20,7 +20,7 @@ function evrenEndpoint(input: string): string {
 
 /**
  * Call Evren evals API (POST /evren-evals).
- * Request: { messages: string[], context?: string|object } — ordered list of user messages.
+ * Request: { messages: string[] } — ordered list of user messages.
  * Response: { evren_responses: [{ response, detected_flags }, ...] } — one per message.
  * Single-turn = messages of length 1; multi-turn = multiple messages. One API call for both.
  */
@@ -38,25 +38,19 @@ export async function callEvrenApi(
   }
 
   const body: Record<string, unknown> = { messages };
-  if (testCase.context) {
-    const ctx = testCase.context.trim();
-    if (ctx.startsWith("{")) {
-      try {
-        body.context = JSON.parse(ctx);
-      } catch {
-        body.context = { description: ctx };
-      }
-    } else {
-      body.context = ctx;
-    }
-  }
 
   const url = evrenEndpoint(evrenModelApiUrl);
+  const evrenApiKey = process.env.EVREN_API_KEY;
+  const headers: Record<string, string> = { "Content-Type": "application/json" };
+  if (evrenApiKey) {
+    headers["x-api-key"] = evrenApiKey;
+  }
+  console.log("[Evren API] request", { url, messages, messageCount: messages.length });
   let res: Response;
   try {
     res = await fetch(url, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers,
       body: JSON.stringify(body),
     });
   } catch (fetchErr) {
@@ -74,14 +68,16 @@ export async function callEvrenApi(
   }
 
   const data = (await res.json()) as Record<string, unknown>;
-  const evrenResponses = data.evren_responses as Array<{ response?: string; detected_flags?: string }> | undefined;
+  const evrenResponses = data.evren_responses as Array<{ response?: string | string[]; detected_flags?: string }> | undefined;
+
+  console.log("[Evren API] raw response:", JSON.stringify(data, null, 2));
 
   if (!Array.isArray(evrenResponses)) {
     return [{ evren_response: "", detected_states: "" }];
   }
 
   return evrenResponses.map((item) => ({
-    evren_response: String(item?.response ?? ""),
+    evren_response: item?.response ?? "",
     detected_states: String(item?.detected_flags ?? ""),
   }));
 }

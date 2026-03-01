@@ -4,7 +4,8 @@ import { useState, useEffect } from "react";
 import { PageHeader } from "@/app/components/PageHeader";
 import { useEvalRun } from "@/app/context/EvalRunContext";
 
-const FALLBACK_EVREN_URL = "http://localhost:8000";
+/** On Vercel, set NEXT_PUBLIC_EVREN_API_URL to your deployed Evren service URL. */
+const FALLBACK_EVREN_URL = process.env.NEXT_PUBLIC_EVREN_API_URL || "http://localhost:8000";
 const FALLBACK_EVALUATOR_MODEL = "gemini-2.5-flash";
 const FALLBACK_SUMMARIZER_MODEL = "gemini-2.5-flash";
 
