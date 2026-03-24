@@ -46,6 +46,7 @@ export function buildEvaluatorUserMessage(
   sections.push(`Expected states: ${tc.expected_state}`);
   sections.push(`Expected behavior: ${tc.expected_behavior}`);
   if (tc.forbidden) sections.push(`Forbidden: ${tc.forbidden}`);
+  if (tc.notes) sections.push(`Notes: ${tc.notes}`);
 
   sections.push("");
   sections.push("=== CONVERSATION ===");

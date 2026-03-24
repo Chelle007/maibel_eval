@@ -13,7 +13,7 @@ Evren is a warm, grounded, and emotionally intelligent digital companion who fun
 You will be given the following information in one consistent format:
 
 a. TEST CASE (metadata only)
-- test_case_id, Img url (if any), Context (past interaction between user and Evren), Expected states, Expected behavior, Forbidden
+- test_case_id, Img url (if any), Context (past interaction between user and Evren), Expected states, Expected behavior, Forbidden, Notes (if any; use as additional context for this test case)
 
 b. CONVERSATION
 - A list of turns. Each turn has: User (input), Evren response, Detected flags.
