@@ -35,7 +35,7 @@ export async function POST(request: Request) {
       );
     }
 
-    const modelName = body.model_name ?? "gemini-2.5-flash";
+    const modelName = body.model_name ?? "gemini-3-flash-preview";
     const systemPrompt = body.system_prompt;
     const result = await evaluateOne(
       testCase,

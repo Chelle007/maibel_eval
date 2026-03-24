@@ -93,7 +93,7 @@ export async function POST(
     return buildRichReport(testCase, evrenOutput, evalResult);
   });
 
-  const modelName = "gemini-2.5-flash";
+  const modelName = "gemini-3-flash-preview";
   const summarizerResult = await runSummarizer(
     apiKey,
     richReports,

@@ -65,7 +65,7 @@ export async function POST(request: Request) {
   const testSessionId = session.test_session_id;
   const evalStartMs = Date.now();
 
-  const modelName = body.model_name ?? "gemini-2.5-flash";
+  const modelName = body.model_name ?? "gemini-3-flash-preview";
   const systemPrompt = body.system_prompt ?? loadEvaluatorSystemPrompt();
   let totalCostUsd = 0;
   const richReportInputs: { testCase: TestCase; evrenOutput: EvrenOutput; result: EvaluationResult }[] = [];

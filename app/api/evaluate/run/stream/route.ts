@@ -130,7 +130,7 @@ export async function POST(request: Request) {
   const sessionId = session.session_id;
   const testSessionId = session.test_session_id;
   const total = testCasesRows.length;
-  const modelName = body.model_name ?? "gemini-2.5-flash";
+  const modelName = body.model_name ?? "gemini-3-flash-preview";
   const summarizerModel = body.summarizer_model ?? modelName;
 
   const { data: defaultSettings } = await supabase

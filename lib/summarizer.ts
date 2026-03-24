@@ -47,7 +47,7 @@ export function buildRichReport(
   };
 }
 
-const DEFAULT_MODEL = "gemini-2.5-flash";
+const DEFAULT_MODEL = "gemini-3-flash-preview";
 
 export interface SummarizerResult {
   title: string;

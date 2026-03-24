@@ -6,8 +6,8 @@ import { useEvalRun } from "@/app/context/EvalRunContext";
 
 /** On Vercel, set NEXT_PUBLIC_EVREN_API_URL to your deployed Evren service URL. */
 const FALLBACK_EVREN_URL = process.env.NEXT_PUBLIC_EVREN_API_URL || "http://localhost:8000";
-const FALLBACK_EVALUATOR_MODEL = "gemini-2.5-flash";
-const FALLBACK_SUMMARIZER_MODEL = "gemini-2.5-flash";
+const FALLBACK_EVALUATOR_MODEL = "gemini-3-flash-preview";
+const FALLBACK_SUMMARIZER_MODEL = "gemini-3-flash-preview";
 
 function requestNotificationPermission() {
   if (typeof window === "undefined" || !("Notification" in window)) return;
@@ -78,7 +78,7 @@ export default function Home() {
             type="text"
             value={evaluatorModel}
             onChange={(e) => setEvaluatorModel(e.target.value)}
-            placeholder="gemini-2.5-flash"
+            placeholder="gemini-3-flash-preview"
             className="mt-1.5 block w-full rounded-lg border border-stone-200 bg-white px-3 py-2.5 text-stone-900 placeholder:text-stone-400 focus:border-stone-400 focus:outline-none focus:ring-1 focus:ring-stone-400"
           />
         </div>
@@ -88,7 +88,7 @@ export default function Home() {
             type="text"
             value={summarizerModel}
             onChange={(e) => setSummarizerModel(e.target.value)}
-            placeholder="gemini-2.5-flash"
+            placeholder="gemini-3-flash-preview"
             className="mt-1.5 block w-full rounded-lg border border-stone-200 bg-white px-3 py-2.5 text-stone-900 placeholder:text-stone-400 focus:border-stone-400 focus:outline-none focus:ring-1 focus:ring-stone-400"
           />
         </div>
