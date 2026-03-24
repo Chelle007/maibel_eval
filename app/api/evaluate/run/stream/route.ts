@@ -22,13 +22,6 @@ function sendEvent(
 }
 
 export async function POST(request: Request) {
-  const apiKey = process.env.GEMINI_API_KEY;
-  if (!apiKey)
-    return new Response(JSON.stringify({ error: "Missing GEMINI_API_KEY" }), {
-      status: 500,
-      headers: { "Content-Type": "application/json" },
-    });
-
   const supabase = await createClient();
   const {
     data: { user: authUser },
@@ -52,6 +45,8 @@ export async function POST(request: Request) {
 
   let body: {
     evren_model_api_url: string;
+    use_evaluator?: boolean;
+    use_summarizer?: boolean;
     model_name?: string;
     summarizer_model?: string;
     system_prompt?: string;
@@ -65,11 +60,22 @@ export async function POST(request: Request) {
     });
   }
   const evrenModelApiUrl = body.evren_model_api_url?.trim();
-  if (!evrenModelApiUrl)
+  if (!evrenModelApiUrl) {
     return new Response(
       JSON.stringify({ error: "evren_model_api_url required" }),
       { status: 400, headers: { "Content-Type": "application/json" } }
     );
+  }
+
+  const useEvaluator = body.use_evaluator ?? false;
+  const useSummarizer = body.use_summarizer ?? false;
+  const apiKey = process.env.GEMINI_API_KEY;
+  if ((useEvaluator || useSummarizer) && !apiKey) {
+    return new Response(JSON.stringify({ error: "Missing GEMINI_API_KEY" }), {
+      status: 500,
+      headers: { "Content-Type": "application/json" },
+    });
+  }
 
   // On Vercel (and similar), localhost is this server—Evren must be a reachable URL.
   const isProduction = process.env.VERCEL === "1";
@@ -200,43 +206,68 @@ export async function POST(request: Request) {
             detected_flags: o.detected_states,
           }));
           const lastOutput = evrenOutputs[evrenOutputs.length - 1] ?? { evren_response: "", detected_states: "" };
-          const evalInput =
-            testCase.type === "multi_turn" && evrenOutputs.length > 1 ? evrenOutputs : lastOutput;
+          if (useEvaluator) {
+            const evalInput =
+              testCase.type === "multi_turn" && evrenOutputs.length > 1 ? evrenOutputs : lastOutput;
+            sendEvent(controller, "progress", {
+              stage: "evaluating",
+              index,
+              total,
+              test_case_id: testCase.test_case_id,
+              message: "Evaluating…",
+            });
 
-          sendEvent(controller, "progress", {
-            stage: "evaluating",
-            index,
-            total,
-            test_case_id: testCase.test_case_id,
-            message: "Evaluating…",
-          });
+            const result = await evaluateOne(
+              testCase,
+              evalInput,
+              apiKey as string,
+              modelName,
+              systemPrompt
+            );
+            const costUsd = result.token_usage?.cost_usd ?? 0;
+            totalCostUsd += costUsd;
 
-          const result = await evaluateOne(
-            testCase,
-            evalInput,
-            apiKey,
-            modelName,
-            systemPrompt
-          );
-          const costUsd = result.token_usage?.cost_usd ?? 0;
-          totalCostUsd += costUsd;
+            richReportInputs.push({ testCase, evrenOutput: lastOutput, result });
 
-          richReportInputs.push({ testCase, evrenOutput: lastOutput, result });
+            const evalPayload = {
+              session_id: sessionId,
+              test_case_uuid: row.id,
+              evren_responses: evrenResponsesColumn,
+              success: result.success,
+              score: result.score,
+              reason: result.reason ?? null,
+              prompt_tokens: result.token_usage?.prompt_tokens ?? null,
+              completion_tokens: result.token_usage?.completion_tokens ?? null,
+              total_tokens: result.token_usage?.total_tokens ?? null,
+              cost_usd: costUsd || null,
+              manually_edited: false,
+            } as Database["public"]["Tables"]["eval_results"]["Insert"];
+            await supabase.from("eval_results").insert(evalPayload as any);
+          } else {
+            const evalPayload = {
+              session_id: sessionId,
+              test_case_uuid: row.id,
+              evren_responses: evrenResponsesColumn,
+              // Placeholder row so conversation still appears in session details.
+              success: false,
+              score: 0,
+              reason: null,
+              prompt_tokens: null,
+              completion_tokens: null,
+              total_tokens: null,
+              cost_usd: null,
+              manually_edited: false,
+            } as Database["public"]["Tables"]["eval_results"]["Insert"];
+            await supabase.from("eval_results").insert(evalPayload as any);
 
-          const evalPayload = {
-            session_id: sessionId,
-            test_case_uuid: row.id,
-            evren_responses: evrenResponsesColumn,
-            success: result.success,
-            score: result.score,
-            reason: result.reason ?? null,
-            prompt_tokens: result.token_usage?.prompt_tokens ?? null,
-            completion_tokens: result.token_usage?.completion_tokens ?? null,
-            total_tokens: result.token_usage?.total_tokens ?? null,
-            cost_usd: costUsd || null,
-            manually_edited: false,
-          } as Database["public"]["Tables"]["eval_results"]["Insert"];
-          await supabase.from("eval_results").insert(evalPayload as any);
+            sendEvent(controller, "progress", {
+              stage: "evaluating",
+              index,
+              total,
+              test_case_id: testCase.test_case_id,
+              message: "Evaluator disabled, skipping evaluation.",
+            });
+          }
 
           sendEvent(controller, "progress", {
             stage: "done",
@@ -249,7 +280,7 @@ export async function POST(request: Request) {
 
         let summary: string | null = null;
         let title: string | null = null;
-        if (richReportInputs.length > 0) {
+        if (useSummarizer && richReportInputs.length > 0) {
           sendEvent(controller, "progress", {
             stage: "summarizing",
             total,
@@ -259,7 +290,7 @@ export async function POST(request: Request) {
             buildRichReport(testCase, evrenOutput, result)
           );
           const summarizerResult = await runSummarizer(
-            apiKey,
+            apiKey as string,
             richReports,
             summarizerModel,
             summarizerPrompt

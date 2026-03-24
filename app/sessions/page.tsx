@@ -292,12 +292,14 @@ export default function SessionsPage() {
                       )}
                     </div>
                     <p className="mt-1 flex flex-wrap items-center gap-2 text-sm text-stone-600">
-                      <span>Passed test cases: {s.passed_count ?? 0} / {s.total_count ?? 0}</span>
-                      {s.total_count != null && s.total_count > 0 && (
+                      {s.total_count != null && s.total_count > 0 ? (
                         <>
+                          <span>Passed test cases: {s.passed_count ?? 0} / {s.total_count}</span>
                           <span className="text-stone-400" aria-hidden>|</span>
                           <span>Score: {s.avg_score != null ? Number(s.avg_score).toFixed(2) : "—"}</span>
                         </>
+                      ) : (
+                        <span>Passed test cases: —</span>
                       )}
                     </p>
                   </Link>

@@ -19,9 +19,10 @@ function requestNotificationPermission() {
 export default function Home() {
   const { runState, startRun, cancelRun, clearRunState } = useEvalRun();
   const [evrenUrl, setEvrenUrl] = useState(FALLBACK_EVREN_URL);
+  const [useEvaluator, setUseEvaluator] = useState(false);
+  const [useSummarizer, setUseSummarizer] = useState(false);
   const [evaluatorModel, setEvaluatorModel] = useState(FALLBACK_EVALUATOR_MODEL);
   const [summarizerModel, setSummarizerModel] = useState(FALLBACK_SUMMARIZER_MODEL);
-  const [settingsLoaded, setSettingsLoaded] = useState(false);
 
   useEffect(() => {
     fetch("/api/default-settings")
@@ -31,8 +32,7 @@ export default function Home() {
         setEvrenUrl(data.evren_api_url ?? FALLBACK_EVREN_URL);
         setEvaluatorModel(data.evaluator_model ?? FALLBACK_EVALUATOR_MODEL);
         setSummarizerModel(data.summarizer_model ?? FALLBACK_SUMMARIZER_MODEL);
-      })
-      .finally(() => setSettingsLoaded(true));
+      });
   }, []);
 
   // When returning to home after a completed run, clear so form shows again
@@ -49,6 +49,8 @@ export default function Home() {
     requestNotificationPermission();
     startRun({
       evren_model_api_url: evrenUrl.trim(),
+      use_evaluator: useEvaluator,
+      use_summarizer: useSummarizer,
       model_name: evaluatorModel || undefined,
       summarizer_model: summarizerModel || undefined,
     });
@@ -73,23 +75,73 @@ export default function Home() {
           />
         </div>
         <div className="mt-4">
-          <label className="block text-sm font-medium text-stone-700">Evaluator model</label>
+          <div className="flex items-center justify-between">
+            <label className="block text-sm font-medium text-stone-700">Evaluator model</label>
+            <button
+              type="button"
+              role="switch"
+              aria-checked={useEvaluator}
+              aria-label="Toggle evaluator model"
+              onClick={() => setUseEvaluator((prev) => !prev)}
+              title={useEvaluator ? "Evaluator enabled (click to disable)" : "Evaluator disabled (click to enable)"}
+              className={`relative inline-flex h-6 w-11 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors focus:outline-none ${
+                useEvaluator ? "bg-emerald-500" : "bg-stone-300"
+              }`}
+            >
+              <span
+                className={`pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow ring-0 transition ${
+                  useEvaluator ? "translate-x-5" : "translate-x-0.5"
+                }`}
+                aria-hidden
+              />
+            </button>
+          </div>
           <input
             type="text"
             value={evaluatorModel}
             onChange={(e) => setEvaluatorModel(e.target.value)}
             placeholder="gemini-3-flash-preview"
-            className="mt-1.5 block w-full rounded-lg border border-stone-200 bg-white px-3 py-2.5 text-stone-900 placeholder:text-stone-400 focus:border-stone-400 focus:outline-none focus:ring-1 focus:ring-stone-400"
+            disabled={!useEvaluator}
+            className={`mt-1.5 block w-full rounded-lg border px-3 py-2.5 placeholder:text-stone-400 focus:border-stone-400 focus:outline-none focus:ring-1 focus:ring-stone-400 ${
+              useEvaluator
+                ? "border-stone-200 bg-white text-stone-900"
+                : "border-stone-200 bg-stone-50 text-stone-400"
+            }`}
           />
         </div>
         <div className="mt-4">
-          <label className="block text-sm font-medium text-stone-700">Summarizer model</label>
+          <div className="flex items-center justify-between">
+            <label className="block text-sm font-medium text-stone-700">Summarizer model</label>
+            <button
+              type="button"
+              role="switch"
+              aria-checked={useSummarizer}
+              aria-label="Toggle summarizer model"
+              onClick={() => setUseSummarizer((prev) => !prev)}
+              title={useSummarizer ? "Summarizer enabled (click to disable)" : "Summarizer disabled (click to enable)"}
+              className={`relative inline-flex h-6 w-11 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors focus:outline-none ${
+                useSummarizer ? "bg-emerald-500" : "bg-stone-300"
+              }`}
+            >
+              <span
+                className={`pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow ring-0 transition ${
+                  useSummarizer ? "translate-x-5" : "translate-x-0.5"
+                }`}
+                aria-hidden
+              />
+            </button>
+          </div>
           <input
             type="text"
             value={summarizerModel}
             onChange={(e) => setSummarizerModel(e.target.value)}
             placeholder="gemini-3-flash-preview"
-            className="mt-1.5 block w-full rounded-lg border border-stone-200 bg-white px-3 py-2.5 text-stone-900 placeholder:text-stone-400 focus:border-stone-400 focus:outline-none focus:ring-1 focus:ring-stone-400"
+            disabled={!useSummarizer}
+            className={`mt-1.5 block w-full rounded-lg border px-3 py-2.5 placeholder:text-stone-400 focus:border-stone-400 focus:outline-none focus:ring-1 focus:ring-stone-400 ${
+              useSummarizer
+                ? "border-stone-200 bg-white text-stone-900"
+                : "border-stone-200 bg-stone-50 text-stone-400"
+            }`}
           />
         </div>
         {error && (

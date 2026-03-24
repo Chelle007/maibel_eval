@@ -76,6 +76,8 @@ type EvalRunContextValue = {
   runState: EvalRunState;
   startRun: (params: {
     evren_model_api_url: string;
+    use_evaluator?: boolean;
+    use_summarizer?: boolean;
     model_name?: string;
     summarizer_model?: string;
   }) => Promise<void>;
@@ -101,6 +103,8 @@ export function EvalRunProvider({ children }: { children: ReactNode }) {
   const startRun = useCallback(
     async (params: {
       evren_model_api_url: string;
+      use_evaluator?: boolean;
+      use_summarizer?: boolean;
       model_name?: string;
       summarizer_model?: string;
     }) => {
@@ -118,6 +122,8 @@ export function EvalRunProvider({ children }: { children: ReactNode }) {
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             evren_model_api_url: params.evren_model_api_url.trim(),
+            use_evaluator: params.use_evaluator ?? false,
+            use_summarizer: params.use_summarizer ?? false,
             model_name: params.model_name || undefined,
             summarizer_model: params.summarizer_model || undefined,
           }),
