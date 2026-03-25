@@ -115,6 +115,11 @@ type ComparisonData = {
   champion_id: string;
   ranking: string[];
   comparisons: ComparisonPairwise[];
+  overall_reason?: string;
+  overall_hard_failures?: Record<string, string[]>;
+  overall_raw_winner?: "A" | "B" | "C" | "tie";
+  overall_winner_id?: string | null;
+  tiers?: string[][];
 } | null;
 
 type EvalResult = {
@@ -222,6 +227,20 @@ export default function SessionDetailPage() {
   const versionCount = versionEntries.length;
   const comparisonStats = useMemo(() => {
     const statsMap = new Map<string, { version_id: string; version_name: string; wins: number; ties: number; losses: number }>();
+    const idToName = new Map<string, string>();
+    const nameToCanonicalId = new Map<string, string>();
+
+    for (const r of results) {
+      for (const v of (r.evren_responses ?? [])) {
+        if (!idToName.has(v.version_id)) idToName.set(v.version_id, v.version_name);
+        if (!nameToCanonicalId.has(v.version_name)) nameToCanonicalId.set(v.version_name, v.version_id);
+      }
+    }
+
+    const canonicalId = (vid: string): string => {
+      const name = idToName.get(vid) ?? vid;
+      return nameToCanonicalId.get(name) ?? vid;
+    };
 
     for (const r of results) {
       const versions = r.evren_responses ?? [];
@@ -229,8 +248,9 @@ export default function SessionDetailPage() {
       const comparisons = r.comparison?.comparisons ?? [];
 
       for (const v of versions) {
-        if (!statsMap.has(v.version_id)) {
-          statsMap.set(v.version_id, { version_id: v.version_id, version_name: v.version_name, wins: 0, ties: 0, losses: 0 });
+        const cid = canonicalId(v.version_id);
+        if (!statsMap.has(cid)) {
+          statsMap.set(cid, { version_id: cid, version_name: v.version_name, wins: 0, ties: 0, losses: 0 });
         }
       }
 
@@ -248,7 +268,8 @@ export default function SessionDetailPage() {
       const isTie = tiedWithChampion.size > 1;
 
       for (const v of versions) {
-        const entry = statsMap.get(v.version_id)!;
+        const cid = canonicalId(v.version_id);
+        const entry = statsMap.get(cid)!;
         if (isTie && tiedWithChampion.has(v.version_id)) {
           entry.ties++;
         } else if (v.version_id === championId) {
@@ -615,10 +636,10 @@ export default function SessionDetailPage() {
       .finally(() => setResummarizing(false));
   }
 
-  if (loading) return <div className="mx-auto max-w-4xl px-4 py-8 text-stone-500">Loading…</div>;
+  if (loading) return <div className="mx-auto max-w-5xl px-4 py-8 text-stone-500">Loading…</div>;
   if (error || !session) {
     return (
-      <div className="mx-auto max-w-4xl px-4 py-8">
+      <div className="mx-auto max-w-5xl px-4 py-8">
         <p className="text-red-600">{error ?? "Not found"}</p>
         <Link href="/sessions" className="mt-2 inline-block text-sm text-stone-500 hover:underline">← Sessions</Link>
       </div>
@@ -629,7 +650,7 @@ export default function SessionDetailPage() {
   const hasEvaluationResults = evaluatedResults.length > 0;
 
   return (
-    <div className="mx-auto max-w-4xl px-4 py-8 sm:px-6 lg:px-8">
+    <div className="mx-auto max-w-5xl px-4 py-8 sm:px-6 lg:px-8">
       <div className="flex flex-wrap items-center justify-between gap-2">
         <Link href="/sessions" className="text-sm text-stone-500 hover:text-stone-700">← Sessions</Link>
         <div className="flex items-center gap-2">
@@ -639,11 +660,12 @@ export default function SessionDetailPage() {
               onClick={addVersion}
               disabled={addingVersion || deleting}
               className="inline-flex items-center gap-2 rounded-lg border border-emerald-300 bg-emerald-50 px-3 py-1.5 text-sm font-medium text-emerald-700 hover:bg-emerald-100 disabled:opacity-50"
+              title="Manage versions"
             >
               <svg className="h-4 w-4 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden>
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
               </svg>
-              {addingVersion ? "Adding version…" : "Add version"}
+              {addingVersion ? "Working…" : "Manage versions"}
             </button>
           )}
           <button
@@ -931,7 +953,7 @@ export default function SessionDetailPage() {
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4" role="dialog" aria-modal="true" aria-labelledby="add-version-dialog-title">
           <div className="fixed inset-0 bg-stone-900/50" aria-hidden onClick={() => { if (!addingVersion) setShowAddVersionModal(false); }} />
           <div className="relative z-10 w-full max-w-lg rounded-xl border border-stone-200 bg-white p-6 shadow-xl">
-            <h2 id="add-version-dialog-title" className="text-lg font-semibold text-stone-900">Add version</h2>
+            <h2 id="add-version-dialog-title" className="text-lg font-semibold text-stone-900">Manage versions</h2>
             <p className="mt-2 text-sm text-stone-600">
               Rename existing versions and set a name for the new version before rerunning Evren.
             </p>
@@ -992,15 +1014,17 @@ export default function SessionDetailPage() {
                   </div>
                 </div>
               ))}
-              <div>
-                <label className="block text-xs font-medium uppercase tracking-wide text-stone-400">New version name</label>
-                <input
-                  type="text"
-                  value={newVersionLabel}
-                  onChange={(e) => setNewVersionLabel(e.target.value)}
-                  className="mt-1 block w-full rounded-lg border border-stone-200 bg-white px-3 py-2 text-sm text-stone-900 focus:border-stone-400 focus:outline-none focus:ring-1 focus:ring-stone-400"
-                />
-              </div>
+              {versionCount < 3 && (
+                <div>
+                  <label className="block text-xs font-medium uppercase tracking-wide text-stone-400">New version name</label>
+                  <input
+                    type="text"
+                    value={newVersionLabel}
+                    onChange={(e) => setNewVersionLabel(e.target.value)}
+                    className="mt-1 block w-full rounded-lg border border-stone-200 bg-white px-3 py-2 text-sm text-stone-900 focus:border-stone-400 focus:outline-none focus:ring-1 focus:ring-stone-400"
+                  />
+                </div>
+              )}
               <div className="flex items-center justify-between pt-1">
                 <div>
                   <p className="text-sm font-medium text-stone-700">Run comparison</p>
@@ -1067,11 +1091,11 @@ export default function SessionDetailPage() {
               <button
                 type="button"
                 onClick={confirmAddVersion}
-                disabled={addingVersion}
+                disabled={addingVersion || versionCount >= 3}
                 className="inline-flex items-center gap-1.5 rounded-lg bg-emerald-600 px-4 py-2 text-sm font-medium text-white hover:bg-emerald-500 disabled:opacity-50"
               >
                 <Plus className="h-4 w-4 shrink-0" aria-hidden />
-                Add version
+                {addingVersion ? "Adding…" : "Add version"}
               </button>
             </div>
           </div>
@@ -1202,16 +1226,41 @@ export default function SessionDetailPage() {
                       }
                       
                       const topRankedId = ranking[0];
-                      // Find if there are ties with the top ranked ID
-                      const tiesWithTop = r.comparison?.comparisons.filter(c => 
-                        c.raw_winner === "tie" && (c.a_id === topRankedId || c.b_id === topRankedId)
-                      ) || [];
-                      
-                      // Collect all IDs that are tied for first place
-                      const topIds = new Set([topRankedId]);
-                      for (const tie of tiesWithTop) {
-                        topIds.add(tie.a_id);
-                        topIds.add(tie.b_id);
+                      const overallHardFailures = (r.comparison as { overall_hard_failures?: unknown } | null)?.overall_hard_failures;
+                      const overallHardFailuresById =
+                        overallHardFailures && typeof overallHardFailures === "object" && overallHardFailures != null
+                          ? (overallHardFailures as Record<string, string[]>)
+                          : null;
+
+                      const hasHardFailures = (versionId: string): boolean => {
+                        const overall = overallHardFailuresById?.[versionId];
+                        if (Array.isArray(overall) && overall.length > 0) return true;
+
+                        const comps = r.comparison?.comparisons ?? [];
+                        for (const c of comps) {
+                          if (c.a_id === versionId && (c.hard_failures?.A?.length ?? 0) > 0) return true;
+                          if (c.b_id === versionId && (c.hard_failures?.B?.length ?? 0) > 0) return true;
+                        }
+                        return false;
+                      };
+
+                      // Collect all IDs that are tied for first place:
+                      // - Prefer tiers (3-way comparison)
+                      // - Fallback to pairwise ties with top ranked ID
+                      const topIds = new Set<string>();
+                      const tiers = (r.comparison as { tiers?: unknown } | null)?.tiers;
+                      if (Array.isArray(tiers) && Array.isArray(tiers[0])) {
+                        for (const id of tiers[0] as unknown[]) topIds.add(String(id));
+                      } else {
+                        topIds.add(topRankedId);
+                        const tiesWithTop =
+                          r.comparison?.comparisons.filter(
+                            (c) => c.raw_winner === "tie" && (c.a_id === topRankedId || c.b_id === topRankedId)
+                          ) ?? [];
+                        for (const tie of tiesWithTop) {
+                          topIds.add(tie.a_id);
+                          topIds.add(tie.b_id);
+                        }
                       }
                       
                       // Sort the IDs so they appear in the same order as the versions (e.g., Version 1 & Version 2)
@@ -1225,8 +1274,14 @@ export default function SessionDetailPage() {
                         .sort((a, b) => a.idx - b.idx)
                         .map(item => item.name);
 
+                      const anyFailedTop = Array.from(topIds).some((id) => hasHardFailures(id));
+
                       return topNames.length > 0 ? (
-                        <span className="rounded-md bg-emerald-100 px-2.5 py-0.5 text-xs font-medium text-emerald-800">
+                        <span
+                          className={`rounded-md px-2.5 py-0.5 text-xs font-medium ${
+                            anyFailedTop ? "bg-red-100 text-red-800" : "bg-emerald-100 text-emerald-800"
+                          }`}
+                        >
                           {topNames.join(" & ")}
                         </span>
                       ) : (
@@ -1277,7 +1332,7 @@ export default function SessionDetailPage() {
               </div>
             </div>
             {isExpanded && (
-            <div className="border-t border-stone-100 p-5 space-y-4">
+            <div className="border-t border-stone-100 p-4 space-y-4">
               {r.test_cases && (
                 <>
                   {/* Conversation: input / evren pairs */}
@@ -1285,7 +1340,8 @@ export default function SessionDetailPage() {
                     <p className="text-xs font-medium uppercase tracking-wide text-stone-400">Conversation</p>
                     <div className="mt-2 space-y-3">
                       {(() => {
-                        const versions = Array.isArray(r.evren_responses) ? r.evren_responses as VersionEntry[] : [];
+                        const allVersions = Array.isArray(r.evren_responses) ? (r.evren_responses as VersionEntry[]) : [];
+                        const versions = allVersions.slice(0, 3);
                         const turnCount = getTurnCount(versions);
                         if (turnCount === 0 && versions.length === 0) {
                           return (
@@ -1344,14 +1400,14 @@ export default function SessionDetailPage() {
                                     )}
                                   </div>
                                 ) : (
-                                  <div className="mt-1 grid gap-2 sm:grid-cols-2">
+                                  <div className="mt-1 flex gap-2 overflow-x-auto flex-nowrap">
                                     {versions.map((ver) => {
                                       const turnData = ver.turns[i];
                                       const bubbles = turnData?.response ?? [];
                                       return (
                                         <div
                                           key={ver.version_id}
-                                          className="rounded-lg border border-stone-200 bg-stone-50/80 px-3 py-2"
+                                          className="flex-1 min-w-0 rounded-lg border border-stone-200 bg-stone-50/80 px-3 py-2"
                                         >
                                           <p className="text-[11px] font-medium uppercase tracking-wide text-stone-400">
                                             {ver.version_name}
@@ -1402,9 +1458,9 @@ export default function SessionDetailPage() {
                                             {prettyDetectedFlags(turnVersions[0]?.detected_flags ?? "")}
                                           </pre>
                                         ) : (
-                                          <div className="mt-1 grid gap-2 sm:grid-cols-2">
+                                          <div className="mt-1 flex gap-2 overflow-x-auto flex-nowrap">
                                             {versions.map((ver) => (
-                                              <div key={ver.version_id} className="rounded-lg border border-stone-200 bg-white px-3 py-2">
+                                              <div key={ver.version_id} className="flex-1 min-w-0 rounded-lg border border-stone-200 bg-white px-3 py-2">
                                                 <p className="text-[11px] font-medium uppercase tracking-wide text-stone-400">
                                                   {ver.version_name}
                                                 </p>
@@ -1475,104 +1531,226 @@ export default function SessionDetailPage() {
                   )}
 
                   {r.comparison && r.comparison.ranking && r.comparison.ranking.length > 1 && (() => {
-                    const ranking: string[] = r.comparison!.ranking;
-                    const comps: ComparisonPairwise[] = r.comparison!.comparisons ?? [];
-
-                    const parent = new Map<string, string>();
-                    const find = (x: string): string => {
-                      if (!parent.has(x)) parent.set(x, x);
-                      while (parent.get(x) !== x) {
-                        parent.set(x, parent.get(parent.get(x)!)!);
-                        x = parent.get(x)!;
-                      }
-                      return x;
+                    const allRanking: string[] = r.comparison!.ranking;
+                    const ranking: string[] = allRanking.slice(0, 3);
+                    const allowedVersionIds = new Set<string>(ranking);
+                    const comps: ComparisonPairwise[] = (r.comparison!.comparisons ?? []).filter(
+                      (c) => allowedVersionIds.has(c.a_id) && allowedVersionIds.has(c.b_id)
+                    );
+                    const overallReason = (r.comparison as { overall_reason?: unknown } | null)?.overall_reason;
+                    const overallReasonText = typeof overallReason === "string" ? overallReason.trim() : "";
+                    const overallHf = (r.comparison as { overall_hard_failures?: unknown } | null)?.overall_hard_failures;
+                    const overallHardFailures =
+                      overallHf && typeof overallHf === "object" && overallHf != null ? (overallHf as Record<string, string[]>) : null;
+                    const overallWinnerId = (r.comparison as { overall_winner_id?: unknown } | null)?.overall_winner_id;
+                    const overallWinnerIdValue = overallWinnerId === null || typeof overallWinnerId === "string" ? overallWinnerId : undefined;
+                    const tiersValue = (r.comparison as { tiers?: unknown } | null)?.tiers;
+                    const tiers =
+                      Array.isArray(tiersValue) && tiersValue.every((t) => Array.isArray(t))
+                        ? (tiersValue as string[][])
+                        : null;
+                    const hasOverallFailure = (vid: string): boolean => {
+                      const list = overallHardFailures?.[vid];
+                      return Array.isArray(list) && list.length > 0;
                     };
-                    const union = (a: string, b: string) => {
-                      const ra = find(a), rb = find(b);
-                      if (ra !== rb) parent.set(rb, ra);
-                    };
-                    for (const c of comps) {
-                      if (c.winner_id === null) union(c.a_id, c.b_id);
-                    }
 
-                    const displayRank: number[] = [];
-                    const groupRank = new Map<string, number>();
-                    let nextRank = 1;
-                    for (const vId of ranking) {
-                      const root = find(vId);
-                      if (groupRank.has(root)) {
-                        displayRank.push(groupRank.get(root)!);
-                      } else {
-                        groupRank.set(root, nextRank);
-                        displayRank.push(nextRank);
-                        nextRank++;
+                    const displayRank: number[] = (() => {
+                      if (tiers && tiers.length > 0) {
+                        const rankById = new Map<string, number>();
+                        for (let i = 0; i < tiers.length; i++) {
+                          const r = i + 1;
+                          for (const vid of tiers[i] ?? []) rankById.set(String(vid), r);
+                        }
+                        return ranking.map((vid, idx) => rankById.get(vid) ?? (idx + 1));
                       }
-                    }
+
+                      const parent = new Map<string, string>();
+                      const find = (x: string): string => {
+                        if (!parent.has(x)) parent.set(x, x);
+                        while (parent.get(x) !== x) {
+                          parent.set(x, parent.get(parent.get(x)!)!);
+                          x = parent.get(x)!;
+                        }
+                        return x;
+                      };
+                      const union = (a: string, b: string) => {
+                        const ra = find(a), rb = find(b);
+                        if (ra !== rb) parent.set(rb, ra);
+                      };
+                      for (const c of comps) {
+                        if (c.winner_id === null) union(c.a_id, c.b_id);
+                      }
+
+                      const out: number[] = [];
+                      const groupRank = new Map<string, number>();
+                      let nextRank = 1;
+                      for (const vId of ranking) {
+                        const root = find(vId);
+                        if (groupRank.has(root)) {
+                          out.push(groupRank.get(root)!);
+                        } else {
+                          groupRank.set(root, nextRank);
+                          out.push(nextRank);
+                          nextRank++;
+                        }
+                      }
+                      return out;
+                    })();
                     return (
                     <>
                       <hr className="border-stone-200" />
                       <div>
                         <p className="text-xs font-medium uppercase tracking-wide text-stone-400">Version comparison</p>
-                        <div className="mt-2 flex flex-wrap items-center gap-2">
-                          {ranking.map((vId: string, pos: number) => {
+                        <div className="mt-2 flex items-center gap-2">
+                        {ranking.map((vId: string, pos: number) => {
                             const rank = displayRank[pos];
                             const isChampion = rank === 1;
+                            const isFailed = hasOverallFailure(vId);
                             return (
                             <span
                               key={pos}
                               className={`inline-flex items-center gap-1.5 rounded-lg px-2.5 py-1 text-sm font-medium ${
-                                isChampion
-                                  ? "bg-amber-100 text-amber-800 border border-amber-200"
-                                  : "bg-stone-100 text-stone-600 border border-stone-200"
+                                isFailed
+                                  ? "bg-red-100 text-red-800 border border-red-200"
+                                  : isChampion
+                                    ? "bg-amber-100 text-amber-800 border border-amber-200"
+                                    : "bg-stone-100 text-stone-600 border border-stone-200"
                               }`}
                             >
                               <span className="text-xs font-bold">#{rank}</span>
                               {getVersionLabel(vId)}
-                              {isChampion && <span className="text-amber-600 text-xs">★</span>}
+                              {isChampion && (
+                                <span className={`${isFailed ? "text-red-700" : "text-amber-600"} text-xs`}>★</span>
+                              )}
                             </span>
                             );
                           })}
                         </div>
-                        {r.comparison.comparisons && r.comparison.comparisons.length > 0 && (
-                          <div className="mt-3 space-y-2">
-                            {r.comparison.comparisons.map((c: ComparisonPairwise, ci: number) => (
-                              <div key={ci} className="rounded-lg border border-stone-200 bg-stone-50/80 px-3 py-2">
-                                <div className="flex items-center gap-2 text-xs text-stone-500">
-                                  <span className="font-medium text-stone-700">{getVersionLabel(c.a_id)}</span>
-                                  <span>vs</span>
-                                  <span className="font-medium text-stone-700">{getVersionLabel(c.b_id)}</span>
-                                  <span className="text-stone-300">→</span>
+                        {ranking.length === 3 && overallReasonText ? (
+                          <>
+                            <div className="mt-3 rounded-lg border border-stone-200 bg-stone-50/80 px-3 py-2">
+                              <div className="flex items-center gap-2 text-xs text-stone-500">
+                                <span className="font-medium text-stone-700">Overall comparison</span>
+                                <span className="text-stone-300">→</span>
+                                {overallWinnerIdValue === null ? (
+                                  <span className="font-semibold text-stone-600">Tie</span>
+                                ) : (
                                   <span className={`font-semibold ${
-                                    c.winner_id === null
-                                      ? "text-stone-600"
+                                    hasOverallFailure((overallWinnerIdValue as string) ?? r.comparison!.champion_id)
+                                      ? "text-red-700"
                                       : "text-emerald-700"
                                   }`}>
-                                    {c.winner_id === null
-                                      ? "Tie"
-                                      : `${getVersionLabel(c.winner_id)} wins`}
+                                    {getVersionLabel((overallWinnerIdValue as string) ?? r.comparison!.champion_id)} wins
                                   </span>
-                                </div>
-                                {c.reason && (
-                                  <p className="mt-1 text-sm text-stone-600 leading-relaxed">{c.reason}</p>
-                                )}
-                                {((c.hard_failures?.A?.length ?? 0) > 0 || (c.hard_failures?.B?.length ?? 0) > 0) && (
-                                  <div className="mt-1.5 flex flex-wrap gap-2 text-xs">
-                                    {(c.hard_failures?.A ?? []).map((f: string, fi: number) => (
-                                      <span key={`a-${fi}`} className="rounded bg-red-100 px-1.5 py-0.5 text-red-700">
-                                        {getVersionLabel(c.a_id)}: {f}
-                                      </span>
-                                    ))}
-                                    {(c.hard_failures?.B ?? []).map((f: string, fi: number) => (
-                                      <span key={`b-${fi}`} className="rounded bg-red-100 px-1.5 py-0.5 text-red-700">
-                                        {getVersionLabel(c.b_id)}: {f}
-                                      </span>
-                                    ))}
-                                  </div>
                                 )}
                               </div>
-                            ))}
-                          </div>
-                        )}
+                              <p className="mt-1 text-sm text-stone-600 leading-relaxed">{overallReasonText}</p>
+                            </div>
+
+                            {overallHardFailures && ranking.some((vid) => hasOverallFailure(vid)) && (
+                              <div className="mt-2 rounded-lg border border-red-200 bg-red-50/70 px-3 py-2">
+                                <p className="text-xs font-medium uppercase tracking-wide text-red-700">Hard failures</p>
+                                <div className="mt-2 grid gap-2 sm:grid-cols-3">
+                                  {(() => {
+                                    const ordered = (r.evren_responses ?? [])
+                                      .slice(0, 3)
+                                      .map((v: VersionEntry) => v.version_id)
+                                      .filter((vid: string) => ranking.includes(vid));
+                                    const seen = new Set<string>();
+                                    const ids = [...ordered, ...ranking].filter((vid) => {
+                                      if (seen.has(vid)) return false;
+                                      seen.add(vid);
+                                      return true;
+                                    });
+                                    return ids;
+                                  })().map((vid: string) => {
+                                    const failures = overallHardFailures[vid] ?? [];
+                                    return (
+                                      <div key={vid} className="rounded-lg border border-red-200 bg-white/70 px-3 py-2">
+                                        <p className="text-[11px] font-medium uppercase tracking-wide text-red-700">
+                                          {getVersionLabel(vid)}
+                                        </p>
+                                        {failures.length > 0 ? (
+                                          <ul className="mt-1.5 space-y-1 text-xs text-red-700">
+                                            {failures.map((f: string, fi: number) => (
+                                              <li key={fi}>{f}</li>
+                                            ))}
+                                          </ul>
+                                        ) : (
+                                          <p className="mt-1.5 text-xs text-stone-500">—</p>
+                                        )}
+                                      </div>
+                                    );
+                                  })}
+                                </div>
+                              </div>
+                            )}
+                          </>
+                        ) : comps.length > 0 && (() => {
+                          const failuresById = new Map<string, string[]>();
+                          const pushFailures = (vid: string, list: string[]) => {
+                            if (!list || list.length === 0) return;
+                            const prev = failuresById.get(vid) ?? [];
+                            failuresById.set(vid, [...prev, ...list]);
+                          };
+
+                          for (const c of comps) {
+                            pushFailures(c.a_id, c.hard_failures?.A ?? []);
+                            pushFailures(c.b_id, c.hard_failures?.B ?? []);
+                          }
+
+                          const anyFailures = Array.from(failuresById.values()).some((l) => l.length > 0);
+
+                          return (
+                            <>
+                              <div className="mt-3 space-y-2">
+                                {comps.map((c: ComparisonPairwise, ci: number) => (
+                                  <div key={ci} className="rounded-lg border border-stone-200 bg-stone-50/80 px-3 py-2">
+                                    <div className="flex items-center gap-2 text-xs text-stone-500">
+                                      <span className="font-medium text-stone-700">{getVersionLabel(c.a_id)}</span>
+                                      <span>vs</span>
+                                      <span className="font-medium text-stone-700">{getVersionLabel(c.b_id)}</span>
+                                      <span className="text-stone-300">→</span>
+                                      <span className={`font-semibold ${c.winner_id === null ? "text-stone-600" : "text-emerald-700"}`}>
+                                        {c.winner_id === null ? "Tie" : `${getVersionLabel(c.winner_id)} wins`}
+                                      </span>
+                                    </div>
+                                    {c.reason && (
+                                      <p className="mt-1 text-sm text-stone-600 leading-relaxed">{c.reason}</p>
+                                    )}
+                                  </div>
+                                ))}
+                              </div>
+
+                              {anyFailures && (
+                                <div className="mt-2 rounded-lg border border-red-200 bg-red-50/70 px-3 py-2">
+                                  <p className="text-xs font-medium uppercase tracking-wide text-red-700">Hard failures</p>
+                                  <div className="mt-2 grid gap-2 sm:grid-cols-2">
+                                    {ranking.slice(0, 2).map((vid) => {
+                                      const failures = failuresById.get(vid) ?? [];
+                                      return (
+                                        <div key={vid} className="rounded-lg border border-red-200 bg-white/70 px-3 py-2">
+                                          <p className="text-[11px] font-medium uppercase tracking-wide text-red-700">
+                                            {getVersionLabel(vid)}
+                                          </p>
+                                          {failures.length > 0 ? (
+                                            <ul className="mt-1.5 space-y-1 text-xs text-red-700">
+                                              {failures.map((f, fi) => (
+                                                <li key={fi}>{f}</li>
+                                              ))}
+                                            </ul>
+                                          ) : (
+                                            <p className="mt-1.5 text-xs text-stone-500">—</p>
+                                          )}
+                                        </div>
+                                      );
+                                    })}
+                                  </div>
+                                </div>
+                              )}
+                            </>
+                          );
+                        })()}
                       </div>
                     </>
                     );

@@ -83,6 +83,7 @@ export async function POST(request: Request) {
   const richReportInputs: { testCase: TestCase; evrenOutput: EvrenOutput; result: EvaluationResult }[] = [];
 
   const rows = (testCasesRows ?? []) as TestCasesRow[];
+  const versionId = crypto.randomUUID();
   for (const row of rows) {
     const testCase: TestCase = {
       test_case_id: row.test_case_id,
@@ -102,7 +103,7 @@ export async function POST(request: Request) {
       continue;
     }
     const versionEntry: VersionEntry = {
-      version_id: crypto.randomUUID(),
+      version_id: versionId,
       version_name: "Version 1",
       turns: evrenOutputs.map((o) => ({
         response: Array.isArray(o.evren_response) ? o.evren_response.map(String) : [String(o.evren_response ?? "")],

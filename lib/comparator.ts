@@ -2,6 +2,8 @@ import { GoogleGenerativeAI } from "@google/generative-ai";
 import {
   loadComparatorSystemPrompt,
   buildComparatorUserMessage,
+  loadComparatorTripleSystemPrompt,
+  buildComparatorTripleUserMessage,
 } from "./prompts";
 import { computeTokenCost } from "./token-cost";
 import type { TestCase, PairwiseResult, ComparisonData } from "./types";
@@ -15,6 +17,14 @@ function extractJson(text: string): string {
 }
 
 const DEFAULT_MODEL = "gemini-3-flash-preview";
+
+type TripleComparisonData = ComparisonData & {
+  overall_reason?: string;
+  overall_hard_failures?: Record<string, string[]>;
+  overall_raw_winner?: "A" | "B" | "C" | "tie";
+  overall_winner_id?: string | null;
+  tiers?: string[][];
+};
 
 /** Run one pairwise comparison between two versions by ID. */
 export async function comparePair(
@@ -103,6 +113,121 @@ export async function comparePair(
   };
 }
 
+/** Run one 3-way comparison between three versions by ID. */
+export async function compareTriple(
+  testCase: TestCase,
+  versions: VersionEntry[],
+  versionIds: [string, string, string],
+  apiKey: string,
+  modelName: string = DEFAULT_MODEL,
+  systemPrompt?: string
+): Promise<TripleComparisonData> {
+  const genAI = new GoogleGenerativeAI(apiKey);
+  const systemInstruction = systemPrompt ?? loadComparatorTripleSystemPrompt();
+  const model = genAI.getGenerativeModel({
+    model: modelName,
+    systemInstruction,
+  });
+
+  const { message, labelToVersionId } = buildComparatorTripleUserMessage(
+    testCase,
+    versions,
+    versionIds
+  );
+
+  const result = await model.generateContent(message);
+  const response = result.response;
+  const text = response.text();
+
+  const jsonStr = extractJson(text);
+  let parsed: Record<string, unknown>;
+  try {
+    parsed = JSON.parse(jsonStr) as Record<string, unknown>;
+  } catch {
+    return {
+      champion_id: versionIds[0],
+      ranking: [...versionIds],
+      comparisons: [],
+      overall_reason: "Comparator returned invalid JSON — defaulting to original order.",
+    };
+  }
+
+  const rawRanking = parsed.ranking;
+  const normalizedLabels = Array.isArray(rawRanking)
+    ? rawRanking.map((x) => String(x ?? "").trim().toUpperCase())
+    : [];
+
+  const allowed = new Set(["A", "B", "C"]);
+  const unique = new Set(normalizedLabels);
+  const rankingLabelsOk =
+    normalizedLabels.length === 3 &&
+    normalizedLabels.every((l) => allowed.has(l)) &&
+    unique.size === 3;
+
+  const mapLabelToId = (label: string): string | null => {
+    if (label === "A") return labelToVersionId.A;
+    if (label === "B") return labelToVersionId.B;
+    if (label === "C") return labelToVersionId.C;
+    return null;
+  };
+
+  const rawTiers = parsed.tiers;
+  const normalizedTiers: string[][] = Array.isArray(rawTiers)
+    ? (rawTiers as unknown[]).map((tier) =>
+        Array.isArray(tier) ? (tier as unknown[]).map((x) => String(x ?? "").trim().toUpperCase()) : []
+      )
+    : [];
+
+  const tiersLabelsOk = (() => {
+    if (!Array.isArray(rawTiers) || normalizedTiers.length === 0) return false;
+    if (normalizedTiers.some((t) => t.length === 0)) return false;
+    const flat = normalizedTiers.flat();
+    if (flat.length !== 3) return false;
+    if (!flat.every((l) => allowed.has(l))) return false;
+    return new Set(flat).size === 3;
+  })();
+
+  const tiers: string[][] | undefined = tiersLabelsOk
+    ? normalizedTiers.map((tier) => tier.map((l) => mapLabelToId(l)!).filter(Boolean) as string[])
+    : undefined;
+
+  const ranking = tiers
+    ? tiers.flat()
+    : rankingLabelsOk
+      ? (normalizedLabels.map((l) => mapLabelToId(l)!).filter(Boolean) as string[])
+      : [...versionIds];
+
+  const reason = String(parsed.reason ?? "");
+
+  const overall_winner_id =
+    tiers && tiers[0] && tiers[0].length === 1 ? tiers[0][0] : null;
+  const normalizedRawWinner: "A" | "B" | "C" | "tie" =
+    overall_winner_id == null ? "tie" : "A"; // retained for backward compatibility; UI should use overall_winner_id / tiers
+
+  const hardFailures = parsed.hard_failures as
+    | { A?: string[]; B?: string[]; C?: string[] }
+    | undefined;
+  const hfA = Array.isArray(hardFailures?.A) ? hardFailures!.A.map(String) : [];
+  const hfB = Array.isArray(hardFailures?.B) ? hardFailures!.B.map(String) : [];
+  const hfC = Array.isArray(hardFailures?.C) ? hardFailures!.C.map(String) : [];
+  const overall_hard_failures: Record<string, string[]> = {
+    [labelToVersionId.A]: hfA,
+    [labelToVersionId.B]: hfB,
+    [labelToVersionId.C]: hfC,
+  };
+
+  return {
+    champion_id: ranking[0],
+    ranking,
+    comparisons: [],
+    overall_reason: reason,
+    overall_hard_failures,
+    overall_raw_winner: normalizedRawWinner,
+    overall_winner_id,
+    ...(tiers && { tiers }),
+  };
+}
+
 /**
  * Readjust comparison data after a version is deleted.
  * Simply filters out comparisons and ranking entries involving the deleted ID.
@@ -188,6 +313,87 @@ export async function recompareGaps(
       ranking[posB] = higherId;
     }
   }
+
+  return {
+    champion_id: ranking[0],
+    ranking,
+    comparisons,
+  };
+}
+
+/**
+ * Round-robin comparison of all version pairs.
+ *
+ * - 2 versions: one comparison (v1 vs v2).
+ * - 3 versions: three comparisons (v1 vs v2, v2 vs v3, v1 vs v3).
+ *
+ * Ranking is derived by scoring each version: win = 3, tie = 1, loss = 0.
+ */
+export async function runRoundRobin(
+  testCase: TestCase,
+  versions: VersionEntry[],
+  apiKey: string,
+  modelName?: string,
+  systemPrompt?: string
+): Promise<ComparisonData> {
+  const ids = versions.map((v) => v.version_id);
+
+  if (ids.length <= 1) {
+    return {
+      champion_id: ids[0],
+      ranking: ids,
+      comparisons: [],
+    };
+  }
+
+  // Pair order matters for display. For 3 versions we want:
+  // (v1 vs v2), (v2 vs v3), (v1 vs v3).
+  let pairs: [string, string][];
+  if (ids.length === 2) {
+    pairs = [[ids[0], ids[1]]];
+  } else if (ids.length === 3) {
+    pairs = [
+      [ids[0], ids[1]],
+      [ids[1], ids[2]],
+      [ids[0], ids[2]],
+    ];
+  } else {
+    // Should not happen in normal flow (we cap at 3), but keep a sane default.
+    pairs = [];
+    for (let i = 0; i < ids.length; i++) {
+      for (let j = i + 1; j < ids.length; j++) {
+        pairs.push([ids[i], ids[j]]);
+      }
+    }
+  }
+
+  const comparisons: PairwiseResult[] = [];
+  for (const [aId, bId] of pairs) {
+    const result = await comparePair(
+      testCase,
+      versions,
+      aId,
+      bId,
+      apiKey,
+      modelName,
+      systemPrompt
+    );
+    comparisons.push(result);
+  }
+
+  const scores = new Map<string, number>();
+  for (const id of ids) scores.set(id, 0);
+
+  for (const c of comparisons) {
+    if (c.winner_id === null) {
+      scores.set(c.a_id, (scores.get(c.a_id) ?? 0) + 1);
+      scores.set(c.b_id, (scores.get(c.b_id) ?? 0) + 1);
+    } else {
+      scores.set(c.winner_id, (scores.get(c.winner_id) ?? 0) + 3);
+    }
+  }
+
+  const ranking = [...ids].sort((a, b) => (scores.get(b) ?? 0) - (scores.get(a) ?? 0));
 
   return {
     champion_id: ranking[0],

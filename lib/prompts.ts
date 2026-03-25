@@ -35,6 +35,13 @@ export function loadComparatorSystemPrompt(): string {
   return content.replace(/\{base_system_prompt\}/g, base);
 }
 
+/** Load 3-way comparator system prompt and inject base prompt. */
+export function loadComparatorTripleSystemPrompt(): string {
+  const content = readPrompt("comparator_triple_system_prompt.txt");
+  const base = loadBaseSystemPrompt();
+  return content.replace(/\{base_system_prompt\}/g, base);
+}
+
 /** Version data for one side of a pairwise comparison. */
 export interface VersionSnapshot {
   /** Per-turn responses (array of bubble arrays). */
@@ -109,6 +116,69 @@ export function buildComparatorUserMessage(
   }
 
   return { message: sections.join("\n"), aIsFirst };
+}
+
+/**
+ * Build the user message for the 3-way comparator.
+ * Randomizes A/B/C to reduce position bias.
+ */
+export function buildComparatorTripleUserMessage(
+  testCase: TestCase,
+  versions: VersionEntry[],
+  versionIds: [string, string, string]
+): { message: string; labelToVersionId: Record<"A" | "B" | "C", string> } {
+  const shuffled = [...versionIds].sort(() => Math.random() - 0.5) as [string, string, string];
+  const labelToVersionId: Record<"A" | "B" | "C", string> = {
+    A: shuffled[0],
+    B: shuffled[1],
+    C: shuffled[2],
+  };
+
+  const snapshots: Record<"A" | "B" | "C", VersionSnapshot> = {
+    A: extractVersionSnapshot(versions, labelToVersionId.A),
+    B: extractVersionSnapshot(versions, labelToVersionId.B),
+    C: extractVersionSnapshot(versions, labelToVersionId.C),
+  };
+
+  const userMessages: string[] =
+    testCase.type === "multi_turn" && Array.isArray(testCase.turns) && testCase.turns.length > 0
+      ? testCase.turns.map((s) => String(s ?? "").trim())
+      : [testCase.input_message?.trim() ?? ""];
+
+  const turnCount = Math.max(
+    userMessages.length,
+    snapshots.A.responses.length,
+    snapshots.B.responses.length,
+    snapshots.C.responses.length
+  );
+
+  const sections: string[] = [];
+  sections.push("=== TEST CASE ===");
+  sections.push(`test_case_id: ${testCase.test_case_id}`);
+  if (testCase.img_url) sections.push(`Img url: ${testCase.img_url}`);
+  sections.push(`Expected states: ${testCase.expected_state}`);
+  sections.push(`Expected behavior: ${testCase.expected_behavior}`);
+  if (testCase.forbidden) sections.push(`Forbidden: ${testCase.forbidden}`);
+  if (testCase.notes) sections.push(`Notes: ${testCase.notes}`);
+  sections.push("");
+
+  const pushResponse = (label: "A" | "B" | "C") => {
+    sections.push(`=== RESPONSE ${label} ===`);
+    for (let i = 0; i < turnCount; i++) {
+      sections.push(`--- Turn ${i + 1} ---`);
+      sections.push(`User: ${userMessages[i] ?? "(no user message)"}`);
+      const bubbles = snapshots[label].responses[i] ?? [];
+      sections.push(`Evren response: ${bubbles.join("\n") || "(empty)"}`);
+      sections.push(`Detected flags: ${snapshots[label].flags[i] ?? ""}`);
+      sections.push("");
+    }
+  };
+
+  pushResponse("A");
+  pushResponse("B");
+  pushResponse("C");
+
+  return { message: sections.join("\n"), labelToVersionId };
 }
 
 /** Build the user message (INPUT DATA) for the evaluator. Always one format: test case metadata + CONVERSATION (turns of user input + Evren response + detected flags). */

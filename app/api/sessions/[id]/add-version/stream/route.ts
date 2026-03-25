@@ -1,8 +1,8 @@
 import { createClient } from "@/lib/supabase/server";
 import { callEvrenApi } from "@/lib/evren";
-import { runChampionChallenge } from "@/lib/comparator";
-import { loadComparatorSystemPrompt } from "@/lib/prompts";
-import type { TestCase, ComparisonData } from "@/lib/types";
+import { compareTriple, runRoundRobin } from "@/lib/comparator";
+import { loadComparatorSystemPrompt, loadComparatorTripleSystemPrompt } from "@/lib/prompts";
+import type { TestCase } from "@/lib/types";
 import type { TestCasesRow, EvalResultsRow, VersionEntry, DefaultSettingsRow } from "@/lib/db.types";
 
 const FALLBACK_EVREN_URL = process.env.NEXT_PUBLIC_EVREN_API_URL || "http://localhost:8000";
@@ -103,6 +103,12 @@ export async function POST(
   const testCaseById = new Map((testCaseRows ?? []).map((r) => [r.id, r as TestCasesRow]));
 
   const existingVersions = Array.isArray(rows[0]?.evren_responses) ? rows[0].evren_responses : [];
+  if (existingVersions.length >= 3) {
+    return new Response(JSON.stringify({ error: "Maximum of 3 versions allowed per session." }), {
+      status: 400,
+      headers: { "Content-Type": "application/json" },
+    });
+  }
   const versionName = body.version_name?.trim() || `Version ${existingVersions.length + 1}`;
   const newVersionId = crypto.randomUUID();
 
@@ -196,6 +202,7 @@ export async function POST(
           });
 
           const comparatorPrompt = loadComparatorSystemPrompt();
+          const comparatorTriplePrompt = loadComparatorTripleSystemPrompt();
 
           for (let ci = 0; ci < compRows.length; ci++) {
             const compRow = compRows[ci];
@@ -235,18 +242,24 @@ export async function POST(
               notes: tc.notes ?? undefined,
             };
 
-            const existingComparison = compRow.comparison as ComparisonData | null;
-
             try {
-              const compResult = await runChampionChallenge(
-                testCase,
-                versions,
-                newVersionId,
-                existingComparison,
-                apiKey,
-                comparatorModel,
-                comparatorPrompt
-              );
+              const compResult =
+                versions.length === 3
+                  ? await compareTriple(
+                      testCase,
+                      versions,
+                      [versions[0].version_id, versions[1].version_id, versions[2].version_id],
+                      apiKey,
+                      comparatorModel,
+                      comparatorTriplePrompt
+                    )
+                  : await runRoundRobin(
+                      testCase,
+                      versions,
+                      apiKey,
+                      comparatorModel,
+                      comparatorPrompt
+                    );
 
               await supabase
                 .from("eval_results")

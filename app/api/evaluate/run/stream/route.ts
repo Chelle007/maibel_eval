@@ -165,6 +165,7 @@ export async function POST(request: Request) {
         });
 
         const rows = (testCasesRows ?? []) as TestCasesRow[];
+        const versionId = crypto.randomUUID();
         for (let index = 0; index < rows.length; index++) {
           const row = rows[index];
           const testCase: TestCase = {
@@ -203,7 +204,7 @@ export async function POST(request: Request) {
           }
 
           const versionEntry: VersionEntry = {
-            version_id: crypto.randomUUID(),
+            version_id: versionId,
             version_name: "Version 1",
             turns: evrenOutputs.map((o) => ({
               response: Array.isArray(o.evren_response) ? o.evren_response.map(String) : [String(o.evren_response ?? "")],
