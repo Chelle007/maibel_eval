@@ -28,8 +28,7 @@ export async function POST(request: Request) {
 
   let body: {
     evren_model_api_url: string;
-    use_evaluator?: boolean;
-    use_summarizer?: boolean;
+    mode?: "single" | "comparison";
     model_name?: string;
     summarizer_model?: string;
     system_prompt?: string;
@@ -41,8 +40,9 @@ export async function POST(request: Request) {
   }
   const evrenModelApiUrl = body.evren_model_api_url;
   if (!evrenModelApiUrl?.trim()) return NextResponse.json({ error: "evren_model_api_url required" }, { status: 400 });
-  const useEvaluator = body.use_evaluator ?? false;
-  const useSummarizer = body.use_summarizer ?? false;
+  const sessionMode = body.mode === "comparison" ? "comparison" : "single";
+  const useEvaluator = sessionMode === "single";
+  const useSummarizer = sessionMode === "single";
   const apiKey = process.env.GEMINI_API_KEY;
   if ((useEvaluator || useSummarizer) && !apiKey) {
     return NextResponse.json({ error: "Missing GEMINI_API_KEY" }, { status: 500 });
@@ -60,6 +60,7 @@ export async function POST(request: Request) {
     user_id: userId,
     total_cost_usd: 0,
     summary: null,
+    mode: sessionMode,
     manually_edited: false,
   } as Database["public"]["Tables"]["test_sessions"]["Insert"];
   const { data: sessionRow, error: sessionError } = await supabase

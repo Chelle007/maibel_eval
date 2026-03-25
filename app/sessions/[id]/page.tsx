@@ -14,6 +14,7 @@ type Session = {
   total_cost_usd: number | null;
   total_eval_time_seconds?: number | null;
   summary: string | null;
+  mode?: "single" | "comparison";
   manually_edited: boolean;
   created_at?: string | null;
   users?: { full_name: string | null; email: string } | null;
@@ -104,6 +105,7 @@ type VersionEntry = {
 type ComparisonPairwise = {
   a_id: string;
   b_id: string;
+  raw_winner: "A" | "B" | "tie";
   winner_id: string | null;
   hard_failures: { A: string[]; B: string[] };
   reason: string;
@@ -218,6 +220,49 @@ export default function SessionDetailPage() {
   const router = useRouter();
   const versionEntries = useMemo(() => getVersionEntries(results), [results]);
   const versionCount = versionEntries.length;
+  const comparisonStats = useMemo(() => {
+    const statsMap = new Map<string, { version_id: string; version_name: string; wins: number; ties: number; losses: number }>();
+
+    for (const r of results) {
+      const versions = r.evren_responses ?? [];
+      const ranking = r.comparison?.ranking;
+      const comparisons = r.comparison?.comparisons ?? [];
+
+      for (const v of versions) {
+        if (!statsMap.has(v.version_id)) {
+          statsMap.set(v.version_id, { version_id: v.version_id, version_name: v.version_name, wins: 0, ties: 0, losses: 0 });
+        }
+      }
+
+      if (!ranking || ranking.length < 2) continue;
+
+      const championId = ranking[0];
+      const tiedWithChampion = new Set<string>([championId]);
+      for (const c of comparisons) {
+        if (c.winner_id === null && (c.a_id === championId || c.b_id === championId)) {
+          tiedWithChampion.add(c.a_id);
+          tiedWithChampion.add(c.b_id);
+        }
+      }
+
+      const isTie = tiedWithChampion.size > 1;
+
+      for (const v of versions) {
+        const entry = statsMap.get(v.version_id)!;
+        if (isTie && tiedWithChampion.has(v.version_id)) {
+          entry.ties++;
+        } else if (v.version_id === championId) {
+          entry.wins++;
+        } else {
+          entry.losses++;
+        }
+      }
+    }
+
+    return Array.from(statsMap.values())
+      .map((s) => ({ ...s, score: s.wins * 3 + s.ties * 1 }))
+      .sort((a, b) => b.score - a.score);
+  }, [results]);
 
   const filteredResults = useMemo(() => {
     const filtered = results.filter((r) => {
@@ -588,17 +633,19 @@ export default function SessionDetailPage() {
       <div className="flex flex-wrap items-center justify-between gap-2">
         <Link href="/sessions" className="text-sm text-stone-500 hover:text-stone-700">← Sessions</Link>
         <div className="flex items-center gap-2">
-          <button
-            type="button"
-            onClick={addVersion}
-            disabled={addingVersion || deleting}
-            className="inline-flex items-center gap-2 rounded-lg border border-emerald-300 bg-emerald-50 px-3 py-1.5 text-sm font-medium text-emerald-700 hover:bg-emerald-100 disabled:opacity-50"
-          >
-            <svg className="h-4 w-4 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden>
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
-            </svg>
-            {addingVersion ? "Adding version…" : "Add version"}
-          </button>
+          {session.mode !== "single" && (
+            <button
+              type="button"
+              onClick={addVersion}
+              disabled={addingVersion || deleting}
+              className="inline-flex items-center gap-2 rounded-lg border border-emerald-300 bg-emerald-50 px-3 py-1.5 text-sm font-medium text-emerald-700 hover:bg-emerald-100 disabled:opacity-50"
+            >
+              <svg className="h-4 w-4 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden>
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
+              </svg>
+              {addingVersion ? "Adding version…" : "Add version"}
+            </button>
+          )}
           <button
             type="button"
             onClick={deleteSession}
@@ -742,90 +789,137 @@ export default function SessionDetailPage() {
         </dl>
       </div>
 
-      <div className="mt-6 rounded-xl border border-stone-200 bg-white p-5 shadow-sm">
-        <div className="flex items-center justify-between gap-2">
+      {session.mode === "comparison" ? (
+        <div className="mt-6 rounded-xl border border-stone-200 bg-white p-5 shadow-sm">
           <h2 className="text-xl font-semibold tracking-tight text-stone-900">Session summary</h2>
-          {!editingSummary && (
-            <button
-              type="button"
-              onClick={() => {
-                setSummary(summaryForDisplay(session?.summary ?? ""));
-                setEditingSummary(true);
-              }}
-              className="inline-flex items-center gap-1.5 rounded-lg border border-stone-300 bg-stone-50 px-2.5 py-1.5 text-sm font-medium text-stone-700 shadow-sm hover:bg-stone-100 hover:border-stone-400"
-              title="Edit summary"
-            >
-              <span aria-hidden className="text-stone-500">✎</span>
-              Edit
-            </button>
+
+          {comparisonStats.length > 0 ? (
+            <>
+              <div className="mt-4 overflow-x-auto">
+                <table className="w-full text-sm">
+                  <thead>
+                    <tr className="border-b border-stone-200 text-left text-xs font-medium uppercase tracking-wide text-stone-400">
+                      <th className="pb-2 pr-4">#</th>
+                      <th className="pb-2 pr-4">Version</th>
+                      <th className="pb-2 pr-4 text-right">Wins</th>
+                      <th className="pb-2 pr-4 text-right">Ties</th>
+                      <th className="pb-2 pr-4 text-right">Losses</th>
+                      <th className="pb-2 text-right">Score</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {comparisonStats.map((v, i) => {
+                      const rank = i === 0 ? 1 : (v.score === comparisonStats[i - 1].score ? comparisonStats.findIndex((s) => s.score === v.score) + 1 : i + 1);
+                      const isTop = rank === 1;
+                      return (
+                        <tr key={v.version_id} className={isTop ? "bg-emerald-50/60" : i % 2 === 1 ? "bg-stone-50/40" : ""}>
+                          <td className="py-2 pr-4 font-medium text-stone-500">{rank}</td>
+                          <td className="py-2 pr-4 font-medium text-stone-900">
+                            {isTop && <span className="mr-1.5" aria-label="Champion">★</span>}
+                            {v.version_name}
+                          </td>
+                          <td className="py-2 pr-4 text-right tabular-nums text-emerald-700">{v.wins}</td>
+                          <td className="py-2 pr-4 text-right tabular-nums text-stone-500">{v.ties}</td>
+                          <td className="py-2 pr-4 text-right tabular-nums text-red-600">{v.losses}</td>
+                          <td className="py-2 text-right tabular-nums font-semibold text-stone-900">{v.score}</td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+              <p className="mt-2 text-xs text-stone-400">Scoring: Win = 3 pts, Tie = 1 pt, Loss = 0 pts</p>
+            </>
+          ) : (
+            <p className="mt-3 text-sm text-stone-400 italic">No comparison data yet. Add a version to start comparing.</p>
           )}
         </div>
-        {editingSummary ? (
-          <>
-            <div className="mt-1.5">
-              <SummaryEditor
-                value={summary}
-                onChange={setSummary}
-                placeholder="Optional summary or analysis of this run."
-              />
-            </div>
-            <div className="mt-3 flex flex-wrap gap-2">
+      ) : (
+        <div className="mt-6 rounded-xl border border-stone-200 bg-white p-5 shadow-sm">
+          <div className="flex items-center justify-between gap-2">
+            <h2 className="text-xl font-semibold tracking-tight text-stone-900">Session summary</h2>
+            {!editingSummary && (
               <button
                 type="button"
-                onClick={saveSummary}
-                disabled={savingSummary}
-                className="inline-flex items-center gap-1.5 rounded-lg bg-stone-900 px-4 py-2 text-sm font-medium text-white hover:bg-stone-800 disabled:opacity-50"
+                onClick={() => {
+                  setSummary(summaryForDisplay(session?.summary ?? ""));
+                  setEditingSummary(true);
+                }}
+                className="inline-flex items-center gap-1.5 rounded-lg border border-stone-300 bg-stone-50 px-2.5 py-1.5 text-sm font-medium text-stone-700 shadow-sm hover:bg-stone-100 hover:border-stone-400"
+                title="Edit summary"
               >
-                <Save className="h-4 w-4 shrink-0" aria-hidden />
-                {savingSummary ? "Saving…" : "Save summary"}
+                <span aria-hidden className="text-stone-500">✎</span>
+                Edit
               </button>
-              <button
-                type="button"
-                onClick={resummarize}
-                disabled={resummarizing}
-                className="inline-flex items-center gap-1.5 rounded-lg border border-emerald-300 bg-emerald-50 px-4 py-2 text-sm font-medium text-emerald-700 hover:bg-emerald-100 hover:border-emerald-400 disabled:opacity-50"
-              >
-                <RefreshCw className="h-4 w-4 shrink-0" aria-hidden />
-                {resummarizing ? "Resummarizing…" : "Resummarize"}
-              </button>
-              <button
-                type="button"
-                onClick={refineWording}
-                disabled={refiningWording}
-                className="inline-flex items-center gap-1.5 rounded-lg border border-violet-300 bg-violet-50 px-4 py-2 text-sm font-medium text-violet-700 hover:bg-violet-100 hover:border-violet-400 disabled:opacity-50"
-              >
-                <Pencil className="h-4 w-4 shrink-0" aria-hidden />
-                {refiningWording ? "Refining…" : "Refine wording"}
-              </button>
-              <button
-                type="button"
-                onClick={() => { setEditingSummary(false); setSummary(summaryForDisplay(session?.summary ?? "")); }}
-                className="inline-flex items-center gap-1.5 rounded-lg border border-stone-200 px-4 py-2 text-sm font-medium text-stone-600 hover:bg-stone-50"
-              >
-                <X className="h-4 w-4 shrink-0" aria-hidden />
-                Cancel
-              </button>
-            </div>
-          </>
-        ) : (
-          <div className="mt-3 min-h-[4rem] text-sm text-stone-700 prose prose-stone prose-sm max-w-none
-            [&_h1]:text-base [&_h1]:font-bold [&_h1]:tracking-tight [&_h1]:text-stone-900 [&_h1]:mt-0 [&_h1]:mb-1 [&_h1]:pb-2 [&_h1]:border-b [&_h1]:border-stone-200
-            [&_h2]:text-base [&_h2]:font-semibold [&_h2]:tracking-tight [&_h2]:text-stone-900 [&_h2]:mt-5 [&_h2]:mb-1.5 [&_h2]:first:mt-0
-            [&_h3]:text-sm [&_h3]:font-semibold [&_h3]:text-stone-800 [&_h3]:mt-3 [&_h3]:mb-1
-            [&_p]:mt-1 [&_p]:text-sm [&_p]:leading-relaxed
-            [&_ul]:mt-1.5 [&_ul]:list-disc [&_ul]:pl-5 [&_ul]:space-y-0.5 [&_ul]:text-sm
-            [&_ol]:mt-1.5 [&_ol]:list-decimal [&_ol]:pl-5 [&_ol]:space-y-0.5 [&_ol]:text-sm
-            [&_strong]:font-semibold [&_strong]:text-stone-800 [&_strong]:text-sm
-            [&_code]:font-mono [&_code]:text-sm [&_code]:bg-stone-100 [&_code]:px-1 [&_code]:rounded [&_code]:text-stone-800
-            [&_hr]:my-4 [&_hr]:border-stone-200">
-            {summary.trim() ? (
-              <ReactMarkdown>{summary}</ReactMarkdown>
-            ) : (
-              <p className="text-stone-400 italic">No summary for this session.</p>
             )}
           </div>
-        )}
-      </div>
+          {editingSummary ? (
+            <>
+              <div className="mt-1.5">
+                <SummaryEditor
+                  value={summary}
+                  onChange={setSummary}
+                  placeholder="Optional summary or analysis of this run."
+                />
+              </div>
+              <div className="mt-3 flex flex-wrap gap-2">
+                <button
+                  type="button"
+                  onClick={saveSummary}
+                  disabled={savingSummary}
+                  className="inline-flex items-center gap-1.5 rounded-lg bg-stone-900 px-4 py-2 text-sm font-medium text-white hover:bg-stone-800 disabled:opacity-50"
+                >
+                  <Save className="h-4 w-4 shrink-0" aria-hidden />
+                  {savingSummary ? "Saving…" : "Save summary"}
+                </button>
+                <button
+                  type="button"
+                  onClick={resummarize}
+                  disabled={resummarizing}
+                  className="inline-flex items-center gap-1.5 rounded-lg border border-emerald-300 bg-emerald-50 px-4 py-2 text-sm font-medium text-emerald-700 hover:bg-emerald-100 hover:border-emerald-400 disabled:opacity-50"
+                >
+                  <RefreshCw className="h-4 w-4 shrink-0" aria-hidden />
+                  {resummarizing ? "Resummarizing…" : "Resummarize"}
+                </button>
+                <button
+                  type="button"
+                  onClick={refineWording}
+                  disabled={refiningWording}
+                  className="inline-flex items-center gap-1.5 rounded-lg border border-violet-300 bg-violet-50 px-4 py-2 text-sm font-medium text-violet-700 hover:bg-violet-100 hover:border-violet-400 disabled:opacity-50"
+                >
+                  <Pencil className="h-4 w-4 shrink-0" aria-hidden />
+                  {refiningWording ? "Refining…" : "Refine wording"}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => { setEditingSummary(false); setSummary(summaryForDisplay(session?.summary ?? "")); }}
+                  className="inline-flex items-center gap-1.5 rounded-lg border border-stone-200 px-4 py-2 text-sm font-medium text-stone-600 hover:bg-stone-50"
+                >
+                  <X className="h-4 w-4 shrink-0" aria-hidden />
+                  Cancel
+                </button>
+              </div>
+            </>
+          ) : (
+            <div className="mt-3 min-h-[4rem] text-sm text-stone-700 prose prose-stone prose-sm max-w-none
+              [&_h1]:text-base [&_h1]:font-bold [&_h1]:tracking-tight [&_h1]:text-stone-900 [&_h1]:mt-0 [&_h1]:mb-1 [&_h1]:pb-2 [&_h1]:border-b [&_h1]:border-stone-200
+              [&_h2]:text-base [&_h2]:font-semibold [&_h2]:tracking-tight [&_h2]:text-stone-900 [&_h2]:mt-5 [&_h2]:mb-1.5 [&_h2]:first:mt-0
+              [&_h3]:text-sm [&_h3]:font-semibold [&_h3]:text-stone-800 [&_h3]:mt-3 [&_h3]:mb-1
+              [&_p]:mt-1 [&_p]:text-sm [&_p]:leading-relaxed
+              [&_ul]:mt-1.5 [&_ul]:list-disc [&_ul]:pl-5 [&_ul]:space-y-0.5 [&_ul]:text-sm
+              [&_ol]:mt-1.5 [&_ol]:list-decimal [&_ol]:pl-5 [&_ol]:space-y-0.5 [&_ol]:text-sm
+              [&_strong]:font-semibold [&_strong]:text-stone-800 [&_strong]:text-sm
+              [&_code]:font-mono [&_code]:text-sm [&_code]:bg-stone-100 [&_code]:px-1 [&_code]:rounded [&_code]:text-stone-800
+              [&_hr]:my-4 [&_hr]:border-stone-200">
+              {summary.trim() ? (
+                <ReactMarkdown>{summary}</ReactMarkdown>
+              ) : (
+                <p className="text-stone-400 italic">No summary for this session.</p>
+              )}
+            </div>
+          )}
+        </div>
+      )}
 
       {error && (
         <div className="mt-5 rounded-lg border border-red-200 bg-red-50 p-4 text-sm text-red-800">
@@ -1097,11 +1191,50 @@ export default function SessionDetailPage() {
                           {r.success ? "Pass" : "Fail"}
                         </span>
                       </>
-                    ) : (
-                      <span className="rounded-md bg-stone-100 px-2.5 py-0.5 text-xs font-medium text-stone-600">
-                        Not evaluated
-                      </span>
-                    )}
+                    ) : (() => {
+                      const ranking = r.comparison?.ranking;
+                      if (!ranking || ranking.length === 0) {
+                        return (
+                          <span className="rounded-md bg-stone-100 px-2.5 py-0.5 text-xs font-medium text-stone-600">
+                            Not evaluated
+                          </span>
+                        );
+                      }
+                      
+                      const topRankedId = ranking[0];
+                      // Find if there are ties with the top ranked ID
+                      const tiesWithTop = r.comparison?.comparisons.filter(c => 
+                        c.raw_winner === "tie" && (c.a_id === topRankedId || c.b_id === topRankedId)
+                      ) || [];
+                      
+                      // Collect all IDs that are tied for first place
+                      const topIds = new Set([topRankedId]);
+                      for (const tie of tiesWithTop) {
+                        topIds.add(tie.a_id);
+                        topIds.add(tie.b_id);
+                      }
+                      
+                      // Sort the IDs so they appear in the same order as the versions (e.g., Version 1 & Version 2)
+                      const versionEntries = r.evren_responses ?? [];
+                      const topNames = Array.from(topIds)
+                        .map(id => {
+                          const idx = versionEntries.findIndex(v => v.version_id === id);
+                          return { name: versionEntries[idx]?.version_name, idx };
+                        })
+                        .filter(item => item.name)
+                        .sort((a, b) => a.idx - b.idx)
+                        .map(item => item.name);
+
+                      return topNames.length > 0 ? (
+                        <span className="rounded-md bg-emerald-100 px-2.5 py-0.5 text-xs font-medium text-emerald-800">
+                          {topNames.join(" & ")}
+                        </span>
+                      ) : (
+                        <span className="rounded-md bg-stone-100 px-2.5 py-0.5 text-xs font-medium text-stone-600">
+                          Not evaluated
+                        </span>
+                      );
+                    })()}
                   </>
                 )}
               </div>
@@ -1312,33 +1445,33 @@ export default function SessionDetailPage() {
                     </p>
                   </div>
 
-                  {/* ---- */}
-                  <hr className="border-stone-200" />
-
                   {isEvaluated && (
-                    <div>
-                      <p className="text-xs font-medium uppercase tracking-wide text-stone-400">Analysis</p>
-                      {editingReasonId === r.eval_result_id ? (
-                        <div className="mt-2">
-                          <textarea
-                            rows={4}
-                            value={editReason}
-                            onChange={(e) => setEditReason(e.target.value)}
-                            className="block w-full rounded-lg border border-stone-200 bg-white px-3 py-2 text-sm text-stone-900 leading-relaxed focus:border-stone-400 focus:outline-none focus:ring-1 focus:ring-stone-400"
-                          />
-                        </div>
-                      ) : (
-                        <div className="mt-1 space-y-3">
-                          {(r.reason ?? "—")
-                            .split(/\n\n+/)
-                            .map((para, i) => (
-                              <p key={i} className="text-sm text-stone-600 leading-relaxed">
-                                {para.trim() || (i === 0 ? "—" : null)}
-                              </p>
-                            ))}
-                        </div>
-                      )}
-                    </div>
+                    <>
+                      <hr className="border-stone-200" />
+                      <div>
+                        <p className="text-xs font-medium uppercase tracking-wide text-stone-400">Analysis</p>
+                        {editingReasonId === r.eval_result_id ? (
+                          <div className="mt-2">
+                            <textarea
+                              rows={4}
+                              value={editReason}
+                              onChange={(e) => setEditReason(e.target.value)}
+                              className="block w-full rounded-lg border border-stone-200 bg-white px-3 py-2 text-sm text-stone-900 leading-relaxed focus:border-stone-400 focus:outline-none focus:ring-1 focus:ring-stone-400"
+                            />
+                          </div>
+                        ) : (
+                          <div className="mt-1 space-y-3">
+                            {(r.reason ?? "—")
+                              .split(/\n\n+/)
+                              .map((para, i) => (
+                                <p key={i} className="text-sm text-stone-600 leading-relaxed">
+                                  {para.trim() || (i === 0 ? "—" : null)}
+                                </p>
+                              ))}
+                          </div>
+                        )}
+                      </div>
+                    </>
                   )}
 
                   {r.comparison && r.comparison.ranking && r.comparison.ranking.length > 1 && (() => {

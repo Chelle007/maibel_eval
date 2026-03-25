@@ -22,7 +22,7 @@ export async function GET() {
   const supabase = await createClient();
   const { data: sessions, error } = await supabase
     .from("test_sessions")
-    .select("session_id, test_session_id, user_id, title, total_cost_usd, summary, manually_edited, created_at, users(full_name, email)")
+    .select("session_id, test_session_id, user_id, title, total_cost_usd, summary, mode, manually_edited, created_at, users(full_name, email)")
     .order("created_at", { ascending: false })
     .limit(100);
   if (error) return NextResponse.json({ error: error.message }, { status: 500 });
