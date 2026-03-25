@@ -26,19 +26,25 @@ export interface TestSessionsRow {
   manually_edited: boolean;
 }
 
-/** One Evren response item stored in eval_results.evren_responses array. */
-export interface EvrenResponseItem {
-  /** Single string (legacy) or array of strings (one per bubble). */
-  response: string | string[];
+/** One turn of Evren output within a version. */
+export interface VersionTurn {
+  response: string[];
   detected_flags: string;
+}
+
+/** One version stored in eval_results.evren_responses. */
+export interface VersionEntry {
+  version_id: string;
+  version_name: string;
+  turns: VersionTurn[];
 }
 
 export interface EvalResultsRow {
   eval_result_id: string;
   session_id: string;
   test_case_uuid: string;
-  /** Array of { response, detected_flags } per turn. */
-  evren_responses: EvrenResponseItem[];
+  /** Array of version objects, each containing its own turns. */
+  evren_responses: VersionEntry[];
   success: boolean;
   score: number;
   reason: string | null;
@@ -47,6 +53,8 @@ export interface EvalResultsRow {
   total_tokens: number | null;
   cost_usd: number | null;
   manually_edited: boolean;
+  /** Pairwise comparison data (champion-challenge results). */
+  comparison: Json | null;
 }
 
 export interface CategoriesRow {

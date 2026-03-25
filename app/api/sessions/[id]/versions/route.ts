@@ -1,49 +1,135 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
-import type { EvalResultsRow, EvrenResponseItem } from "@/lib/db.types";
+import { readjustComparison, recompareGaps } from "@/lib/comparator";
+import { loadComparatorSystemPrompt } from "@/lib/prompts";
+import type { TestCase, ComparisonData } from "@/lib/types";
+import type { EvalResultsRow, VersionEntry, TestCasesRow, DefaultSettingsRow } from "@/lib/db.types";
 
-type EvalResultLite = Pick<EvalResultsRow, "eval_result_id" | "evren_responses">;
-
-function toResponseVersions(value: EvrenResponseItem["response"] | undefined): string[][] {
-  if (typeof value === "string") return [[value]];
-  if (!Array.isArray(value)) return [];
-  if (value.every((v) => typeof v === "string")) {
-    return [value.map((v) => String(v ?? ""))];
-  }
-  return value.map((version) => {
-    if (Array.isArray(version)) return version.map((bubble) => String(bubble ?? ""));
-    return [String(version ?? "")];
-  });
-}
-
-function toStoredResponse(versions: string[][]): EvrenResponseItem["response"] {
-  if (versions.length <= 1) return versions[0] ?? [];
-  return versions as unknown as EvrenResponseItem["response"];
-}
-
-function toDetectedFlagsList(value: EvrenResponseItem["detected_flags"] | undefined): string[] {
-  if (typeof value !== "string") return [];
-  const trimmed = value.trim();
-  if (!trimmed) return [];
-  try {
-    const parsed = JSON.parse(trimmed) as unknown;
-    if (Array.isArray(parsed)) return parsed.map((v) => String(v ?? ""));
-  } catch {
-    /* legacy single-version string */
-  }
-  return [trimmed];
-}
+type EvalResultLite = Pick<EvalResultsRow, "eval_result_id" | "test_case_uuid" | "evren_responses" | "comparison">;
 
 export async function DELETE(
   request: Request,
   { params }: { params: Promise<{ id: string }> }
 ) {
   const { id } = await params;
-  const body = (await request.json().catch(() => ({}))) as { version_index?: number };
-  const versionIndex = Number(body.version_index);
-  if (!Number.isInteger(versionIndex) || versionIndex < 0) {
-    return NextResponse.json({ error: "version_index must be a non-negative integer" }, { status: 400 });
+  const body = (await request.json().catch(() => ({}))) as { version_id?: string };
+  const versionId = body.version_id;
+  if (!versionId || typeof versionId !== "string") {
+    return NextResponse.json({ error: "version_id must be a non-empty string" }, { status: 400 });
   }
+
+  const supabase = await createClient();
+  const { data: session, error: sessionError } = await supabase
+    .from("test_sessions")
+    .select("session_id")
+    .eq("test_session_id", id)
+    .maybeSingle();
+  if (sessionError || !session) {
+    return NextResponse.json({ error: sessionError?.message ?? "Session not found" }, { status: 404 });
+  }
+  const sessionId = (session as { session_id: string }).session_id;
+
+  const apiKey = process.env.GEMINI_API_KEY;
+
+  const { data: settingsRow } = await supabase
+    .from("default_settings")
+    .select("evaluator_model")
+    .limit(1)
+    .maybeSingle();
+  const comparatorModel =
+    (settingsRow as Pick<DefaultSettingsRow, "evaluator_model"> | null)?.evaluator_model?.trim() ||
+    "gemini-3-flash-preview";
+
+  const { data: evalRows, error: evalError } = await supabase
+    .from("eval_results")
+    .select("eval_result_id, test_case_uuid, evren_responses, comparison")
+    .eq("session_id", sessionId)
+    .order("eval_result_id");
+  if (evalError) return NextResponse.json({ error: evalError.message }, { status: 500 });
+
+  const rows = (evalRows ?? []) as EvalResultLite[];
+  if (rows.length === 0) {
+    return NextResponse.json({ error: "No test case rows found in this session." }, { status: 400 });
+  }
+
+  const testCaseIds = Array.from(new Set(rows.map((r) => r.test_case_uuid).filter(Boolean)));
+  const { data: testCaseRows } = await supabase.from("test_cases").select("*").in("id", testCaseIds);
+  const testCaseById = new Map((testCaseRows ?? []).map((r) => [r.id, r as TestCasesRow]));
+  const comparatorPrompt = apiKey ? loadComparatorSystemPrompt() : undefined;
+
+  for (const row of rows) {
+    const existing = Array.isArray(row.evren_responses) ? (row.evren_responses as VersionEntry[]) : [];
+    const updated = existing.filter((v) => v.version_id !== versionId);
+
+    let adjustedComparison = readjustComparison(
+      row.comparison as ComparisonData | null,
+      versionId
+    );
+
+    if (adjustedComparison && apiKey) {
+      const tc = testCaseById.get(row.test_case_uuid);
+      if (tc) {
+        const testCase: TestCase = {
+          test_case_id: tc.test_case_id,
+          type: tc.type ?? "single_turn",
+          input_message: tc.input_message,
+          img_url: tc.img_url ?? undefined,
+          turns: tc.turns ?? undefined,
+          expected_state: tc.expected_state ?? "",
+          expected_behavior: tc.expected_behavior ?? "",
+          forbidden: tc.forbidden ?? undefined,
+          notes: tc.notes ?? undefined,
+        };
+        try {
+          adjustedComparison = await recompareGaps(
+            adjustedComparison,
+            testCase,
+            updated,
+            apiKey,
+            comparatorModel,
+            comparatorPrompt
+          );
+        } catch (err) {
+          console.error("[versions/delete] recompareGaps failed for", tc.test_case_id, err);
+        }
+      }
+    }
+
+    await supabase
+      .from("eval_results")
+      .update({ evren_responses: updated, comparison: adjustedComparison } as never)
+      .eq("eval_result_id", row.eval_result_id);
+  }
+
+  const { data: updatedResults, error: resultsError } = await supabase
+    .from("eval_results")
+    .select("*, test_cases(id, test_case_id, input_message, expected_state, expected_behavior, title, type, turns)")
+    .eq("session_id", sessionId)
+    .order("eval_result_id");
+  if (resultsError) return NextResponse.json({ error: resultsError.message }, { status: 500 });
+
+  const resultsWithTestCaseId = (updatedResults ?? []).map((r: { test_cases?: Record<string, unknown> & { test_case_id?: string } }) => {
+    const tc = r.test_cases != null ? { ...r.test_cases } : undefined;
+    return { ...r, test_case_id: tc?.test_case_id, test_cases: tc };
+  });
+
+  return NextResponse.json({ results: resultsWithTestCaseId });
+}
+
+export async function PATCH(
+  request: Request,
+  { params }: { params: Promise<{ id: string }> }
+) {
+  const { id } = await params;
+  const body = (await request.json().catch(() => ({}))) as {
+    renames?: { version_id: string; version_name: string }[];
+  };
+  const renames = body.renames;
+  if (!Array.isArray(renames) || renames.length === 0) {
+    return NextResponse.json({ error: "renames must be a non-empty array of { version_id, version_name }" }, { status: 400 });
+  }
+
+  const renameMap = new Map(renames.map((r) => [r.version_id, r.version_name.trim()]));
 
   const supabase = await createClient();
   const { data: session, error: sessionError } = await supabase
@@ -63,36 +149,25 @@ export async function DELETE(
     .order("eval_result_id");
   if (evalError) return NextResponse.json({ error: evalError.message }, { status: 500 });
 
-  const rows = (evalRows ?? []) as EvalResultLite[];
-  if (rows.length === 0) {
-    return NextResponse.json({ error: "No test case rows found in this session." }, { status: 400 });
-  }
+  const rows = (evalRows ?? []) as Pick<EvalResultsRow, "eval_result_id" | "evren_responses">[];
 
   for (const row of rows) {
-    const existing = Array.isArray(row.evren_responses) ? row.evren_responses : [];
-    const updated: EvrenResponseItem[] = existing.map((item) => {
-      const responseVersions = toResponseVersions(item?.response);
-      const flagVersions = toDetectedFlagsList(item?.detected_flags);
-
-      const nextResponseVersions =
-        responseVersions.length > versionIndex
-          ? responseVersions.filter((_, idx) => idx !== versionIndex)
-          : responseVersions;
-      const nextFlagVersions =
-        flagVersions.length > versionIndex
-          ? flagVersions.filter((_, idx) => idx !== versionIndex)
-          : flagVersions;
-
-      return {
-        response: toStoredResponse(nextResponseVersions),
-        detected_flags: nextFlagVersions.length ? JSON.stringify(nextFlagVersions) : "",
-      };
+    const versions = Array.isArray(row.evren_responses) ? (row.evren_responses as VersionEntry[]) : [];
+    let changed = false;
+    const updated = versions.map((v) => {
+      const newName = renameMap.get(v.version_id);
+      if (newName !== undefined && newName !== v.version_name) {
+        changed = true;
+        return { ...v, version_name: newName };
+      }
+      return v;
     });
-
-    await supabase
-      .from("eval_results")
-      .update({ evren_responses: updated } as never)
-      .eq("eval_result_id", row.eval_result_id);
+    if (changed) {
+      await supabase
+        .from("eval_results")
+        .update({ evren_responses: updated } as never)
+        .eq("eval_result_id", row.eval_result_id);
+    }
   }
 
   const { data: updatedResults, error: resultsError } = await supabase
@@ -109,4 +184,3 @@ export async function DELETE(
 
   return NextResponse.json({ results: resultsWithTestCaseId });
 }
-

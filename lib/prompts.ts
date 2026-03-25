@@ -1,6 +1,7 @@
 import { readFileSync } from "fs";
 import path from "path";
 import type { TestCase, EvrenOutput } from "./types";
+import type { VersionEntry } from "./db.types";
 
 const PROMPTS_DIR = path.join(process.cwd(), "content", "prompts");
 
@@ -25,6 +26,89 @@ export function loadSummarizerSystemPrompt(): string {
   const content = readPrompt("summarizer_system_prompt.txt");
   const base = loadBaseSystemPrompt();
   return content.replace(/\{base_system_prompt\}/g, base);
+}
+
+/** Load comparator system prompt and inject base prompt. */
+export function loadComparatorSystemPrompt(): string {
+  const content = readPrompt("comparator_system_prompt.txt");
+  const base = loadBaseSystemPrompt();
+  return content.replace(/\{base_system_prompt\}/g, base);
+}
+
+/** Version data for one side of a pairwise comparison. */
+export interface VersionSnapshot {
+  /** Per-turn responses (array of bubble arrays). */
+  responses: string[][];
+  /** Per-turn detected flags. */
+  flags: string[];
+}
+
+/** Extract a single version's data by version_id. */
+function extractVersionSnapshot(
+  versions: VersionEntry[],
+  versionId: string
+): VersionSnapshot {
+  const entry = versions.find((v) => v.version_id === versionId);
+  if (!entry) return { responses: [], flags: [] };
+  return {
+    responses: entry.turns.map((t) => t.response),
+    flags: entry.turns.map((t) => t.detected_flags),
+  };
+}
+
+/** Build the user message for the comparator. Randomizes A/B to reduce position bias. */
+export function buildComparatorUserMessage(
+  testCase: TestCase,
+  versions: VersionEntry[],
+  aId: string,
+  bId: string
+): { message: string; aIsFirst: boolean } {
+  const aIsFirst = Math.random() < 0.5;
+  const firstId = aIsFirst ? aId : bId;
+  const secondId = aIsFirst ? bId : aId;
+
+  const firstSnapshot = extractVersionSnapshot(versions, firstId);
+  const secondSnapshot = extractVersionSnapshot(versions, secondId);
+
+  const userMessages: string[] =
+    testCase.type === "multi_turn" && Array.isArray(testCase.turns) && testCase.turns.length > 0
+      ? testCase.turns.map((s) => String(s ?? "").trim())
+      : [testCase.input_message?.trim() ?? ""];
+
+  const sections: string[] = [];
+
+  sections.push("=== TEST CASE ===");
+  sections.push(`test_case_id: ${testCase.test_case_id}`);
+  if (testCase.img_url) sections.push(`Img url: ${testCase.img_url}`);
+  sections.push(`Expected states: ${testCase.expected_state}`);
+  sections.push(`Expected behavior: ${testCase.expected_behavior}`);
+  if (testCase.forbidden) sections.push(`Forbidden: ${testCase.forbidden}`);
+  if (testCase.notes) sections.push(`Notes: ${testCase.notes}`);
+
+  const turnCount = Math.max(userMessages.length, firstSnapshot.responses.length);
+
+  sections.push("");
+  sections.push("=== RESPONSE A ===");
+  for (let i = 0; i < turnCount; i++) {
+    sections.push(`--- Turn ${i + 1} ---`);
+    sections.push(`User: ${userMessages[i] ?? "(no user message)"}`);
+    const bubbles = firstSnapshot.responses[i] ?? [];
+    sections.push(`Evren response: ${bubbles.join("\n") || "(empty)"}`);
+    sections.push(`Detected flags: ${firstSnapshot.flags[i] ?? ""}`);
+    sections.push("");
+  }
+
+  sections.push("=== RESPONSE B ===");
+  for (let i = 0; i < turnCount; i++) {
+    sections.push(`--- Turn ${i + 1} ---`);
+    sections.push(`User: ${userMessages[i] ?? "(no user message)"}`);
+    const bubbles = secondSnapshot.responses[i] ?? [];
+    sections.push(`Evren response: ${bubbles.join("\n") || "(empty)"}`);
+    sections.push(`Detected flags: ${secondSnapshot.flags[i] ?? ""}`);
+    sections.push("");
+  }
+
+  return { message: sections.join("\n"), aIsFirst };
 }
 
 /** Build the user message (INPUT DATA) for the evaluator. Always one format: test case metadata + CONVERSATION (turns of user input + Evren response + detected flags). */

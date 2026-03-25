@@ -5,7 +5,7 @@ import { evaluateOne } from "@/lib/evaluator";
 import { buildRichReport, runSummarizer } from "@/lib/summarizer";
 import { loadEvaluatorSystemPrompt, loadSummarizerSystemPrompt } from "@/lib/prompts";
 import type { TestCase, EvrenOutput, EvaluationResult } from "@/lib/types";
-import type { Database, TestCasesRow } from "@/lib/db.types";
+import type { Database, TestCasesRow, VersionEntry } from "@/lib/db.types";
 
 export const maxDuration = 300;
 
@@ -100,10 +100,15 @@ export async function POST(request: Request) {
       console.error("[evaluate/run] Evren error for", row.test_case_id, evrenErr instanceof Error ? evrenErr.message : evrenErr);
       continue;
     }
-    const evrenResponsesColumn = evrenOutputs.map((o) => ({
-      response: Array.isArray(o.evren_response) ? o.evren_response : [o.evren_response],
-      detected_flags: o.detected_states,
-    }));
+    const versionEntry: VersionEntry = {
+      version_id: crypto.randomUUID(),
+      version_name: "Version 1",
+      turns: evrenOutputs.map((o) => ({
+        response: Array.isArray(o.evren_response) ? o.evren_response.map(String) : [String(o.evren_response ?? "")],
+        detected_flags: String(o.detected_states ?? ""),
+      })),
+    };
+    const evrenResponsesColumn = [versionEntry];
     const lastOutput = evrenOutputs[evrenOutputs.length - 1] ?? { evren_response: "", detected_states: "" };
     if (useEvaluator) {
       const evalInput =

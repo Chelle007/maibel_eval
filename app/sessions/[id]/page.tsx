@@ -95,6 +95,26 @@ function summaryForDisplay(raw: string | null | undefined): string {
   return trimmed.trim();
 }
 
+type VersionEntry = {
+  version_id: string;
+  version_name: string;
+  turns: { response: string[]; detected_flags: string }[];
+};
+
+type ComparisonPairwise = {
+  a_id: string;
+  b_id: string;
+  winner_id: string | null;
+  hard_failures: { A: string[]; B: string[] };
+  reason: string;
+};
+
+type ComparisonData = {
+  champion_id: string;
+  ranking: string[];
+  comparisons: ComparisonPairwise[];
+} | null;
+
 type EvalResult = {
   eval_result_id: string;
   test_session_id: string;
@@ -107,9 +127,9 @@ type EvalResult = {
   total_tokens: number | null;
   cost_usd: number | null;
   manually_edited: boolean;
-  /** Array of { response, detected_flags } per turn. response is string or string[] (one per bubble). */
-  evren_responses?: { response: string | string[]; detected_flags: string }[] | null;
+  evren_responses?: VersionEntry[] | null;
   test_cases?: { input_message: string; expected_state: string; expected_behavior: string; title?: string | null; type?: "single_turn" | "multi_turn"; turns?: string[] | null } | null;
+  comparison?: ComparisonData;
 };
 
 type AddVersionProgress = {
@@ -136,54 +156,14 @@ function isResultEvaluated(r: EvalResult): boolean {
   return false;
 }
 
-function responseVersions(value: string | string[] | unknown): string[][] {
-  if (typeof value === "string") return [[value]];
-  if (!Array.isArray(value)) return [];
-
-  if (value.every((item) => typeof item === "string")) {
-    return [value.map((item) => String(item ?? ""))];
-  }
-
-  return value.map((version) => {
-    if (Array.isArray(version)) return version.map((bubble) => String(bubble ?? ""));
-    return [String(version ?? "")];
-  });
+function getVersionEntries(results: EvalResult[]): VersionEntry[] {
+  const versions = results[0]?.evren_responses;
+  return Array.isArray(versions) ? versions : [];
 }
 
-function maxVersionCount(results: EvalResult[]): number {
-  let max = 1;
-  for (const r of results) {
-    const items = Array.isArray(r.evren_responses) ? r.evren_responses : [];
-    for (const item of items) {
-      const count = responseVersions(item.response as unknown).length;
-      if (count > max) max = count;
-    }
-  }
-  return max;
-}
-
-function normalizeVersionLabels(labels: string[], count: number): string[] {
-  const n = Math.max(1, count);
-  const out: string[] = [];
-  for (let i = 0; i < n; i++) {
-    const label = String(labels[i] ?? "").trim();
-    out.push(label || `Version ${i + 1}`);
-  }
-  return out;
-}
-
-function detectedFlagsVersions(value: string | null | undefined): string[] {
-  const raw = String(value ?? "").trim();
-  if (!raw) return [];
-  try {
-    const parsed = JSON.parse(raw) as unknown;
-    if (Array.isArray(parsed)) {
-      return parsed.map((v) => String(v ?? ""));
-    }
-  } catch {
-    /* legacy single-version format */
-  }
-  return [raw];
+function getTurnCount(versions: VersionEntry[]): number {
+  if (versions.length === 0) return 0;
+  return versions[0].turns.length;
 }
 
 function prettyDetectedFlags(value: string): string {
@@ -218,11 +198,12 @@ export default function SessionDetailPage() {
   const [addingVersion, setAddingVersion] = useState(false);
   const [addVersionProgress, setAddVersionProgress] = useState<AddVersionProgress | null>(null);
   const [showAddVersionModal, setShowAddVersionModal] = useState(false);
-  const [versionLabels, setVersionLabels] = useState<string[]>(["Version 1"]);
-  const [draftVersionLabels, setDraftVersionLabels] = useState<string[]>(["Version 1"]);
+  const [draftVersions, setDraftVersions] = useState<{ version_id: string; version_name: string }[]>([]);
   const [newVersionLabel, setNewVersionLabel] = useState("Version 2");
-  const [editingVersionIndex, setEditingVersionIndex] = useState<number | null>(null);
-  const [deletingVersionIndex, setDeletingVersionIndex] = useState<number | null>(null);
+  const [runComparison, setRunComparison] = useState(true);
+  const [editingVersionId, setEditingVersionId] = useState<string | null>(null);
+  const [deletingVersionId, setDeletingVersionId] = useState<string | null>(null);
+  const [savingNames, setSavingNames] = useState(false);
   const [editingHeader, setEditingHeader] = useState(false);
   const [editSessionId, setEditSessionId] = useState("");
   const [editTitle, setEditTitle] = useState("");
@@ -235,7 +216,8 @@ export default function SessionDetailPage() {
   const [typeFilter, setTypeFilter] = useState<"" | "single_turn" | "multi_turn">("");
   const [sortBy, setSortBy] = useState<"id" | "score">("id");
   const router = useRouter();
-  const versionCount = useMemo(() => maxVersionCount(results), [results]);
+  const versionEntries = useMemo(() => getVersionEntries(results), [results]);
+  const versionCount = versionEntries.length;
 
   const filteredResults = useMemo(() => {
     const filtered = results.filter((r) => {
@@ -275,42 +257,10 @@ export default function SessionDetailPage() {
       .finally(() => setLoading(false));
   }, [id]);
 
-  useEffect(() => {
-    if (!id || typeof window === "undefined") return;
-    try {
-      const raw = window.localStorage.getItem(`version-labels:${id}`);
-      if (!raw) {
-        setVersionLabels((prev) => normalizeVersionLabels(prev, versionCount));
-        return;
-      }
-      const parsed = JSON.parse(raw) as unknown;
-      if (Array.isArray(parsed)) {
-        const labels = parsed.map((v) => String(v ?? ""));
-        setVersionLabels(normalizeVersionLabels(labels, versionCount));
-      } else {
-        setVersionLabels((prev) => normalizeVersionLabels(prev, versionCount));
-      }
-    } catch {
-      setVersionLabels((prev) => normalizeVersionLabels(prev, versionCount));
-    }
-  }, [id, versionCount]);
-
-  useEffect(() => {
-    setVersionLabels((prev) => {
-      const next = normalizeVersionLabels(prev, versionCount);
-      if (next.length === prev.length && next.every((v, i) => v === prev[i])) return prev;
-      return next;
-    });
-  }, [versionCount]);
-
-  useEffect(() => {
-    if (!id || typeof window === "undefined") return;
-    try {
-      window.localStorage.setItem(`version-labels:${id}`, JSON.stringify(versionLabels));
-    } catch {
-      /* ignore */
-    }
-  }, [id, versionLabels]);
+  function getVersionLabel(versionId: string): string {
+    const entry = versionEntries.find((v) => v.version_id === versionId);
+    return entry?.version_name ?? "Unknown";
+  }
 
   function saveResultEdits(r: EvalResult) {
     if (editingReasonId !== r.eval_result_id) return;
@@ -350,24 +300,37 @@ export default function SessionDetailPage() {
   }
 
   function addVersion() {
-    const existing = normalizeVersionLabels(versionLabels, versionCount);
-    setDraftVersionLabels(existing);
-    setNewVersionLabel(`Version ${existing.length + 1}`);
-    setEditingVersionIndex(null);
+    const drafts = versionEntries.map((v) => ({ version_id: v.version_id, version_name: v.version_name }));
+    setDraftVersions(drafts);
+    const existingLower = new Set(drafts.map((d) => d.version_name.toLowerCase()));
+    let nextNum = drafts.length + 1;
+    while (existingLower.has(`version ${nextNum}`)) nextNum++;
+    setNewVersionLabel(`Version ${nextNum}`);
+    setEditingVersionId(null);
     setShowAddVersionModal(true);
   }
 
-  function getVersionLabel(idx: number): string {
-    return versionLabels[idx] ?? `Version ${idx + 1}`;
-  }
-
   async function confirmAddVersion() {
-    const cleanedExisting = draftVersionLabels.map((label, i) => {
-      const trimmed = String(label ?? "").trim();
-      return trimmed || `Version ${i + 1}`;
-    });
-    const cleanedNewVersionLabel = newVersionLabel.trim() || `Version ${cleanedExisting.length + 1}`;
-    setVersionLabels(cleanedExisting);
+    const cleanedNewVersionLabel = newVersionLabel.trim() || `Version ${draftVersions.length + 1}`;
+
+    // Save any pending renames before adding version
+    const renames = draftVersions
+      .filter((d) => {
+        const original = versionEntries.find((v) => v.version_id === d.version_id);
+        return original && original.version_name !== d.version_name;
+      })
+      .map((d) => ({ version_id: d.version_id, version_name: d.version_name }));
+    if (renames.length > 0) {
+      try {
+        await fetch(`/api/sessions/${id}/versions`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ renames }),
+        });
+      } catch {
+        /* proceed anyway */
+      }
+    }
 
     if (typeof window !== "undefined" && "Notification" in window && Notification.permission === "default") {
       void Notification.requestPermission();
@@ -381,6 +344,7 @@ export default function SessionDetailPage() {
       const res = await fetch(`/api/sessions/${id}/add-version/stream`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ version_name: cleanedNewVersionLabel, run_comparison: runComparison }),
       });
       if (!res.ok) {
         const data = await res.json().catch(() => ({})) as { error?: string };
@@ -425,7 +389,6 @@ export default function SessionDetailPage() {
             } else if (data.type === "complete") {
               const nextResults = Array.isArray(data.results) ? data.results : [];
               setResults(nextResults);
-              setVersionLabels(normalizeVersionLabels([...cleanedExisting, cleanedNewVersionLabel], maxVersionCount(nextResults)));
               playCompletionSound();
               notifyVersionAdded();
               setAddVersionProgress(null);
@@ -447,30 +410,56 @@ export default function SessionDetailPage() {
     }
   }
 
-  function saveVersionNamesOnly() {
-    const cleanedExisting = draftVersionLabels.map((label, i) => {
-      const trimmed = String(label ?? "").trim();
-      return trimmed || `Version ${i + 1}`;
-    });
-    setVersionLabels(cleanedExisting);
-    setShowAddVersionModal(false);
+  async function saveVersionNamesOnly() {
+    const renames = draftVersions
+      .filter((d) => {
+        const original = versionEntries.find((v) => v.version_id === d.version_id);
+        return original && original.version_name !== d.version_name;
+      })
+      .map((d) => ({ version_id: d.version_id, version_name: d.version_name.trim() || d.version_name }));
+
+    if (renames.length === 0) {
+      setShowAddVersionModal(false);
+      return;
+    }
+
+    setSavingNames(true);
+    setError(null);
+    try {
+      const res = await fetch(`/api/sessions/${id}/versions`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ renames }),
+      });
+      const data = await res.json().catch(() => ({})) as { error?: string; results?: EvalResult[] };
+      if (!res.ok || data.error) {
+        throw new Error(data.error ?? `Request failed (${res.status})`);
+      }
+      if (Array.isArray(data.results)) setResults(data.results);
+      setShowAddVersionModal(false);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Failed to save version names");
+    } finally {
+      setSavingNames(false);
+    }
   }
 
-  async function deleteVersionAt(index: number) {
-    if (index < 0 || index >= draftVersionLabels.length) return;
-    if (draftVersionLabels.length <= 1) {
+  async function deleteVersionAt(versionId: string) {
+    const version = draftVersions.find((d) => d.version_id === versionId);
+    if (!version) return;
+    if (draftVersions.length <= 1) {
       setError("At least one version must remain.");
       return;
     }
-    if (!confirm(`Delete "${draftVersionLabels[index] || `Version ${index + 1}`}"?`)) return;
+    if (!confirm(`Delete "${version.version_name}"?`)) return;
 
-    setDeletingVersionIndex(index);
+    setDeletingVersionId(versionId);
     setError(null);
     try {
       const res = await fetch(`/api/sessions/${id}/versions`, {
         method: "DELETE",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ version_index: index }),
+        body: JSON.stringify({ version_id: versionId }),
       });
       const data = await res.json().catch(() => ({})) as { error?: string; results?: EvalResult[] };
       if (!res.ok || data.error) {
@@ -478,18 +467,17 @@ export default function SessionDetailPage() {
       }
       const nextResults = Array.isArray(data.results) ? data.results : [];
       setResults(nextResults);
-      setDraftVersionLabels((prev) => normalizeVersionLabels(prev.filter((_, i) => i !== index), maxVersionCount(nextResults)));
-      setVersionLabels((prev) => normalizeVersionLabels(prev.filter((_, i) => i !== index), maxVersionCount(nextResults)));
-      setEditingVersionIndex((prev) => {
-        if (prev == null) return prev;
-        if (prev === index) return null;
-        return prev > index ? prev - 1 : prev;
-      });
-      setNewVersionLabel((prev) => prev.trim() || `Version ${Math.max(1, maxVersionCount(nextResults)) + 1}`);
+      setDraftVersions((prev) => prev.filter((d) => d.version_id !== versionId));
+      if (editingVersionId === versionId) setEditingVersionId(null);
+      const nextEntries = getVersionEntries(nextResults);
+      const existingLower = new Set(nextEntries.map((v) => v.version_name.toLowerCase()));
+      let nextNum = nextEntries.length + 1;
+      while (existingLower.has(`version ${nextNum}`)) nextNum++;
+      setNewVersionLabel(`Version ${nextNum}`);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Failed to delete version");
     } finally {
-      setDeletingVersionIndex(null);
+      setDeletingVersionId(null);
     }
   }
 
@@ -855,44 +843,44 @@ export default function SessionDetailPage() {
             </p>
 
             <div className="mt-4 space-y-3">
-              {draftVersionLabels.map((label, idx) => (
-                <div key={idx}>
+              {draftVersions.map((draft, idx) => (
+                <div key={draft.version_id}>
                   <label className="block text-xs font-medium uppercase tracking-wide text-stone-400">
                     Existing version {idx + 1}
                   </label>
                   <div className="mt-1 flex items-center gap-2">
                     <input
                       type="text"
-                      value={label}
-                      disabled={editingVersionIndex !== idx}
+                      value={draft.version_name}
+                      disabled={editingVersionId !== draft.version_id}
                       onChange={(e) => {
                         const value = e.target.value;
-                        setDraftVersionLabels((prev) => prev.map((x, i) => (i === idx ? value : x)));
+                        setDraftVersions((prev) => prev.map((d) => d.version_id === draft.version_id ? { ...d, version_name: value } : d));
                       }}
                       className={`block w-full rounded-lg border px-3 py-2 text-sm focus:border-stone-400 focus:outline-none focus:ring-1 focus:ring-stone-400 ${
-                        editingVersionIndex === idx
+                        editingVersionId === draft.version_id
                           ? "border-stone-200 bg-white text-stone-900"
                           : "border-stone-200 bg-stone-50 text-stone-600"
                       }`}
                     />
                     <button
                       type="button"
-                      disabled={addingVersion || deletingVersionIndex != null}
+                      disabled={addingVersion || deletingVersionId != null}
                       onClick={() => {
-                        if (editingVersionIndex === idx) {
-                          const trimmed = draftVersionLabels[idx]?.trim();
-                          setDraftVersionLabels((prev) =>
-                            prev.map((x, i) => (i === idx ? (trimmed || `Version ${idx + 1}`) : x))
+                        if (editingVersionId === draft.version_id) {
+                          const trimmed = draft.version_name.trim();
+                          setDraftVersions((prev) =>
+                            prev.map((d) => d.version_id === draft.version_id ? { ...d, version_name: trimmed || `Version ${idx + 1}` } : d)
                           );
-                          setEditingVersionIndex(null);
+                          setEditingVersionId(null);
                         } else {
-                          setEditingVersionIndex(idx);
+                          setEditingVersionId(draft.version_id);
                         }
                       }}
                       className="inline-flex h-9 w-9 items-center justify-center rounded-lg border border-stone-200 bg-white text-stone-600 hover:bg-stone-50 disabled:opacity-50"
-                      title={editingVersionIndex === idx ? "Save version name" : "Edit version name"}
+                      title={editingVersionId === draft.version_id ? "Save version name" : "Edit version name"}
                     >
-                      {editingVersionIndex === idx ? (
+                      {editingVersionId === draft.version_id ? (
                         <Check className="h-4 w-4" aria-hidden />
                       ) : (
                         <Pencil className="h-4 w-4" aria-hidden />
@@ -900,8 +888,8 @@ export default function SessionDetailPage() {
                     </button>
                     <button
                       type="button"
-                      disabled={addingVersion || deletingVersionIndex != null || draftVersionLabels.length <= 1}
-                      onClick={() => deleteVersionAt(idx)}
+                      disabled={addingVersion || deletingVersionId != null || draftVersions.length <= 1}
+                      onClick={() => deleteVersionAt(draft.version_id)}
                       className="inline-flex h-9 w-9 items-center justify-center rounded-lg border border-red-200 bg-white text-red-600 hover:bg-red-50 disabled:opacity-50"
                       title="Delete version"
                     >
@@ -918,6 +906,28 @@ export default function SessionDetailPage() {
                   onChange={(e) => setNewVersionLabel(e.target.value)}
                   className="mt-1 block w-full rounded-lg border border-stone-200 bg-white px-3 py-2 text-sm text-stone-900 focus:border-stone-400 focus:outline-none focus:ring-1 focus:ring-stone-400"
                 />
+              </div>
+              <div className="flex items-center justify-between pt-1">
+                <div>
+                  <p className="text-sm font-medium text-stone-700">Run comparison</p>
+                  <p className="text-xs text-stone-500">Compare new version against current champion</p>
+                </div>
+                <button
+                  type="button"
+                  role="switch"
+                  aria-checked={runComparison}
+                  onClick={() => setRunComparison((prev) => !prev)}
+                  className={`relative inline-flex h-6 w-11 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors focus:outline-none ${
+                    runComparison ? "bg-emerald-500" : "bg-stone-300"
+                  }`}
+                >
+                  <span
+                    className={`pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow ring-0 transition ${
+                      runComparison ? "translate-x-5" : "translate-x-0.5"
+                    }`}
+                    aria-hidden
+                  />
+                </button>
               </div>
             </div>
 
@@ -954,11 +964,11 @@ export default function SessionDetailPage() {
               <button
                 type="button"
                 onClick={saveVersionNamesOnly}
-                disabled={addingVersion}
-                className="inline-flex items-center gap-1.5 rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-500 disabled:opacity-50"
+                disabled={addingVersion || savingNames}
+                className="inline-flex items-center gap-1.5 rounded-lg bg-stone-900 px-4 py-2 text-sm font-medium text-white hover:bg-stone-800 disabled:opacity-50"
               >
                 <Save className="h-4 w-4 shrink-0" aria-hidden />
-                Save
+                {savingNames ? "Saving…" : "Save"}
               </button>
               <button
                 type="button"
@@ -1141,14 +1151,34 @@ export default function SessionDetailPage() {
                   <div>
                     <p className="text-xs font-medium uppercase tracking-wide text-stone-400">Conversation</p>
                     <div className="mt-2 space-y-3">
-                      {r.evren_responses && r.evren_responses.length > 0 ? (
-                        r.evren_responses.map((evrenItem: { response: string | string[]; detected_flags: string }, i: number) => {
+                      {(() => {
+                        const versions = Array.isArray(r.evren_responses) ? r.evren_responses as VersionEntry[] : [];
+                        const turnCount = getTurnCount(versions);
+                        if (turnCount === 0 && versions.length === 0) {
+                          return (
+                            <div className="space-y-2">
+                              <div>
+                                <p className="text-xs font-medium text-stone-500">input:</p>
+                                <p className="mt-0.5 text-sm text-stone-700 leading-relaxed whitespace-pre-wrap">
+                                  {r.test_cases?.type === "multi_turn" && r.test_cases?.turns?.[0] != null
+                                    ? (r.test_cases.turns[0]?.trim() || "—")
+                                    : (typeof r.test_cases?.input_message === "string" ? r.test_cases.input_message : "—")}
+                                </p>
+                              </div>
+                              <div>
+                                <p className="text-xs font-medium text-stone-500">evren:</p>
+                                <p className="mt-0.5 text-sm text-stone-700 leading-relaxed">—</p>
+                              </div>
+                            </div>
+                          );
+                        }
+                        return Array.from({ length: turnCount }, (_, i) => {
                           const flagsKey = `${r.eval_result_id}-${i}`;
                           const flagsExpanded = expandedFlagsKeys.has(flagsKey);
-                          const flagVersions = detectedFlagsVersions(evrenItem.detected_flags);
-                          const hasFlags = flagVersions.length > 0;
-                          const versions = responseVersions(evrenItem.response as unknown);
-                          const singleVersionBubbles = versions[0] ?? [];
+                          const turnVersions = versions.map((v) => v.turns[i]);
+                          const hasFlags = turnVersions.some((t) => t?.detected_flags?.trim());
+                          const singleVersion = versions.length <= 1;
+                          const singleBubbles = turnVersions[0]?.response ?? [];
                           return (
                             <div key={i} className="space-y-2">
                               <div>
@@ -1161,11 +1191,11 @@ export default function SessionDetailPage() {
                               </div>
                               <div>
                                 <p className="text-xs font-medium text-stone-500">evren:</p>
-                                {versions.length <= 1 ? (
+                                {singleVersion ? (
                                   <div className="mt-1">
-                                    {singleVersionBubbles.length > 0 ? (
+                                    {singleBubbles.length > 0 ? (
                                       <div className="space-y-2">
-                                        {singleVersionBubbles.map((bubble, j) => (
+                                        {singleBubbles.map((bubble, j) => (
                                           <blockquote
                                             key={j}
                                             className="border-l-2 border-stone-300 bg-stone-50/80 pl-3 py-1.5 pr-2 text-sm text-stone-700 leading-relaxed whitespace-pre-wrap rounded-r"
@@ -1182,32 +1212,36 @@ export default function SessionDetailPage() {
                                   </div>
                                 ) : (
                                   <div className="mt-1 grid gap-2 sm:grid-cols-2">
-                                    {versions.map((versionBubbles, j) => (
-                                      <div
-                                        key={j}
-                                        className="rounded-lg border border-stone-200 bg-stone-50/80 px-3 py-2"
-                                      >
-                                        <p className="text-[11px] font-medium uppercase tracking-wide text-stone-400">
-                                          {getVersionLabel(j)}
-                                        </p>
-                                        <div className="mt-1 space-y-2">
-                                          {versionBubbles.length > 0 ? (
-                                            versionBubbles.map((bubble, bubbleIdx) => (
-                                              <blockquote
-                                                key={bubbleIdx}
-                                                className="border-l-2 border-stone-300 bg-white/80 pl-3 py-1.5 pr-2 text-sm text-stone-700 leading-relaxed whitespace-pre-wrap rounded-r"
-                                              >
-                                                {bubble?.trim() || "—"}
+                                    {versions.map((ver) => {
+                                      const turnData = ver.turns[i];
+                                      const bubbles = turnData?.response ?? [];
+                                      return (
+                                        <div
+                                          key={ver.version_id}
+                                          className="rounded-lg border border-stone-200 bg-stone-50/80 px-3 py-2"
+                                        >
+                                          <p className="text-[11px] font-medium uppercase tracking-wide text-stone-400">
+                                            {ver.version_name}
+                                          </p>
+                                          <div className="mt-1 space-y-2">
+                                            {bubbles.length > 0 ? (
+                                              bubbles.map((bubble, bubbleIdx) => (
+                                                <blockquote
+                                                  key={bubbleIdx}
+                                                  className="border-l-2 border-stone-300 bg-white/80 pl-3 py-1.5 pr-2 text-sm text-stone-700 leading-relaxed whitespace-pre-wrap rounded-r"
+                                                >
+                                                  {bubble?.trim() || "—"}
+                                                </blockquote>
+                                              ))
+                                            ) : (
+                                              <blockquote className="border-l-2 border-stone-300 bg-white/80 pl-3 py-1.5 pr-2 text-sm text-stone-700 leading-relaxed whitespace-pre-wrap rounded-r">
+                                                —
                                               </blockquote>
-                                            ))
-                                          ) : (
-                                            <blockquote className="border-l-2 border-stone-300 bg-white/80 pl-3 py-1.5 pr-2 text-sm text-stone-700 leading-relaxed whitespace-pre-wrap rounded-r">
-                                              —
-                                            </blockquote>
-                                          )}
+                                            )}
+                                          </div>
                                         </div>
-                                      </div>
-                                    ))}
+                                      );
+                                    })}
                                   </div>
                                 )}
                                 {hasFlags && (
@@ -1230,19 +1264,19 @@ export default function SessionDetailPage() {
                                     </button>
                                     {flagsExpanded && (
                                       <div className="mt-2">
-                                        {flagVersions.length <= 1 ? (
+                                        {singleVersion ? (
                                           <pre className="mt-1 whitespace-pre-wrap break-words text-xs text-stone-700 font-mono rounded-lg border border-stone-200 bg-white px-3 py-2">
-                                            {prettyDetectedFlags(flagVersions[0] ?? "")}
+                                            {prettyDetectedFlags(turnVersions[0]?.detected_flags ?? "")}
                                           </pre>
                                         ) : (
                                           <div className="mt-1 grid gap-2 sm:grid-cols-2">
-                                            {flagVersions.map((flags, idx) => (
-                                              <div key={idx} className="rounded-lg border border-stone-200 bg-white px-3 py-2">
+                                            {versions.map((ver) => (
+                                              <div key={ver.version_id} className="rounded-lg border border-stone-200 bg-white px-3 py-2">
                                                 <p className="text-[11px] font-medium uppercase tracking-wide text-stone-400">
-                                                  {getVersionLabel(idx)}
+                                                  {ver.version_name}
                                                 </p>
                                                 <pre className="mt-1 whitespace-pre-wrap break-words text-xs text-stone-700 font-mono">
-                                                  {prettyDetectedFlags(flags)}
+                                                  {prettyDetectedFlags(ver.turns[i]?.detected_flags ?? "")}
                                                 </pre>
                                               </div>
                                             ))}
@@ -1255,23 +1289,8 @@ export default function SessionDetailPage() {
                               </div>
                             </div>
                           );
-                        })
-                      ) : (
-                        <div className="space-y-2">
-                          <div>
-                            <p className="text-xs font-medium text-stone-500">input:</p>
-                            <p className="mt-0.5 text-sm text-stone-700 leading-relaxed whitespace-pre-wrap">
-                              {r.test_cases?.type === "multi_turn" && r.test_cases?.turns?.[0] != null
-                                ? (r.test_cases.turns[0]?.trim() || "—")
-                                : (typeof r.test_cases?.input_message === "string" ? r.test_cases.input_message : "—")}
-                            </p>
-                          </div>
-                          <div>
-                            <p className="text-xs font-medium text-stone-500">evren:</p>
-                            <p className="mt-0.5 text-sm text-stone-700 leading-relaxed">—</p>
-                          </div>
-                        </div>
-                      )}
+                        });
+                      })()}
                     </div>
                   </div>
 
@@ -1321,6 +1340,110 @@ export default function SessionDetailPage() {
                       )}
                     </div>
                   )}
+
+                  {r.comparison && r.comparison.ranking && r.comparison.ranking.length > 1 && (() => {
+                    const ranking: string[] = r.comparison!.ranking;
+                    const comps: ComparisonPairwise[] = r.comparison!.comparisons ?? [];
+
+                    const parent = new Map<string, string>();
+                    const find = (x: string): string => {
+                      if (!parent.has(x)) parent.set(x, x);
+                      while (parent.get(x) !== x) {
+                        parent.set(x, parent.get(parent.get(x)!)!);
+                        x = parent.get(x)!;
+                      }
+                      return x;
+                    };
+                    const union = (a: string, b: string) => {
+                      const ra = find(a), rb = find(b);
+                      if (ra !== rb) parent.set(rb, ra);
+                    };
+                    for (const c of comps) {
+                      if (c.winner_id === null) union(c.a_id, c.b_id);
+                    }
+
+                    const displayRank: number[] = [];
+                    const groupRank = new Map<string, number>();
+                    let nextRank = 1;
+                    for (const vId of ranking) {
+                      const root = find(vId);
+                      if (groupRank.has(root)) {
+                        displayRank.push(groupRank.get(root)!);
+                      } else {
+                        groupRank.set(root, nextRank);
+                        displayRank.push(nextRank);
+                        nextRank++;
+                      }
+                    }
+                    return (
+                    <>
+                      <hr className="border-stone-200" />
+                      <div>
+                        <p className="text-xs font-medium uppercase tracking-wide text-stone-400">Version comparison</p>
+                        <div className="mt-2 flex flex-wrap items-center gap-2">
+                          {ranking.map((vId: string, pos: number) => {
+                            const rank = displayRank[pos];
+                            const isChampion = rank === 1;
+                            return (
+                            <span
+                              key={pos}
+                              className={`inline-flex items-center gap-1.5 rounded-lg px-2.5 py-1 text-sm font-medium ${
+                                isChampion
+                                  ? "bg-amber-100 text-amber-800 border border-amber-200"
+                                  : "bg-stone-100 text-stone-600 border border-stone-200"
+                              }`}
+                            >
+                              <span className="text-xs font-bold">#{rank}</span>
+                              {getVersionLabel(vId)}
+                              {isChampion && <span className="text-amber-600 text-xs">★</span>}
+                            </span>
+                            );
+                          })}
+                        </div>
+                        {r.comparison.comparisons && r.comparison.comparisons.length > 0 && (
+                          <div className="mt-3 space-y-2">
+                            {r.comparison.comparisons.map((c: ComparisonPairwise, ci: number) => (
+                              <div key={ci} className="rounded-lg border border-stone-200 bg-stone-50/80 px-3 py-2">
+                                <div className="flex items-center gap-2 text-xs text-stone-500">
+                                  <span className="font-medium text-stone-700">{getVersionLabel(c.a_id)}</span>
+                                  <span>vs</span>
+                                  <span className="font-medium text-stone-700">{getVersionLabel(c.b_id)}</span>
+                                  <span className="text-stone-300">→</span>
+                                  <span className={`font-semibold ${
+                                    c.winner_id === null
+                                      ? "text-stone-600"
+                                      : "text-emerald-700"
+                                  }`}>
+                                    {c.winner_id === null
+                                      ? "Tie"
+                                      : `${getVersionLabel(c.winner_id)} wins`}
+                                  </span>
+                                </div>
+                                {c.reason && (
+                                  <p className="mt-1 text-sm text-stone-600 leading-relaxed">{c.reason}</p>
+                                )}
+                                {((c.hard_failures?.A?.length ?? 0) > 0 || (c.hard_failures?.B?.length ?? 0) > 0) && (
+                                  <div className="mt-1.5 flex flex-wrap gap-2 text-xs">
+                                    {(c.hard_failures?.A ?? []).map((f: string, fi: number) => (
+                                      <span key={`a-${fi}`} className="rounded bg-red-100 px-1.5 py-0.5 text-red-700">
+                                        {getVersionLabel(c.a_id)}: {f}
+                                      </span>
+                                    ))}
+                                    {(c.hard_failures?.B ?? []).map((f: string, fi: number) => (
+                                      <span key={`b-${fi}`} className="rounded bg-red-100 px-1.5 py-0.5 text-red-700">
+                                        {getVersionLabel(c.b_id)}: {f}
+                                      </span>
+                                    ))}
+                                  </div>
+                                )}
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    </>
+                    );
+                  })()}
                 </>
               )}
             </div>

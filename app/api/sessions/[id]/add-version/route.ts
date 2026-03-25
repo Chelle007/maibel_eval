@@ -1,53 +1,35 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import { callEvrenApi } from "@/lib/evren";
-import type { TestCase } from "@/lib/types";
-import type { TestCasesRow, EvalResultsRow, EvrenResponseItem } from "@/lib/db.types";
+import { runChampionChallenge } from "@/lib/comparator";
+import { loadComparatorSystemPrompt } from "@/lib/prompts";
+import type { TestCase, ComparisonData } from "@/lib/types";
+import type { TestCasesRow, EvalResultsRow, VersionEntry, DefaultSettingsRow } from "@/lib/db.types";
 
 const FALLBACK_EVREN_URL = process.env.NEXT_PUBLIC_EVREN_API_URL || "http://localhost:8000";
 
-type EvalResultLite = Pick<EvalResultsRow, "eval_result_id" | "test_case_uuid" | "evren_responses">;
-
-function toResponseVersions(value: EvrenResponseItem["response"] | undefined): string[][] {
-  if (typeof value === "string") return [[value]];
-  if (!Array.isArray(value)) return [];
-  if (value.every((v) => typeof v === "string")) {
-    return [value.map((v) => String(v ?? ""))];
-  }
-  return value.map((version) => {
-    if (Array.isArray(version)) return version.map((bubble) => String(bubble ?? ""));
-    return [String(version ?? "")];
-  });
-}
-
-function toStoredResponse(versions: string[][]): EvrenResponseItem["response"] {
-  if (versions.length <= 1) {
-    return versions[0] ?? [];
-  }
-  return versions as unknown as EvrenResponseItem["response"];
-}
-
-function toDetectedFlagsList(value: EvrenResponseItem["detected_flags"] | undefined): string[] {
-  if (typeof value !== "string") return [];
-  const trimmed = value.trim();
-  if (!trimmed) return [];
-  try {
-    const parsed = JSON.parse(trimmed) as unknown;
-    if (Array.isArray(parsed)) {
-      return parsed.map((v) => String(v ?? ""));
-    }
-  } catch {
-    /* treat as single-version legacy string */
-  }
-  return [trimmed];
-}
+type EvalResultLite = Pick<EvalResultsRow, "eval_result_id" | "test_case_uuid" | "evren_responses" | "comparison">;
 
 export async function POST(
-  _request: Request,
+  request: Request,
   { params }: { params: Promise<{ id: string }> }
 ) {
   const { id } = await params;
+
+  let body: { version_name?: string; run_comparison?: boolean } = {};
+  try {
+    body = await request.json();
+  } catch {
+    /* empty body is fine */
+  }
+  const runComparison = body.run_comparison ?? false;
+
   const supabase = await createClient();
+
+  const apiKey = process.env.GEMINI_API_KEY;
+  if (runComparison && !apiKey) {
+    return NextResponse.json({ error: "Missing GEMINI_API_KEY (required for comparison)" }, { status: 500 });
+  }
 
   const { data: session, error: sessionError } = await supabase
     .from("test_sessions")
@@ -62,15 +44,16 @@ export async function POST(
 
   const { data: settingsRow } = await supabase
     .from("default_settings")
-    .select("evren_api_url")
+    .select("evren_api_url, evaluator_model")
     .limit(1)
     .maybeSingle();
-  const evrenModelApiUrl =
-    (settingsRow as { evren_api_url?: string | null } | null)?.evren_api_url?.trim() || FALLBACK_EVREN_URL;
+  const settings = settingsRow as Pick<DefaultSettingsRow, "evren_api_url" | "evaluator_model"> | null;
+  const evrenModelApiUrl = settings?.evren_api_url?.trim() || FALLBACK_EVREN_URL;
+  const comparatorModel = settings?.evaluator_model?.trim() || "gemini-3-flash-preview";
 
   const { data: evalRows, error: evalError } = await supabase
     .from("eval_results")
-    .select("eval_result_id, test_case_uuid, evren_responses")
+    .select("eval_result_id, test_case_uuid, evren_responses, comparison")
     .eq("session_id", sessionId)
     .order("eval_result_id");
   if (evalError) {
@@ -91,6 +74,10 @@ export async function POST(
     return NextResponse.json({ error: tcError.message }, { status: 500 });
   }
   const testCaseById = new Map((testCaseRows ?? []).map((r) => [r.id, r as TestCasesRow]));
+
+  const existingVersions = Array.isArray(rows[0]?.evren_responses) ? rows[0].evren_responses : [];
+  const versionName = body.version_name?.trim() || `Version ${existingVersions.length + 1}`;
+  const newVersionId = crypto.randomUUID();
 
   for (const row of rows) {
     const tc = testCaseById.get(row.test_case_uuid);
@@ -115,39 +102,71 @@ export async function POST(
       continue;
     }
 
-    const existing = Array.isArray(row.evren_responses) ? row.evren_responses : [];
-    const mergedLength = Math.max(existing.length, newOutputs.length);
-    const mergedResponses: EvrenResponseItem[] = [];
-
-    for (let i = 0; i < mergedLength; i++) {
-      const existingItem = existing[i];
-      const previousVersions = toResponseVersions(existingItem?.response);
-      const previousFlagVersions = toDetectedFlagsList(existingItem?.detected_flags);
-      const newOut = newOutputs[i];
-      if (newOut) {
-        const nextVersion = Array.isArray(newOut.evren_response)
-          ? newOut.evren_response.map((v) => String(v ?? ""))
-          : [String(newOut.evren_response ?? "")];
-        const nextDetectedFlags = String(newOut.detected_states ?? "");
-        const mergedVersions = [...previousVersions, nextVersion];
-        mergedResponses.push({
-          response: toStoredResponse(mergedVersions),
-          detected_flags: JSON.stringify([...previousFlagVersions, nextDetectedFlags]),
-        });
-      } else {
-        mergedResponses.push({
-          response: toStoredResponse(previousVersions),
-          detected_flags: previousFlagVersions.length
-            ? JSON.stringify(previousFlagVersions)
-            : String(existingItem?.detected_flags ?? ""),
-        });
-      }
-    }
+    const existing = Array.isArray(row.evren_responses) ? (row.evren_responses as VersionEntry[]) : [];
+    const newVersion: VersionEntry = {
+      version_id: newVersionId,
+      version_name: versionName,
+      turns: newOutputs.map((o) => ({
+        response: Array.isArray(o.evren_response) ? o.evren_response.map(String) : [String(o.evren_response ?? "")],
+        detected_flags: String(o.detected_states ?? ""),
+      })),
+    };
+    const mergedResponses = [...existing, newVersion];
 
     await supabase
       .from("eval_results")
       .update({ evren_responses: mergedResponses } as never)
       .eq("eval_result_id", row.eval_result_id);
+  }
+
+  if (runComparison && apiKey) {
+    const { data: freshRows } = await supabase
+      .from("eval_results")
+      .select("eval_result_id, test_case_uuid, evren_responses, comparison")
+      .eq("session_id", sessionId)
+      .order("eval_result_id");
+    const compRows = (freshRows ?? []) as EvalResultLite[];
+    const comparatorPrompt = loadComparatorSystemPrompt();
+
+    for (const compRow of compRows) {
+      const tc = testCaseById.get(compRow.test_case_uuid);
+      if (!tc) continue;
+
+      const versions = Array.isArray(compRow.evren_responses) ? (compRow.evren_responses as VersionEntry[]) : [];
+      if (versions.length < 2) continue;
+
+      const testCase: TestCase = {
+        test_case_id: tc.test_case_id,
+        type: tc.type ?? "single_turn",
+        input_message: tc.input_message,
+        img_url: tc.img_url ?? undefined,
+        turns: tc.turns ?? undefined,
+        expected_state: tc.expected_state ?? "",
+        expected_behavior: tc.expected_behavior ?? "",
+        forbidden: tc.forbidden ?? undefined,
+        notes: tc.notes ?? undefined,
+      };
+
+      const existingComparison = compRow.comparison as ComparisonData | null;
+
+      try {
+        const compResult = await runChampionChallenge(
+          testCase,
+          versions,
+          newVersionId,
+          existingComparison,
+          apiKey,
+          comparatorModel,
+          comparatorPrompt
+        );
+        await supabase
+          .from("eval_results")
+          .update({ comparison: compResult } as never)
+          .eq("eval_result_id", compRow.eval_result_id);
+      } catch (compErr) {
+        console.error("[sessions/add-version] Comparison error for", tc.test_case_id, compErr);
+      }
+    }
   }
 
   const { data: updatedResults, error: resultsError } = await supabase
@@ -166,4 +185,3 @@ export async function POST(
 
   return NextResponse.json({ results: resultsWithTestCaseId });
 }
-
