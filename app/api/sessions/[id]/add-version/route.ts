@@ -1,9 +1,9 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import { callEvrenApi } from "@/lib/evren";
-import { runChampionChallenge } from "@/lib/comparator";
-import { loadComparatorSystemPrompt } from "@/lib/prompts";
-import type { TestCase, ComparisonData } from "@/lib/types";
+import { compareOverall } from "@/lib/comparator";
+import { loadComparatorOverallSystemPrompt } from "@/lib/prompts";
+import type { TestCase } from "@/lib/types";
 import type { TestCasesRow, EvalResultsRow, VersionEntry, DefaultSettingsRow } from "@/lib/db.types";
 
 const FALLBACK_EVREN_URL = process.env.NEXT_PUBLIC_EVREN_API_URL || "http://localhost:8000";
@@ -73,7 +73,8 @@ export async function POST(
   if (tcError) {
     return NextResponse.json({ error: tcError.message }, { status: 500 });
   }
-  const testCaseById = new Map((testCaseRows ?? []).map((r) => [r.id, r as TestCasesRow]));
+  const typedTestCaseRows = (testCaseRows ?? []) as TestCasesRow[];
+  const testCaseById = new Map(typedTestCaseRows.map((r) => [r.id, r]));
 
   const existingVersions = Array.isArray(rows[0]?.evren_responses) ? rows[0].evren_responses : [];
   const versionName = body.version_name?.trim() || `Version ${existingVersions.length + 1}`;
@@ -126,7 +127,7 @@ export async function POST(
       .eq("session_id", sessionId)
       .order("eval_result_id");
     const compRows = (freshRows ?? []) as EvalResultLite[];
-    const comparatorPrompt = loadComparatorSystemPrompt();
+    const comparatorPrompt = loadComparatorOverallSystemPrompt();
 
     for (const compRow of compRows) {
       const tc = testCaseById.get(compRow.test_case_uuid);
@@ -134,6 +135,8 @@ export async function POST(
 
       const versions = Array.isArray(compRow.evren_responses) ? (compRow.evren_responses as VersionEntry[]) : [];
       if (versions.length < 2) continue;
+      const versionIds = versions.map((v) => v.version_id).slice(0, 3);
+      if (versionIds.length < 2) continue;
 
       const testCase: TestCase = {
         test_case_id: tc.test_case_id,
@@ -147,14 +150,13 @@ export async function POST(
         notes: tc.notes ?? undefined,
       };
 
-      const existingComparison = compRow.comparison as ComparisonData | null;
-
       try {
-        const compResult = await runChampionChallenge(
+        const compResult = await compareOverall(
           testCase,
           versions,
-          newVersionId,
-          existingComparison,
+          versionIds.length === 2
+            ? ([versionIds[0], versionIds[1]] as [string, string])
+            : ([versionIds[0], versionIds[1], versionIds[2]] as [string, string, string]),
           apiKey,
           comparatorModel,
           comparatorPrompt

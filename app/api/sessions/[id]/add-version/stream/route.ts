@@ -1,7 +1,7 @@
 import { createClient } from "@/lib/supabase/server";
 import { callEvrenApi } from "@/lib/evren";
-import { compareTriple, runRoundRobin } from "@/lib/comparator";
-import { loadComparatorSystemPrompt, loadComparatorTripleSystemPrompt } from "@/lib/prompts";
+import { compareOverall } from "@/lib/comparator";
+import { loadComparatorOverallSystemPrompt } from "@/lib/prompts";
 import type { TestCase } from "@/lib/types";
 import type { TestCasesRow, EvalResultsRow, VersionEntry, DefaultSettingsRow } from "@/lib/db.types";
 
@@ -100,7 +100,7 @@ export async function POST(
       headers: { "Content-Type": "application/json" },
     });
   }
-  const testCaseById = new Map((testCaseRows ?? []).map((r) => [r.id, r as TestCasesRow]));
+  const testCaseById = new Map((testCaseRows ?? []).map((r) => [(r as TestCasesRow).id, r as TestCasesRow]));
 
   const existingVersions = Array.isArray(rows[0]?.evren_responses) ? rows[0].evren_responses : [];
   if (existingVersions.length >= 3) {
@@ -201,8 +201,7 @@ export async function POST(
             message: `Running comparisons for ${compTotal} test case${compTotal === 1 ? "" : "s"}…`,
           });
 
-          const comparatorPrompt = loadComparatorSystemPrompt();
-          const comparatorTriplePrompt = loadComparatorTripleSystemPrompt();
+          const comparatorPrompt = loadComparatorOverallSystemPrompt();
 
           for (let ci = 0; ci < compRows.length; ci++) {
             const compRow = compRows[ci];
@@ -221,6 +220,9 @@ export async function POST(
               });
               continue;
             }
+
+            const versionIds = versions.map((v) => v.version_id).slice(0, 3);
+            if (versionIds.length < 2) continue;
 
             sendEvent(controller, "progress", {
               stage: "comparing",
@@ -243,23 +245,16 @@ export async function POST(
             };
 
             try {
-              const compResult =
-                versions.length === 3
-                  ? await compareTriple(
-                      testCase,
-                      versions,
-                      [versions[0].version_id, versions[1].version_id, versions[2].version_id],
-                      apiKey,
-                      comparatorModel,
-                      comparatorTriplePrompt
-                    )
-                  : await runRoundRobin(
-                      testCase,
-                      versions,
-                      apiKey,
-                      comparatorModel,
-                      comparatorPrompt
-                    );
+              const compResult = await compareOverall(
+                testCase,
+                versions,
+                versionIds.length === 2
+                  ? ([versionIds[0], versionIds[1]] as [string, string])
+                  : ([versionIds[0], versionIds[1], versionIds[2]] as [string, string, string]),
+                apiKey,
+                comparatorModel,
+                comparatorPrompt
+              );
 
               await supabase
                 .from("eval_results")

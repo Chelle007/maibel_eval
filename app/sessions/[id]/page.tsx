@@ -102,24 +102,10 @@ type VersionEntry = {
   turns: { response: string[]; detected_flags: string }[];
 };
 
-type ComparisonPairwise = {
-  a_id: string;
-  b_id: string;
-  raw_winner: "A" | "B" | "tie";
-  winner_id: string | null;
-  hard_failures: { A: string[]; B: string[] };
-  reason: string;
-};
-
 type ComparisonData = {
-  champion_id: string;
-  ranking: string[];
-  comparisons: ComparisonPairwise[];
-  overall_reason?: string;
-  overall_hard_failures?: Record<string, string[]>;
-  overall_raw_winner?: "A" | "B" | "C" | "tie";
-  overall_winner_id?: string | null;
-  tiers?: string[][];
+  tiers: string[][];
+  overall_reason: string;
+  overall_hard_failures: Record<string, string[]>;
 } | null;
 
 type EvalResult = {
@@ -164,8 +150,13 @@ function isResultEvaluated(r: EvalResult): boolean {
 }
 
 function getVersionEntries(results: EvalResult[]): VersionEntry[] {
-  const versions = results[0]?.evren_responses;
-  return Array.isArray(versions) ? versions : [];
+  /** Use the row with the most versions — not only `results[0]`, which may have skipped an add (e.g. Evren error) while other rows have the new version. */
+  let best: VersionEntry[] = [];
+  for (const r of results) {
+    const v = r.evren_responses;
+    if (Array.isArray(v) && v.length > best.length) best = v;
+  }
+  return best;
 }
 
 function getTurnCount(versions: VersionEntry[]): number {
@@ -191,6 +182,9 @@ export default function SessionDetailPage() {
   const [results, setResults] = useState<EvalResult[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [aiEditingComparisonId, setAiEditingComparisonId] = useState<string | null>(null);
+  const [aiComparisonFeedback, setAiComparisonFeedback] = useState("");
+  const [applyingAiComparison, setApplyingAiComparison] = useState(false);
   const [editingReasonId, setEditingReasonId] = useState<string | null>(null);
   const [editReason, setEditReason] = useState("");
   const [editScore, setEditScore] = useState<number>(0);
@@ -244,8 +238,7 @@ export default function SessionDetailPage() {
 
     for (const r of results) {
       const versions = r.evren_responses ?? [];
-      const ranking = r.comparison?.ranking;
-      const comparisons = r.comparison?.comparisons ?? [];
+      const tiers = r.comparison?.tiers;
 
       for (const v of versions) {
         const cid = canonicalId(v.version_id);
@@ -254,25 +247,18 @@ export default function SessionDetailPage() {
         }
       }
 
-      if (!ranking || ranking.length < 2) continue;
-
-      const championId = ranking[0];
-      const tiedWithChampion = new Set<string>([championId]);
-      for (const c of comparisons) {
-        if (c.winner_id === null && (c.a_id === championId || c.b_id === championId)) {
-          tiedWithChampion.add(c.a_id);
-          tiedWithChampion.add(c.b_id);
-        }
-      }
-
-      const isTie = tiedWithChampion.size > 1;
+      if (!tiers || tiers.length === 0) continue;
+      const topTier = Array.isArray(tiers[0]) ? tiers[0].map(String) : [];
+      if (topTier.length === 0) continue;
+      const isTie = topTier.length > 1;
+      const topSet = new Set<string>(topTier);
 
       for (const v of versions) {
         const cid = canonicalId(v.version_id);
         const entry = statsMap.get(cid)!;
-        if (isTie && tiedWithChampion.has(v.version_id)) {
+        if (isTie && topSet.has(v.version_id)) {
           entry.ties++;
-        } else if (v.version_id === championId) {
+        } else if (!isTie && topSet.has(v.version_id)) {
           entry.wins++;
         } else {
           entry.losses++;
@@ -351,6 +337,54 @@ export default function SessionDetailPage() {
       })
       .catch((e) => setError(e.message))
       .finally(() => setSavingReason(false));
+  }
+
+  async function applyAiComparisonEdits(r: EvalResult) {
+    if (aiEditingComparisonId !== r.eval_result_id) return;
+    const feedback = aiComparisonFeedback.trim();
+    if (!feedback) {
+      setError("Please enter feedback for the AI edit.");
+      return;
+    }
+
+    const versions = (r.evren_responses ?? []).slice(0, 3).map((v) => ({
+      version_id: v.version_id,
+      version_name: v.version_name,
+    }));
+
+    setApplyingAiComparison(true);
+    setError(null);
+    try {
+      const res = await fetch(`/api/eval-results/${r.eval_result_id}/ai-edit-comparison`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          feedback,
+          current_comparison: r.comparison ?? null,
+          version_entries: versions,
+          test_case_id: r.test_case_id ?? null,
+          expected_state: r.test_cases?.expected_state ?? null,
+          expected_behavior: r.test_cases?.expected_behavior ?? null,
+        }),
+      });
+      const data = (await res.json().catch(() => ({}))) as { error?: string; comparison?: unknown };
+      if (!res.ok || data.error) throw new Error(data.error ?? `Request failed (${res.status})`);
+      if (!data.comparison) throw new Error("No comparison returned from AI edit.");
+
+      setResults((prev) =>
+        prev.map((x) =>
+          x.eval_result_id === r.eval_result_id
+            ? { ...x, comparison: data.comparison as EvalResult["comparison"], manually_edited: true }
+            : x
+        )
+      );
+      setAiEditingComparisonId(null);
+      setAiComparisonFeedback("");
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Failed to apply AI comparison edits");
+    } finally {
+      setApplyingAiComparison(false);
+    }
   }
 
   function deleteSession() {
@@ -1216,8 +1250,8 @@ export default function SessionDetailPage() {
                         </span>
                       </>
                     ) : (() => {
-                      const ranking = r.comparison?.ranking;
-                      if (!ranking || ranking.length === 0) {
+                      const tiers = r.comparison?.tiers;
+                      if (!tiers || tiers.length === 0 || !Array.isArray(tiers[0]) || tiers[0].length === 0) {
                         return (
                           <span className="rounded-md bg-stone-100 px-2.5 py-0.5 text-xs font-medium text-stone-600">
                             Not evaluated
@@ -1225,43 +1259,15 @@ export default function SessionDetailPage() {
                         );
                       }
                       
-                      const topRankedId = ranking[0];
-                      const overallHardFailures = (r.comparison as { overall_hard_failures?: unknown } | null)?.overall_hard_failures;
-                      const overallHardFailuresById =
-                        overallHardFailures && typeof overallHardFailures === "object" && overallHardFailures != null
-                          ? (overallHardFailures as Record<string, string[]>)
-                          : null;
+                      const overallHardFailuresById = r.comparison?.overall_hard_failures ?? null;
 
                       const hasHardFailures = (versionId: string): boolean => {
                         const overall = overallHardFailuresById?.[versionId];
                         if (Array.isArray(overall) && overall.length > 0) return true;
-
-                        const comps = r.comparison?.comparisons ?? [];
-                        for (const c of comps) {
-                          if (c.a_id === versionId && (c.hard_failures?.A?.length ?? 0) > 0) return true;
-                          if (c.b_id === versionId && (c.hard_failures?.B?.length ?? 0) > 0) return true;
-                        }
                         return false;
                       };
 
-                      // Collect all IDs that are tied for first place:
-                      // - Prefer tiers (3-way comparison)
-                      // - Fallback to pairwise ties with top ranked ID
-                      const topIds = new Set<string>();
-                      const tiers = (r.comparison as { tiers?: unknown } | null)?.tiers;
-                      if (Array.isArray(tiers) && Array.isArray(tiers[0])) {
-                        for (const id of tiers[0] as unknown[]) topIds.add(String(id));
-                      } else {
-                        topIds.add(topRankedId);
-                        const tiesWithTop =
-                          r.comparison?.comparisons.filter(
-                            (c) => c.raw_winner === "tie" && (c.a_id === topRankedId || c.b_id === topRankedId)
-                          ) ?? [];
-                        for (const tie of tiesWithTop) {
-                          topIds.add(tie.a_id);
-                          topIds.add(tie.b_id);
-                        }
-                      }
+                      const topIds = new Set<string>((tiers[0] ?? []).map(String));
                       
                       // Sort the IDs so they appear in the same order as the versions (e.g., Version 1 & Version 2)
                       const versionEntries = r.evren_responses ?? [];
@@ -1458,7 +1464,7 @@ export default function SessionDetailPage() {
                                             {prettyDetectedFlags(turnVersions[0]?.detected_flags ?? "")}
                                           </pre>
                                         ) : (
-                                          <div className="mt-1 flex gap-2 overflow-x-auto flex-nowrap">
+                                          <div className="mt-1 grid gap-2 sm:grid-cols-2">
                                             {versions.map((ver) => (
                                               <div key={ver.version_id} className="flex-1 min-w-0 rounded-lg border border-stone-200 bg-white px-3 py-2">
                                                 <p className="text-[11px] font-medium uppercase tracking-wide text-stone-400">
@@ -1530,229 +1536,179 @@ export default function SessionDetailPage() {
                     </>
                   )}
 
-                  {r.comparison && r.comparison.ranking && r.comparison.ranking.length > 1 && (() => {
-                    const allRanking: string[] = r.comparison!.ranking;
-                    const ranking: string[] = allRanking.slice(0, 3);
-                    const allowedVersionIds = new Set<string>(ranking);
-                    const comps: ComparisonPairwise[] = (r.comparison!.comparisons ?? []).filter(
-                      (c) => allowedVersionIds.has(c.a_id) && allowedVersionIds.has(c.b_id)
-                    );
-                    const overallReason = (r.comparison as { overall_reason?: unknown } | null)?.overall_reason;
-                    const overallReasonText = typeof overallReason === "string" ? overallReason.trim() : "";
-                    const overallHf = (r.comparison as { overall_hard_failures?: unknown } | null)?.overall_hard_failures;
-                    const overallHardFailures =
-                      overallHf && typeof overallHf === "object" && overallHf != null ? (overallHf as Record<string, string[]>) : null;
-                    const overallWinnerId = (r.comparison as { overall_winner_id?: unknown } | null)?.overall_winner_id;
-                    const overallWinnerIdValue = overallWinnerId === null || typeof overallWinnerId === "string" ? overallWinnerId : undefined;
-                    const tiersValue = (r.comparison as { tiers?: unknown } | null)?.tiers;
-                    const tiers =
-                      Array.isArray(tiersValue) && tiersValue.every((t) => Array.isArray(t))
-                        ? (tiersValue as string[][])
-                        : null;
+                  {r.comparison && Array.isArray(r.comparison.tiers) && r.comparison.tiers.length > 0 && (() => {
+                    const tiers = r.comparison!.tiers.map((t) => (Array.isArray(t) ? t.map(String) : [])).filter((t) => t.length > 0);
+                    const ranking = tiers.flat().slice(0, 3);
+                    if (ranking.length < 2) return null;
+
+                    const overallReasonText = String(r.comparison!.overall_reason ?? "").trim();
+                    const overallHardFailures = r.comparison!.overall_hard_failures ?? {};
+
+                    const tierIndexById = new Map<string, number>();
+                    for (let i = 0; i < tiers.length; i++) {
+                      for (const vid of tiers[i] ?? []) tierIndexById.set(String(vid), i);
+                    }
+
+                    const topTier = tiers[0] ?? [];
+                    const hasSingleWinner = topTier.length === 1;
+                    const winnerId = hasSingleWinner ? topTier[0] : null;
+
                     const hasOverallFailure = (vid: string): boolean => {
                       const list = overallHardFailures?.[vid];
                       return Array.isArray(list) && list.length > 0;
                     };
 
-                    const displayRank: number[] = (() => {
-                      if (tiers && tiers.length > 0) {
-                        const rankById = new Map<string, number>();
-                        for (let i = 0; i < tiers.length; i++) {
-                          const r = i + 1;
-                          for (const vid of tiers[i] ?? []) rankById.set(String(vid), r);
-                        }
-                        return ranking.map((vid, idx) => rankById.get(vid) ?? (idx + 1));
-                      }
-
-                      const parent = new Map<string, string>();
-                      const find = (x: string): string => {
-                        if (!parent.has(x)) parent.set(x, x);
-                        while (parent.get(x) !== x) {
-                          parent.set(x, parent.get(parent.get(x)!)!);
-                          x = parent.get(x)!;
-                        }
-                        return x;
-                      };
-                      const union = (a: string, b: string) => {
-                        const ra = find(a), rb = find(b);
-                        if (ra !== rb) parent.set(rb, ra);
-                      };
-                      for (const c of comps) {
-                        if (c.winner_id === null) union(c.a_id, c.b_id);
-                      }
-
-                      const out: number[] = [];
-                      const groupRank = new Map<string, number>();
-                      let nextRank = 1;
-                      for (const vId of ranking) {
-                        const root = find(vId);
-                        if (groupRank.has(root)) {
-                          out.push(groupRank.get(root)!);
-                        } else {
-                          groupRank.set(root, nextRank);
-                          out.push(nextRank);
-                          nextRank++;
-                        }
-                      }
-                      return out;
-                    })();
                     return (
-                    <>
-                      <hr className="border-stone-200" />
-                      <div>
-                        <p className="text-xs font-medium uppercase tracking-wide text-stone-400">Version comparison</p>
-                        <div className="mt-2 flex items-center gap-2">
-                        {ranking.map((vId: string, pos: number) => {
-                            const rank = displayRank[pos];
-                            const isChampion = rank === 1;
-                            const isFailed = hasOverallFailure(vId);
-                            return (
-                            <span
-                              key={pos}
-                              className={`inline-flex items-center gap-1.5 rounded-lg px-2.5 py-1 text-sm font-medium ${
-                                isFailed
-                                  ? "bg-red-100 text-red-800 border border-red-200"
-                                  : isChampion
-                                    ? "bg-amber-100 text-amber-800 border border-amber-200"
-                                    : "bg-stone-100 text-stone-600 border border-stone-200"
-                              }`}
-                            >
-                              <span className="text-xs font-bold">#{rank}</span>
-                              {getVersionLabel(vId)}
-                              {isChampion && (
-                                <span className={`${isFailed ? "text-red-700" : "text-amber-600"} text-xs`}>★</span>
+                      <>
+                        <hr className="border-stone-200" />
+                        <div>
+                          <div className="flex items-center justify-between gap-2">
+                            <p className="text-xs font-medium uppercase tracking-wide text-stone-400">Version comparison</p>
+                            <div className="flex items-center gap-2">
+                              {aiEditingComparisonId === r.eval_result_id ? (
+                                <>
+                                  <button
+                                    type="button"
+                                    onClick={() => applyAiComparisonEdits(r)}
+                                    disabled={applyingAiComparison}
+                                    className="inline-flex items-center gap-1.5 rounded-md bg-stone-900 px-3 py-1.5 text-xs font-medium text-white hover:bg-stone-800 disabled:opacity-50"
+                                    title="Apply (Cmd/Ctrl+Enter)"
+                                  >
+                                    {applyingAiComparison ? "Applying…" : "Apply"}
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={() => { setAiEditingComparisonId(null); setAiComparisonFeedback(""); }}
+                                    disabled={applyingAiComparison}
+                                    className="inline-flex items-center gap-1.5 rounded-md border border-stone-200 bg-white px-3 py-1.5 text-xs font-medium text-stone-700 hover:bg-stone-50 disabled:opacity-50"
+                                  >
+                                    Cancel
+                                  </button>
+                                </>
+                              ) : (
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    setAiEditingComparisonId(r.eval_result_id);
+                                    setAiComparisonFeedback("");
+                                  }}
+                                  className="inline-flex items-center gap-1.5 rounded-md border border-stone-200 bg-white px-3 py-1.5 text-xs font-medium text-stone-700 hover:bg-stone-50 hover:border-stone-300"
+                                  title="AI edit"
+                                >
+                                  <span aria-hidden className="text-stone-500">✦</span>
+                                  Edit
+                                </button>
                               )}
-                            </span>
-                            );
-                          })}
-                        </div>
-                        {ranking.length === 3 && overallReasonText ? (
-                          <>
+                            </div>
+                          </div>
+
+                          {aiEditingComparisonId === r.eval_result_id && (
+                            <div className="mt-2 rounded-md border border-stone-200 bg-white px-3 py-2">
+                              <textarea
+                                rows={2}
+                                value={aiComparisonFeedback}
+                                onChange={(e) => setAiComparisonFeedback(e.target.value)}
+                                onKeyDown={(e) => {
+                                  if ((e.metaKey || e.ctrlKey) && e.key === "Enter") {
+                                    e.preventDefault();
+                                    void applyAiComparisonEdits(r);
+                                  }
+                                }}
+                                placeholder='E.g. "2 > 3 = 1, and no hard failures. Update the reason accordingly."'
+                                className="block w-full rounded-md border border-stone-200 bg-white px-3 py-2 text-sm text-stone-900 leading-relaxed focus:border-stone-400 focus:outline-none focus:ring-1 focus:ring-stone-400"
+                                disabled={applyingAiComparison}
+                              />
+                            </div>
+                          )}
+
+                          <div className="mt-2 flex items-center gap-2">
+                            {ranking.map((vId: string) => {
+                              const tierIdx = tierIndexById.get(vId) ?? 0;
+                              const rank = tierIdx + 1;
+                              const isChampion = rank === 1 && hasSingleWinner && winnerId === vId;
+                              const isFailed = hasOverallFailure(vId);
+                              return (
+                                <span
+                                  key={vId}
+                                  className={`inline-flex items-center gap-1.5 rounded-lg px-2.5 py-1 text-sm font-medium ${
+                                    isFailed
+                                      ? "bg-red-100 text-red-800 border border-red-200"
+                                      : isChampion
+                                        ? "bg-amber-100 text-amber-800 border border-amber-200"
+                                        : "bg-stone-100 text-stone-600 border border-stone-200"
+                                  }`}
+                                >
+                                  <span className="text-xs font-bold">#{rank}</span>
+                                  {getVersionLabel(vId)}
+                                  {isChampion && (
+                                    <span className={`${isFailed ? "text-red-700" : "text-amber-600"} text-xs`}>★</span>
+                                  )}
+                                </span>
+                              );
+                            })}
+                          </div>
+
+                          {overallReasonText && (
                             <div className="mt-3 rounded-lg border border-stone-200 bg-stone-50/80 px-3 py-2">
                               <div className="flex items-center gap-2 text-xs text-stone-500">
                                 <span className="font-medium text-stone-700">Overall comparison</span>
                                 <span className="text-stone-300">→</span>
-                                {overallWinnerIdValue === null ? (
+                                {winnerId == null ? (
                                   <span className="font-semibold text-stone-600">Tie</span>
                                 ) : (
-                                  <span className={`font-semibold ${
-                                    hasOverallFailure((overallWinnerIdValue as string) ?? r.comparison!.champion_id)
-                                      ? "text-red-700"
-                                      : "text-emerald-700"
-                                  }`}>
-                                    {getVersionLabel((overallWinnerIdValue as string) ?? r.comparison!.champion_id)} wins
+                                  <span
+                                    className={`font-semibold ${
+                                      hasOverallFailure(winnerId) ? "text-red-700" : "text-emerald-700"
+                                    }`}
+                                  >
+                                    {getVersionLabel(winnerId)} wins
                                   </span>
                                 )}
                               </div>
                               <p className="mt-1 text-sm text-stone-600 leading-relaxed">{overallReasonText}</p>
                             </div>
+                          )}
 
-                            {overallHardFailures && ranking.some((vid) => hasOverallFailure(vid)) && (
-                              <div className="mt-2 rounded-lg border border-red-200 bg-red-50/70 px-3 py-2">
-                                <p className="text-xs font-medium uppercase tracking-wide text-red-700">Hard failures</p>
-                                <div className="mt-2 grid gap-2 sm:grid-cols-3">
-                                  {(() => {
-                                    const ordered = (r.evren_responses ?? [])
-                                      .slice(0, 3)
-                                      .map((v: VersionEntry) => v.version_id)
-                                      .filter((vid: string) => ranking.includes(vid));
-                                    const seen = new Set<string>();
-                                    const ids = [...ordered, ...ranking].filter((vid) => {
-                                      if (seen.has(vid)) return false;
-                                      seen.add(vid);
-                                      return true;
-                                    });
-                                    return ids;
-                                  })().map((vid: string) => {
-                                    const failures = overallHardFailures[vid] ?? [];
-                                    return (
-                                      <div key={vid} className="rounded-lg border border-red-200 bg-white/70 px-3 py-2">
-                                        <p className="text-[11px] font-medium uppercase tracking-wide text-red-700">
-                                          {getVersionLabel(vid)}
-                                        </p>
-                                        {failures.length > 0 ? (
-                                          <ul className="mt-1.5 space-y-1 text-xs text-red-700">
-                                            {failures.map((f: string, fi: number) => (
-                                              <li key={fi}>{f}</li>
-                                            ))}
-                                          </ul>
-                                        ) : (
-                                          <p className="mt-1.5 text-xs text-stone-500">—</p>
-                                        )}
-                                      </div>
-                                    );
-                                  })}
-                                </div>
-                              </div>
-                            )}
-                          </>
-                        ) : comps.length > 0 && (() => {
-                          const failuresById = new Map<string, string[]>();
-                          const pushFailures = (vid: string, list: string[]) => {
-                            if (!list || list.length === 0) return;
-                            const prev = failuresById.get(vid) ?? [];
-                            failuresById.set(vid, [...prev, ...list]);
-                          };
-
-                          for (const c of comps) {
-                            pushFailures(c.a_id, c.hard_failures?.A ?? []);
-                            pushFailures(c.b_id, c.hard_failures?.B ?? []);
-                          }
-
-                          const anyFailures = Array.from(failuresById.values()).some((l) => l.length > 0);
-
-                          return (
-                            <>
-                              <div className="mt-3 space-y-2">
-                                {comps.map((c: ComparisonPairwise, ci: number) => (
-                                  <div key={ci} className="rounded-lg border border-stone-200 bg-stone-50/80 px-3 py-2">
-                                    <div className="flex items-center gap-2 text-xs text-stone-500">
-                                      <span className="font-medium text-stone-700">{getVersionLabel(c.a_id)}</span>
-                                      <span>vs</span>
-                                      <span className="font-medium text-stone-700">{getVersionLabel(c.b_id)}</span>
-                                      <span className="text-stone-300">→</span>
-                                      <span className={`font-semibold ${c.winner_id === null ? "text-stone-600" : "text-emerald-700"}`}>
-                                        {c.winner_id === null ? "Tie" : `${getVersionLabel(c.winner_id)} wins`}
-                                      </span>
+                          {ranking.some((vid) => hasOverallFailure(vid)) && (
+                            <div className="mt-2 rounded-lg border border-red-200 bg-red-50/70 px-3 py-2">
+                              <p className="text-xs font-medium uppercase tracking-wide text-red-700">Hard failures</p>
+                              <div className="mt-2 grid gap-2 sm:grid-cols-3">
+                                {(() => {
+                                  const ordered = (r.evren_responses ?? [])
+                                    .slice(0, 3)
+                                    .map((v: VersionEntry) => v.version_id)
+                                    .filter((vid: string) => ranking.includes(vid));
+                                  const seen = new Set<string>();
+                                  const ids = [...ordered, ...ranking].filter((vid) => {
+                                    if (seen.has(vid)) return false;
+                                    seen.add(vid);
+                                    return true;
+                                  });
+                                  return ids;
+                                })().map((vid: string) => {
+                                  const failures = overallHardFailures[vid] ?? [];
+                                  return (
+                                    <div key={vid} className="rounded-lg border border-red-200 bg-white/70 px-3 py-2">
+                                      <p className="text-[11px] font-medium uppercase tracking-wide text-red-700">
+                                        {getVersionLabel(vid)}
+                                      </p>
+                                      {failures.length > 0 ? (
+                                        <ul className="mt-1.5 space-y-1 text-xs text-red-700">
+                                          {failures.map((f: string, fi: number) => (
+                                            <li key={fi}>{f}</li>
+                                          ))}
+                                        </ul>
+                                      ) : (
+                                        <p className="mt-1.5 text-xs text-stone-500">—</p>
+                                      )}
                                     </div>
-                                    {c.reason && (
-                                      <p className="mt-1 text-sm text-stone-600 leading-relaxed">{c.reason}</p>
-                                    )}
-                                  </div>
-                                ))}
+                                  );
+                                })}
                               </div>
-
-                              {anyFailures && (
-                                <div className="mt-2 rounded-lg border border-red-200 bg-red-50/70 px-3 py-2">
-                                  <p className="text-xs font-medium uppercase tracking-wide text-red-700">Hard failures</p>
-                                  <div className="mt-2 grid gap-2 sm:grid-cols-2">
-                                    {ranking.slice(0, 2).map((vid) => {
-                                      const failures = failuresById.get(vid) ?? [];
-                                      return (
-                                        <div key={vid} className="rounded-lg border border-red-200 bg-white/70 px-3 py-2">
-                                          <p className="text-[11px] font-medium uppercase tracking-wide text-red-700">
-                                            {getVersionLabel(vid)}
-                                          </p>
-                                          {failures.length > 0 ? (
-                                            <ul className="mt-1.5 space-y-1 text-xs text-red-700">
-                                              {failures.map((f, fi) => (
-                                                <li key={fi}>{f}</li>
-                                              ))}
-                                            </ul>
-                                          ) : (
-                                            <p className="mt-1.5 text-xs text-stone-500">—</p>
-                                          )}
-                                        </div>
-                                      );
-                                    })}
-                                  </div>
-                                </div>
-                              )}
-                            </>
-                          );
-                        })()}
-                      </div>
-                    </>
+                            </div>
+                          )}
+                        </div>
+                      </>
                     );
                   })()}
                 </>

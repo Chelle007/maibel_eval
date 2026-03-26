@@ -42,6 +42,58 @@ export function loadComparatorTripleSystemPrompt(): string {
   return content.replace(/\{base_system_prompt\}/g, base);
 }
 
+/** Load unified overall comparator system prompt and inject base prompt. */
+export function loadComparatorOverallSystemPrompt(): string {
+  const content = readPrompt("comparator_overall_system_prompt.txt");
+  const base = loadBaseSystemPrompt();
+  return content.replace(/\{base_system_prompt\}/g, base);
+}
+
+/** Load unified overall comparator EDIT system prompt and inject base prompt. */
+export function loadComparatorOverallEditSystemPrompt(): string {
+  const content = readPrompt("comparator_overall_edit_system_prompt.txt");
+  const base = loadBaseSystemPrompt();
+  return content.replace(/\{base_system_prompt\}/g, base);
+}
+
+export function buildComparatorOverallEditUserMessage(args: {
+  feedback: string;
+  version_entries: { version_id: string; version_name: string }[];
+  current_comparison: unknown | null;
+  test_case_id?: string | null;
+  expected_state?: string | null;
+  expected_behavior?: string | null;
+}): string {
+  const versions = Array.isArray(args.version_entries) ? args.version_entries : [];
+  const feedback = String(args.feedback ?? "").trim();
+  const sections: string[] = [];
+
+  sections.push("=== CONTEXT ===");
+  if (args.test_case_id) sections.push(`test_case_id: ${args.test_case_id}`);
+  if (args.expected_state) sections.push(`Expected states: ${String(args.expected_state)}`);
+  if (args.expected_behavior) sections.push(`Expected behavior: ${String(args.expected_behavior)}`);
+  sections.push("");
+
+  sections.push("=== AVAILABLE VERSIONS (authoritative mapping) ===");
+  for (let i = 0; i < versions.length; i++) {
+    const v = versions[i];
+    sections.push(`${i + 1}. ${v.version_name} | version_id: ${v.version_id}`);
+  }
+  sections.push("");
+
+  sections.push("=== CURRENT COMPARISON (for reference) ===");
+  try {
+    sections.push(JSON.stringify(args.current_comparison ?? null, null, 2));
+  } catch {
+    sections.push(String(args.current_comparison ?? "null"));
+  }
+  sections.push("");
+
+  sections.push("=== USER FEEDBACK (authoritative) ===");
+  sections.push(feedback || "(empty)");
+
+  return sections.join("\n");
+}
 /** Version data for one side of a pairwise comparison. */
 export interface VersionSnapshot {
   /** Per-turn responses (array of bubble arrays). */
@@ -179,6 +231,74 @@ export function buildComparatorTripleUserMessage(
   pushResponse("C");
 
   return { message: sections.join("\n"), labelToVersionId };
+}
+
+/** Build the user message for the unified overall comparator. Supports 2 or 3 versions. Randomizes A/B(/C) to reduce position bias. */
+export function buildComparatorOverallUserMessage(
+  testCase: TestCase,
+  versions: VersionEntry[],
+  versionIds: [string, string] | [string, string, string]
+): {
+  message: string;
+  labels: ("A" | "B" | "C")[];
+  labelToVersionId: Partial<Record<"A" | "B" | "C", string>>;
+} {
+  const ids = [...versionIds] as string[];
+  const shuffled = [...ids].sort(() => Math.random() - 0.5);
+  const labels: ("A" | "B" | "C")[] = shuffled.length === 2 ? ["A", "B"] : ["A", "B", "C"];
+
+  const labelToVersionId: Partial<Record<"A" | "B" | "C", string>> = {};
+  for (let i = 0; i < labels.length; i++) {
+    labelToVersionId[labels[i]] = shuffled[i];
+  }
+
+  const snapshots: Partial<Record<"A" | "B" | "C", VersionSnapshot>> = {
+    A: labelToVersionId.A ? extractVersionSnapshot(versions, labelToVersionId.A) : undefined,
+    B: labelToVersionId.B ? extractVersionSnapshot(versions, labelToVersionId.B) : undefined,
+    C: labelToVersionId.C ? extractVersionSnapshot(versions, labelToVersionId.C) : undefined,
+  };
+
+  const userMessages: string[] =
+    testCase.type === "multi_turn" && Array.isArray(testCase.turns) && testCase.turns.length > 0
+      ? testCase.turns.map((s) => String(s ?? "").trim())
+      : [testCase.input_message?.trim() ?? ""];
+
+  const turnCount = Math.max(
+    userMessages.length,
+    snapshots.A?.responses?.length ?? 0,
+    snapshots.B?.responses?.length ?? 0,
+    snapshots.C?.responses?.length ?? 0
+  );
+
+  const sections: string[] = [];
+  sections.push("=== TEST CASE ===");
+  sections.push(`test_case_id: ${testCase.test_case_id}`);
+  if (testCase.img_url) sections.push(`Img url: ${testCase.img_url}`);
+  sections.push(`Expected states: ${testCase.expected_state}`);
+  sections.push(`Expected behavior: ${testCase.expected_behavior}`);
+  if (testCase.forbidden) sections.push(`Forbidden: ${testCase.forbidden}`);
+  if (testCase.notes) sections.push(`Notes: ${testCase.notes}`);
+  sections.push("");
+
+  const pushResponse = (label: "A" | "B" | "C") => {
+    const snap = snapshots[label];
+    if (!snap) return;
+    sections.push(`=== RESPONSE ${label} ===`);
+    for (let i = 0; i < turnCount; i++) {
+      sections.push(`--- Turn ${i + 1} ---`);
+      sections.push(`User: ${userMessages[i] ?? "(no user message)"}`);
+      const bubbles = snap.responses[i] ?? [];
+      sections.push(`Evren response: ${bubbles.join("\n") || "(empty)"}`);
+      sections.push(`Detected flags: ${snap.flags[i] ?? ""}`);
+      sections.push("");
+    }
+  };
+
+  pushResponse("A");
+  pushResponse("B");
+  pushResponse("C");
+
+  return { message: sections.join("\n"), labels, labelToVersionId };
 }
 
 /** Build the user message (INPUT DATA) for the evaluator. Always one format: test case metadata + CONVERSATION (turns of user input + Evren response + detected flags). */

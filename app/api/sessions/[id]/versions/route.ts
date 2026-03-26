@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
-import { readjustComparison, recompareGaps } from "@/lib/comparator";
-import { loadComparatorSystemPrompt } from "@/lib/prompts";
+import { compareOverall } from "@/lib/comparator";
+import { loadComparatorOverallSystemPrompt } from "@/lib/prompts";
 import type { TestCase, ComparisonData } from "@/lib/types";
 import type { EvalResultsRow, VersionEntry, TestCasesRow, DefaultSettingsRow } from "@/lib/db.types";
 
@@ -54,19 +54,17 @@ export async function DELETE(
 
   const testCaseIds = Array.from(new Set(rows.map((r) => r.test_case_uuid).filter(Boolean)));
   const { data: testCaseRows } = await supabase.from("test_cases").select("*").in("id", testCaseIds);
-  const testCaseById = new Map((testCaseRows ?? []).map((r) => [r.id, r as TestCasesRow]));
-  const comparatorPrompt = apiKey ? loadComparatorSystemPrompt() : undefined;
+  const typedTestCaseRows = (testCaseRows ?? []) as TestCasesRow[];
+  const testCaseById = new Map(typedTestCaseRows.map((r) => [r.id, r]));
+  const comparatorPrompt = apiKey ? loadComparatorOverallSystemPrompt() : undefined;
 
   for (const row of rows) {
     const existing = Array.isArray(row.evren_responses) ? (row.evren_responses as VersionEntry[]) : [];
     const updated = existing.filter((v) => v.version_id !== versionId);
 
-    let adjustedComparison = readjustComparison(
-      row.comparison as ComparisonData | null,
-      versionId
-    );
-
-    if (adjustedComparison && apiKey) {
+    let adjustedComparison: ComparisonData | null = null;
+    const updatedIds = updated.map((v) => v.version_id).slice(0, 3);
+    if (updatedIds.length >= 2 && apiKey && comparatorPrompt) {
       const tc = testCaseById.get(row.test_case_uuid);
       if (tc) {
         const testCase: TestCase = {
@@ -81,16 +79,18 @@ export async function DELETE(
           notes: tc.notes ?? undefined,
         };
         try {
-          adjustedComparison = await recompareGaps(
-            adjustedComparison,
+          adjustedComparison = await compareOverall(
             testCase,
             updated,
+            updatedIds.length === 2
+              ? ([updatedIds[0], updatedIds[1]] as [string, string])
+              : ([updatedIds[0], updatedIds[1], updatedIds[2]] as [string, string, string]),
             apiKey,
             comparatorModel,
             comparatorPrompt
           );
         } catch (err) {
-          console.error("[versions/delete] recompareGaps failed for", tc.test_case_id, err);
+          console.error("[versions/delete] compareOverall failed for", tc.test_case_id, err);
         }
       }
     }

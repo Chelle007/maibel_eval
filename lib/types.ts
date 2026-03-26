@@ -68,10 +68,17 @@ export interface PairwiseResult {
 
 /** Stored comparison data for one eval_result (one test case in a session). */
 export interface ComparisonData {
-  /** version_id of the current best. */
-  champion_id: string;
-  /** Ordered version IDs, best first. */
-  ranking: string[];
-  /** Individual pairwise comparison results. */
-  comparisons: PairwiseResult[];
+  /**
+   * Tie tiers ordered from best to worst.
+   * Each tier is an array of version_ids (ties share the same tier).
+   *
+   * Examples:
+   * - 2 versions: [[v1], [v2]] or [[v1, v2]] (tie)
+   * - 3 versions: [[v2], [v1, v3]]
+   */
+  tiers: string[][];
+  /** Overall comparison reasoning (2-4 sentences). */
+  overall_reason: string;
+  /** Hard failures keyed by version_id. */
+  overall_hard_failures: Record<string, string[]>;
 }
