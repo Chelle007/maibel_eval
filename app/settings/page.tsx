@@ -189,7 +189,7 @@ export default function SettingsPage() {
                 type="text"
                 value={settings.evaluator_model ?? ""}
                 onChange={(e) => setSettings((s) => ({ ...s, evaluator_model: e.target.value }))}
-                placeholder="gemini-2.5-flash"
+                placeholder="gemini-3-flash-preview"
                 className={inputClass}
               />
             </div>
@@ -199,7 +199,7 @@ export default function SettingsPage() {
                 type="text"
                 value={settings.summarizer_model ?? ""}
                 onChange={(e) => setSettings((s) => ({ ...s, summarizer_model: e.target.value }))}
-                placeholder="gemini-2.5-flash"
+                placeholder="gemini-3-flash-preview"
                 className={inputClass}
               />
             </div>

@@ -60,6 +60,7 @@ CREATE TABLE test_sessions (
   total_cost_usd     DOUBLE PRECISION,
   total_eval_time_seconds DOUBLE PRECISION,
   summary            TEXT,
+  mode               TEXT NOT NULL DEFAULT 'single' CHECK (mode IN ('single', 'comparison')),
   manually_edited    BOOLEAN NOT NULL DEFAULT FALSE,
   created_at         TIMESTAMPTZ NOT NULL DEFAULT now(),
   updated_at         TIMESTAMPTZ NOT NULL DEFAULT now()

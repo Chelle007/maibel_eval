@@ -5,11 +5,13 @@ import { buildRichReport, runSummarizer } from "@/lib/summarizer";
 import { loadSummarizerSystemPrompt } from "@/lib/prompts";
 import type { TestCase, EvrenOutput, EvaluationResult } from "@/lib/types";
 
+import type { VersionEntry } from "@/lib/db.types";
+
 type EvalResultRow = {
   eval_result_id: string;
   session_id: string;
   test_case_uuid: string;
-  evren_responses: { response: string | string[]; detected_flags: string }[];
+  evren_responses: VersionEntry[];
   success: boolean;
   score: number;
   reason: string | null;
@@ -66,8 +68,9 @@ export async function POST(
     if (!tc) {
       throw new Error(`Missing test_cases for eval_result ${r.eval_result_id}`);
     }
-    const evrenList = Array.isArray(r.evren_responses) ? r.evren_responses : [];
-    const last = evrenList[evrenList.length - 1] ?? { response: "", detected_flags: "" };
+    const versions = Array.isArray(r.evren_responses) ? r.evren_responses : [];
+    const firstVersion = versions[0];
+    const lastTurn = firstVersion?.turns?.[firstVersion.turns.length - 1];
     const testCase: TestCase = {
       test_case_id: tc.test_case_id,
       type: tc.type ?? "single_turn",
@@ -80,8 +83,8 @@ export async function POST(
       img_url: tc.img_url ?? undefined,
     };
     const evrenOutput: EvrenOutput = {
-      evren_response: Array.isArray(last.response) ? last.response.join("\n") : (last.response ?? ""),
-      detected_states: last.detected_flags ?? "",
+      evren_response: lastTurn?.response?.join("\n") ?? "",
+      detected_states: lastTurn?.detected_flags ?? "",
     };
     const evalResult: EvaluationResult = {
       test_case_id: tc.test_case_id,
@@ -93,7 +96,7 @@ export async function POST(
     return buildRichReport(testCase, evrenOutput, evalResult);
   });
 
-  const modelName = "gemini-2.5-flash";
+  const modelName = "gemini-3-flash-preview";
   const summarizerResult = await runSummarizer(
     apiKey,
     richReports,

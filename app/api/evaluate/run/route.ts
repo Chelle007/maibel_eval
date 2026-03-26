@@ -5,14 +5,11 @@ import { evaluateOne } from "@/lib/evaluator";
 import { buildRichReport, runSummarizer } from "@/lib/summarizer";
 import { loadEvaluatorSystemPrompt, loadSummarizerSystemPrompt } from "@/lib/prompts";
 import type { TestCase, EvrenOutput, EvaluationResult } from "@/lib/types";
-import type { Database, TestCasesRow } from "@/lib/db.types";
+import type { Database, TestCasesRow, VersionEntry } from "@/lib/db.types";
 
 export const maxDuration = 300;
 
 export async function POST(request: Request) {
-  const apiKey = process.env.GEMINI_API_KEY;
-  if (!apiKey) return NextResponse.json({ error: "Missing GEMINI_API_KEY" }, { status: 500 });
-
   const supabase = await createClient();
   const { data: { user: authUser } } = await supabase.auth.getUser();
   const userId = authUser?.id ?? process.env.DEFAULT_USER_ID;
@@ -29,7 +26,13 @@ export async function POST(request: Request) {
     );
   }
 
-  let body: { evren_model_api_url: string; model_name?: string; system_prompt?: string };
+  let body: {
+    evren_model_api_url: string;
+    mode?: "single" | "comparison";
+    model_name?: string;
+    summarizer_model?: string;
+    system_prompt?: string;
+  };
   try {
     body = await request.json();
   } catch {
@@ -37,6 +40,13 @@ export async function POST(request: Request) {
   }
   const evrenModelApiUrl = body.evren_model_api_url;
   if (!evrenModelApiUrl?.trim()) return NextResponse.json({ error: "evren_model_api_url required" }, { status: 400 });
+  const sessionMode = body.mode === "comparison" ? "comparison" : "single";
+  const useEvaluator = sessionMode === "single";
+  const useSummarizer = sessionMode === "single";
+  const apiKey = process.env.GEMINI_API_KEY;
+  if ((useEvaluator || useSummarizer) && !apiKey) {
+    return NextResponse.json({ error: "Missing GEMINI_API_KEY" }, { status: 500 });
+  }
 
   const { data: testCasesRows, error: fetchError } = await supabase
     .from("test_cases")
@@ -50,6 +60,7 @@ export async function POST(request: Request) {
     user_id: userId,
     total_cost_usd: 0,
     summary: null,
+    mode: sessionMode,
     manually_edited: false,
   } as Database["public"]["Tables"]["test_sessions"]["Insert"];
   const { data: sessionRow, error: sessionError } = await supabase
@@ -65,12 +76,14 @@ export async function POST(request: Request) {
   const testSessionId = session.test_session_id;
   const evalStartMs = Date.now();
 
-  const modelName = body.model_name ?? "gemini-2.5-flash";
+  const modelName = body.model_name ?? "gemini-3-flash-preview";
+  const summarizerModel = body.summarizer_model ?? modelName;
   const systemPrompt = body.system_prompt ?? loadEvaluatorSystemPrompt();
   let totalCostUsd = 0;
   const richReportInputs: { testCase: TestCase; evrenOutput: EvrenOutput; result: EvaluationResult }[] = [];
 
   const rows = (testCasesRows ?? []) as TestCasesRow[];
+  const versionId = crypto.randomUUID();
   for (const row of rows) {
     const testCase: TestCase = {
       test_case_id: row.test_case_id,
@@ -89,46 +102,68 @@ export async function POST(request: Request) {
       console.error("[evaluate/run] Evren error for", row.test_case_id, evrenErr instanceof Error ? evrenErr.message : evrenErr);
       continue;
     }
-    const evrenResponsesColumn = evrenOutputs.map((o) => ({
-      response: Array.isArray(o.evren_response) ? o.evren_response : [o.evren_response],
-      detected_flags: o.detected_states,
-    }));
+    const versionEntry: VersionEntry = {
+      version_id: versionId,
+      version_name: "Version 1",
+      turns: evrenOutputs.map((o) => ({
+        response: Array.isArray(o.evren_response) ? o.evren_response.map(String) : [String(o.evren_response ?? "")],
+        detected_flags: String(o.detected_states ?? ""),
+      })),
+    };
+    const evrenResponsesColumn = [versionEntry];
     const lastOutput = evrenOutputs[evrenOutputs.length - 1] ?? { evren_response: "", detected_states: "" };
-    const evalInput =
-      testCase.type === "multi_turn" && evrenOutputs.length > 1 ? evrenOutputs : lastOutput;
+    if (useEvaluator) {
+      const evalInput =
+        testCase.type === "multi_turn" && evrenOutputs.length > 1 ? evrenOutputs : lastOutput;
+      const result = await evaluateOne(testCase, evalInput, apiKey as string, modelName, systemPrompt);
+      const costUsd = result.token_usage?.cost_usd ?? 0;
+      totalCostUsd += costUsd;
 
-    const result = await evaluateOne(testCase, evalInput, apiKey, modelName, systemPrompt);
-    const costUsd = result.token_usage?.cost_usd ?? 0;
-    totalCostUsd += costUsd;
+      richReportInputs.push({ testCase, evrenOutput: lastOutput, result });
 
-    richReportInputs.push({ testCase, evrenOutput: lastOutput, result });
-
-    const evalPayload = {
-      session_id: sessionId,
-      test_case_uuid: row.id,
-      evren_responses: evrenResponsesColumn,
-      success: result.success,
-      score: result.score,
-      reason: result.reason ?? null,
-      prompt_tokens: result.token_usage?.prompt_tokens ?? null,
-      completion_tokens: result.token_usage?.completion_tokens ?? null,
-      total_tokens: result.token_usage?.total_tokens ?? null,
-      cost_usd: costUsd || null,
-      manually_edited: false,
-    } as Database["public"]["Tables"]["eval_results"]["Insert"];
-    await supabase.from("eval_results").insert(evalPayload as any);
+      const evalPayload = {
+        session_id: sessionId,
+        test_case_uuid: row.id,
+        evren_responses: evrenResponsesColumn,
+        success: result.success,
+        score: result.score,
+        reason: result.reason ?? null,
+        prompt_tokens: result.token_usage?.prompt_tokens ?? null,
+        completion_tokens: result.token_usage?.completion_tokens ?? null,
+        total_tokens: result.token_usage?.total_tokens ?? null,
+        cost_usd: costUsd || null,
+        manually_edited: false,
+      } as Database["public"]["Tables"]["eval_results"]["Insert"];
+      await supabase.from("eval_results").insert(evalPayload as any);
+    } else {
+      const evalPayload = {
+        session_id: sessionId,
+        test_case_uuid: row.id,
+        evren_responses: evrenResponsesColumn,
+        // Placeholder row so conversation still appears in session details.
+        success: false,
+        score: 0,
+        reason: null,
+        prompt_tokens: null,
+        completion_tokens: null,
+        total_tokens: null,
+        cost_usd: null,
+        manually_edited: false,
+      } as Database["public"]["Tables"]["eval_results"]["Insert"];
+      await supabase.from("eval_results").insert(evalPayload as any);
+    }
   }
 
   let summary: string | null = null;
   let title: string | null = null;
-  if (richReportInputs.length > 0) {
+  if (useSummarizer && richReportInputs.length > 0) {
     const richReports = richReportInputs.map(({ testCase, evrenOutput, result }) =>
       buildRichReport(testCase, evrenOutput, result)
     );
     const summarizerResult = await runSummarizer(
-      apiKey,
+      apiKey as string,
       richReports,
-      modelName,
+      summarizerModel,
       loadSummarizerSystemPrompt()
     );
     totalCostUsd += summarizerResult.cost_usd;

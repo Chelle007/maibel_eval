@@ -92,7 +92,7 @@ function extractEvaluatorFieldsFallback(
   return obj;
 }
 
-const DEFAULT_MODEL = "gemini-2.5-flash";
+const DEFAULT_MODEL = "gemini-3-flash-preview";
 
 /** Run evaluator on one test case + Evren output(s). For multi_turn pass all outputs to evaluate whole conversation. */
 export async function evaluateOne(

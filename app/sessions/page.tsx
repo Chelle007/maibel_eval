@@ -10,6 +10,7 @@ type Session = {
   title: string | null;
   total_cost_usd: number | null;
   summary: string | null;
+  mode?: "single" | "comparison";
   manually_edited: boolean;
   created_at?: string | null;
   users?: { full_name: string | null; email: string } | null;
@@ -267,9 +268,18 @@ export default function SessionsPage() {
                     href={`/sessions/${s.test_session_id}`}
                     className="min-w-0 flex-1 py-4 pr-14 transition hover:bg-stone-50/50"
                   >
-                    <h3 className="font-semibold text-stone-900">
-                      {s.test_session_id} · {s.title?.trim() || "Untitled session"}
-                    </h3>
+                    <div className="flex flex-wrap items-center gap-2">
+                      <h3 className="font-semibold text-stone-900">
+                        {s.test_session_id} · {s.title?.trim() || "Untitled session"}
+                      </h3>
+                      <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium ${
+                        s.mode === "comparison"
+                          ? "bg-violet-50 text-violet-700"
+                          : "bg-stone-100 text-stone-600"
+                      }`}>
+                        {s.mode === "comparison" ? "Comparison" : "Single"}
+                      </span>
+                    </div>
                     <div className="mt-1 flex flex-wrap items-center gap-2 text-sm text-stone-600">
                       {s.created_at && (
                         <span className="inline-flex items-center gap-1">
@@ -292,12 +302,14 @@ export default function SessionsPage() {
                       )}
                     </div>
                     <p className="mt-1 flex flex-wrap items-center gap-2 text-sm text-stone-600">
-                      <span>Passed test cases: {s.passed_count ?? 0} / {s.total_count ?? 0}</span>
-                      {s.total_count != null && s.total_count > 0 && (
+                      {s.total_count != null && s.total_count > 0 ? (
                         <>
+                          <span>Passed test cases: {s.passed_count ?? 0} / {s.total_count}</span>
                           <span className="text-stone-400" aria-hidden>|</span>
                           <span>Score: {s.avg_score != null ? Number(s.avg_score).toFixed(2) : "—"}</span>
                         </>
+                      ) : (
+                        <span>Passed test cases: —</span>
                       )}
                     </p>
                   </Link>

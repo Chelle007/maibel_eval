@@ -23,22 +23,29 @@ export interface TestSessionsRow {
   total_cost_usd: number | null;
   total_eval_time_seconds: number | null;
   summary: string | null;
+  mode: "single" | "comparison";
   manually_edited: boolean;
 }
 
-/** One Evren response item stored in eval_results.evren_responses array. */
-export interface EvrenResponseItem {
-  /** Single string (legacy) or array of strings (one per bubble). */
-  response: string | string[];
+/** One turn of Evren output within a version. */
+export interface VersionTurn {
+  response: string[];
   detected_flags: string;
+}
+
+/** One version stored in eval_results.evren_responses. */
+export interface VersionEntry {
+  version_id: string;
+  version_name: string;
+  turns: VersionTurn[];
 }
 
 export interface EvalResultsRow {
   eval_result_id: string;
   session_id: string;
   test_case_uuid: string;
-  /** Array of { response, detected_flags } per turn. */
-  evren_responses: EvrenResponseItem[];
+  /** Array of version objects, each containing its own turns. */
+  evren_responses: VersionEntry[];
   success: boolean;
   score: number;
   reason: string | null;
@@ -47,6 +54,8 @@ export interface EvalResultsRow {
   total_tokens: number | null;
   cost_usd: number | null;
   manually_edited: boolean;
+  /** Pairwise comparison data (champion-challenge results). */
+  comparison: Json | null;
 }
 
 export interface CategoriesRow {
@@ -86,7 +95,7 @@ export interface Database {
   public: {
     Tables: {
       users: { Row: UsersRow; Insert: Omit<UsersRow, "user_id"> & { user_id?: string }; Update: Partial<UsersRow> };
-      test_sessions: { Row: TestSessionsRow; Insert: Omit<TestSessionsRow, "session_id" | "test_session_id"> & { session_id?: string; test_session_id?: string }; Update: Partial<TestSessionsRow> };
+      test_sessions: { Row: TestSessionsRow; Insert: Omit<TestSessionsRow, "session_id" | "test_session_id" | "mode"> & { session_id?: string; test_session_id?: string; mode?: TestSessionsRow["mode"] }; Update: Partial<TestSessionsRow> };
       eval_results: { Row: EvalResultsRow; Insert: Omit<EvalResultsRow, "eval_result_id"> & { eval_result_id?: string }; Update: Partial<EvalResultsRow> };
       test_cases: { Row: TestCasesRow; Insert: Omit<TestCasesRow, "id" | "test_case_id"> & { id?: string; test_case_id?: string }; Update: Partial<TestCasesRow> };
       default_settings: { Row: DefaultSettingsRow; Insert: Omit<DefaultSettingsRow, "default_setting_id"> & { default_setting_id?: string }; Update: Partial<DefaultSettingsRow> };

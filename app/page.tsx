@@ -6,8 +6,8 @@ import { useEvalRun } from "@/app/context/EvalRunContext";
 
 /** On Vercel, set NEXT_PUBLIC_EVREN_API_URL to your deployed Evren service URL. */
 const FALLBACK_EVREN_URL = process.env.NEXT_PUBLIC_EVREN_API_URL || "http://localhost:8000";
-const FALLBACK_EVALUATOR_MODEL = "gemini-2.5-flash";
-const FALLBACK_SUMMARIZER_MODEL = "gemini-2.5-flash";
+const FALLBACK_EVALUATOR_MODEL = "gemini-3-flash-preview";
+const FALLBACK_SUMMARIZER_MODEL = "gemini-3-flash-preview";
 
 function requestNotificationPermission() {
   if (typeof window === "undefined" || !("Notification" in window)) return;
@@ -16,12 +16,14 @@ function requestNotificationPermission() {
   }
 }
 
+type SessionMode = "single" | "comparison";
+
 export default function Home() {
   const { runState, startRun, cancelRun, clearRunState } = useEvalRun();
   const [evrenUrl, setEvrenUrl] = useState(FALLBACK_EVREN_URL);
+  const [mode, setMode] = useState<SessionMode>("comparison");
   const [evaluatorModel, setEvaluatorModel] = useState(FALLBACK_EVALUATOR_MODEL);
   const [summarizerModel, setSummarizerModel] = useState(FALLBACK_SUMMARIZER_MODEL);
-  const [settingsLoaded, setSettingsLoaded] = useState(false);
 
   useEffect(() => {
     fetch("/api/default-settings")
@@ -31,8 +33,7 @@ export default function Home() {
         setEvrenUrl(data.evren_api_url ?? FALLBACK_EVREN_URL);
         setEvaluatorModel(data.evaluator_model ?? FALLBACK_EVALUATOR_MODEL);
         setSummarizerModel(data.summarizer_model ?? FALLBACK_SUMMARIZER_MODEL);
-      })
-      .finally(() => setSettingsLoaded(true));
+      });
   }, []);
 
   // When returning to home after a completed run, clear so form shows again
@@ -49,8 +50,9 @@ export default function Home() {
     requestNotificationPermission();
     startRun({
       evren_model_api_url: evrenUrl.trim(),
-      model_name: evaluatorModel || undefined,
-      summarizer_model: summarizerModel || undefined,
+      mode,
+      model_name: mode === "single" ? (evaluatorModel || undefined) : undefined,
+      summarizer_model: mode === "single" ? (summarizerModel || undefined) : undefined,
     });
   }
 
@@ -72,26 +74,54 @@ export default function Home() {
             className="mt-1.5 block w-full rounded-lg border border-stone-200 bg-white px-3 py-2.5 text-stone-900 placeholder:text-stone-400 focus:border-stone-400 focus:outline-none focus:ring-1 focus:ring-stone-400"
           />
         </div>
-        <div className="mt-4">
-          <label className="block text-sm font-medium text-stone-700">Evaluator model</label>
-          <input
-            type="text"
-            value={evaluatorModel}
-            onChange={(e) => setEvaluatorModel(e.target.value)}
-            placeholder="gemini-2.5-flash"
-            className="mt-1.5 block w-full rounded-lg border border-stone-200 bg-white px-3 py-2.5 text-stone-900 placeholder:text-stone-400 focus:border-stone-400 focus:outline-none focus:ring-1 focus:ring-stone-400"
-          />
-        </div>
-        <div className="mt-4">
-          <label className="block text-sm font-medium text-stone-700">Summarizer model</label>
-          <input
-            type="text"
-            value={summarizerModel}
-            onChange={(e) => setSummarizerModel(e.target.value)}
-            placeholder="gemini-2.5-flash"
-            className="mt-1.5 block w-full rounded-lg border border-stone-200 bg-white px-3 py-2.5 text-stone-900 placeholder:text-stone-400 focus:border-stone-400 focus:outline-none focus:ring-1 focus:ring-stone-400"
-          />
-        </div>
+        <fieldset className="mt-5">
+          <legend className="block text-sm font-medium text-stone-700">Mode</legend>
+          <div className="relative mt-1.5 flex rounded-full bg-stone-200 p-1">
+            <span
+              className="pointer-events-none absolute inset-y-1 w-[calc(50%-4px)] rounded-full bg-white shadow transition-transform duration-200"
+              style={{ transform: mode === "single" ? "translateX(0)" : "translateX(100%)" }}
+            />
+            {([
+              { value: "single" as const, label: "Single Evaluation" },
+              { value: "comparison" as const, label: "Version Comparison" },
+            ]).map((opt) => (
+              <button
+                key={opt.value}
+                type="button"
+                onClick={() => setMode(opt.value)}
+                className={`relative z-10 flex-1 rounded-full px-3 py-2 text-center text-sm font-medium transition-colors ${
+                  mode === opt.value ? "text-stone-900" : "text-stone-500"
+                }`}
+              >
+                {opt.label}
+              </button>
+            ))}
+          </div>
+        </fieldset>
+        {mode === "single" && (
+          <>
+            <div className="mt-4">
+              <label className="block text-sm font-medium text-stone-700">Evaluator model</label>
+              <input
+                type="text"
+                value={evaluatorModel}
+                onChange={(e) => setEvaluatorModel(e.target.value)}
+                placeholder="gemini-3-flash-preview"
+                className="mt-1.5 block w-full rounded-lg border border-stone-200 bg-white px-3 py-2.5 text-stone-900 placeholder:text-stone-400 focus:border-stone-400 focus:outline-none focus:ring-1 focus:ring-stone-400"
+              />
+            </div>
+            <div className="mt-4">
+              <label className="block text-sm font-medium text-stone-700">Summarizer model</label>
+              <input
+                type="text"
+                value={summarizerModel}
+                onChange={(e) => setSummarizerModel(e.target.value)}
+                placeholder="gemini-3-flash-preview"
+                className="mt-1.5 block w-full rounded-lg border border-stone-200 bg-white px-3 py-2.5 text-stone-900 placeholder:text-stone-400 focus:border-stone-400 focus:outline-none focus:ring-1 focus:ring-stone-400"
+              />
+            </div>
+          </>
+        )}
         {error && (
           <div className="mt-4 rounded-lg border border-red-200 bg-red-50 p-4 text-sm text-red-800">
             {error}

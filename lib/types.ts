@@ -52,3 +52,33 @@ export interface EvaluationResult {
   /** Set when token usage is tracked (e.g. from Gemini usageMetadata). */
   token_usage?: TokenUsage;
 }
+
+/** Result of one pairwise comparison between two versions. */
+export interface PairwiseResult {
+  a_id: string;
+  b_id: string;
+  /** Which label won from the LLM perspective (before un-shuffling). */
+  raw_winner: "A" | "B" | "tie";
+  /** Actual version_id that won, or null for tie. */
+  winner_id: string | null;
+  hard_failures: { A: string[]; B: string[] };
+  reason: string;
+  token_usage?: TokenUsage;
+}
+
+/** Stored comparison data for one eval_result (one test case in a session). */
+export interface ComparisonData {
+  /**
+   * Tie tiers ordered from best to worst.
+   * Each tier is an array of version_ids (ties share the same tier).
+   *
+   * Examples:
+   * - 2 versions: [[v1], [v2]] or [[v1, v2]] (tie)
+   * - 3 versions: [[v2], [v1, v3]]
+   */
+  tiers: string[][];
+  /** Overall comparison reasoning (2-4 sentences). */
+  overall_reason: string;
+  /** Hard failures keyed by version_id. */
+  overall_hard_failures: Record<string, string[]>;
+}
