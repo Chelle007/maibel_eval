@@ -1464,9 +1464,12 @@ export default function SessionDetailPage() {
                                             {prettyDetectedFlags(turnVersions[0]?.detected_flags ?? "")}
                                           </pre>
                                         ) : (
-                                          <div className="mt-1 grid gap-2 sm:grid-cols-2">
+                                          <div className="mt-1 flex gap-2 overflow-x-auto pb-1">
                                             {versions.map((ver) => (
-                                              <div key={ver.version_id} className="flex-1 min-w-0 rounded-lg border border-stone-200 bg-white px-3 py-2">
+                                              <div
+                                                key={ver.version_id}
+                                                className="flex-1 min-w-[260px] rounded-lg border border-stone-200 bg-white px-3 py-2"
+                                              >
                                                 <p className="text-[11px] font-medium uppercase tracking-wide text-stone-400">
                                                   {ver.version_name}
                                                 </p>
