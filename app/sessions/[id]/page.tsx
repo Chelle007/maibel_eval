@@ -6,6 +6,8 @@ import { useParams, useRouter } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
 import ReactMarkdown from "react-markdown";
 import { SummaryEditor } from "@/app/components/SummaryEditor";
+import { normalizeVersionEntry } from "@/lib/db.types";
+import type { AnyVersionEntry, VersionEntry } from "@/lib/db.types";
 
 type Session = {
   test_session_id: string;
@@ -96,12 +98,6 @@ function summaryForDisplay(raw: string | null | undefined): string {
   return trimmed.trim();
 }
 
-type VersionEntry = {
-  version_id: string;
-  version_name: string;
-  turns: { response: string[]; detected_flags: string }[];
-};
-
 type ComparisonData = {
   tiers: string[][];
   overall_reason: string;
@@ -120,7 +116,7 @@ type EvalResult = {
   total_tokens: number | null;
   cost_usd: number | null;
   manually_edited: boolean;
-  evren_responses?: VersionEntry[] | null;
+  evren_responses?: AnyVersionEntry[] | null;
   test_cases?: { input_message: string; expected_state: string; expected_behavior: string; title?: string | null; type?: "single_turn" | "multi_turn"; turns?: string[] | null } | null;
   comparison?: ComparisonData;
 };
@@ -154,14 +150,20 @@ function getVersionEntries(results: EvalResult[]): VersionEntry[] {
   let best: VersionEntry[] = [];
   for (const r of results) {
     const v = r.evren_responses;
-    if (Array.isArray(v) && v.length > best.length) best = v;
+    const normalized = Array.isArray(v) ? v.map(normalizeVersionEntry) : [];
+    if (normalized.length > best.length) best = normalized;
   }
   return best;
 }
 
 function getTurnCount(versions: VersionEntry[]): number {
-  if (versions.length === 0) return 0;
-  return versions[0].turns.length;
+  let maxTurns = 0;
+  for (const version of versions) {
+    for (const run of version.runs) {
+      maxTurns = Math.max(maxTurns, run.turns.length);
+    }
+  }
+  return maxTurns;
 }
 
 function prettyDetectedFlags(value: string): string {
@@ -202,6 +204,7 @@ export default function SessionDetailPage() {
   const [draftVersions, setDraftVersions] = useState<{ version_id: string; version_name: string }[]>([]);
   const [newVersionLabel, setNewVersionLabel] = useState("Version 2");
   const [runComparison, setRunComparison] = useState(true);
+  const [addVersionRunCount, setAddVersionRunCount] = useState(1);
   const [editingVersionId, setEditingVersionId] = useState<string | null>(null);
   const [deletingVersionId, setDeletingVersionId] = useState<string | null>(null);
   const [savingNames, setSavingNames] = useState(false);
@@ -406,6 +409,7 @@ export default function SessionDetailPage() {
     let nextNum = drafts.length + 1;
     while (existingLower.has(`version ${nextNum}`)) nextNum++;
     setNewVersionLabel(`Version ${nextNum}`);
+    setAddVersionRunCount(1);
     setEditingVersionId(null);
     setShowAddVersionModal(true);
   }
@@ -444,7 +448,11 @@ export default function SessionDetailPage() {
       const res = await fetch(`/api/sessions/${id}/add-version/stream`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ version_name: cleanedNewVersionLabel, run_comparison: runComparison }),
+        body: JSON.stringify({
+          version_name: cleanedNewVersionLabel,
+          run_count: Math.max(1, Math.floor(addVersionRunCount || 1)),
+          run_comparison: runComparison,
+        }),
       });
       if (!res.ok) {
         const data = await res.json().catch(() => ({})) as { error?: string };
@@ -1059,6 +1067,17 @@ export default function SessionDetailPage() {
                   />
                 </div>
               )}
+              <div>
+                <label className="block text-xs font-medium uppercase tracking-wide text-stone-400">Runs for new version</label>
+                <input
+                  type="number"
+                  min={1}
+                  step={1}
+                  value={addVersionRunCount}
+                  onChange={(e) => setAddVersionRunCount(Math.max(1, Math.floor(Number(e.target.value) || 1)))}
+                  className="mt-1 block w-full rounded-lg border border-stone-200 bg-white px-3 py-2 text-sm text-stone-900 focus:border-stone-400 focus:outline-none focus:ring-1 focus:ring-stone-400"
+                />
+              </div>
               <div className="flex items-center justify-between pt-1">
                 <div>
                   <p className="text-sm font-medium text-stone-700">Run comparison</p>
@@ -1346,9 +1365,12 @@ export default function SessionDetailPage() {
                     <p className="text-xs font-medium uppercase tracking-wide text-stone-400">Conversation</p>
                     <div className="mt-2 space-y-3">
                       {(() => {
-                        const allVersions = Array.isArray(r.evren_responses) ? (r.evren_responses as VersionEntry[]) : [];
+                        const allVersions = Array.isArray(r.evren_responses)
+                          ? (r.evren_responses as AnyVersionEntry[]).map(normalizeVersionEntry)
+                          : [];
                         const versions = allVersions.slice(0, 3);
                         const turnCount = getTurnCount(versions);
+                        const versionMeta = versions.map((v) => `${v.version_name}: ${v.run_count_requested} run${v.run_count_requested === 1 ? "" : "s"} (${v.evidence_source})`).join(" · ");
                         if (turnCount === 0 && versions.length === 0) {
                           return (
                             <div className="space-y-2">
@@ -1367,14 +1389,20 @@ export default function SessionDetailPage() {
                             </div>
                           );
                         }
-                        return Array.from({ length: turnCount }, (_, i) => {
+                        return (
+                          <>
+                            {versionMeta && (
+                              <p className="text-[11px] text-stone-500">{versionMeta}</p>
+                            )}
+                            {Array.from({ length: turnCount }, (_, i) => {
                           const flagsKey = `${r.eval_result_id}-${i}`;
                           const flagsExpanded = expandedFlagsKeys.has(flagsKey);
-                          const turnVersions = versions.map((v) => v.turns[i]);
-                          const hasFlags = turnVersions.some((t) => t?.detected_flags?.trim());
+                          const hasFlags = versions.some((v) =>
+                            v.runs.some((run) => run.turns[i]?.detected_flags?.trim())
+                          );
                           const singleVersion = versions.length <= 1;
-                          const singleBubbles = turnVersions[0]?.response ?? [];
-                          return (
+                          const singleRuns = versions[0]?.runs ?? [];
+                              return (
                             <div key={i} className="space-y-2">
                               <div>
                                 <p className="text-xs font-medium text-stone-500">input:</p>
@@ -1387,42 +1415,20 @@ export default function SessionDetailPage() {
                               <div>
                                 <p className="text-xs font-medium text-stone-500">evren:</p>
                                 {singleVersion ? (
-                                  <div className="mt-1">
-                                    {singleBubbles.length > 0 ? (
-                                      <div className="space-y-2">
-                                        {singleBubbles.map((bubble, j) => (
-                                          <blockquote
-                                            key={j}
-                                            className="border-l-2 border-stone-300 bg-stone-50/80 pl-3 py-1.5 pr-2 text-sm text-stone-700 leading-relaxed whitespace-pre-wrap rounded-r"
-                                          >
-                                            {bubble?.trim() || "—"}
-                                          </blockquote>
-                                        ))}
-                                      </div>
-                                    ) : (
-                                      <blockquote className="border-l-2 border-stone-300 bg-stone-50/80 pl-3 py-1.5 pr-2 text-sm text-stone-700 leading-relaxed whitespace-pre-wrap rounded-r">
-                                        —
-                                      </blockquote>
-                                    )}
-                                  </div>
-                                ) : (
-                                  <div className="mt-1 flex gap-2 overflow-x-auto flex-nowrap">
-                                    {versions.map((ver) => {
-                                      const turnData = ver.turns[i];
+                                  <div className="mt-1 space-y-3">
+                                    {singleRuns.map((run) => {
+                                      const turnData = run.turns[i];
                                       const bubbles = turnData?.response ?? [];
                                       return (
-                                        <div
-                                          key={ver.version_id}
-                                          className="flex-1 min-w-0 rounded-lg border border-stone-200 bg-stone-50/80 px-3 py-2"
-                                        >
+                                        <div key={run.run_id} className="rounded-lg border border-stone-200 bg-stone-50/80 px-3 py-2">
                                           <p className="text-[11px] font-medium uppercase tracking-wide text-stone-400">
-                                            {ver.version_name}
+                                            Run {run.run_index}
                                           </p>
                                           <div className="mt-1 space-y-2">
                                             {bubbles.length > 0 ? (
-                                              bubbles.map((bubble, bubbleIdx) => (
+                                              bubbles.map((bubble, j) => (
                                                 <blockquote
-                                                  key={bubbleIdx}
+                                                  key={j}
                                                   className="border-l-2 border-stone-300 bg-white/80 pl-3 py-1.5 pr-2 text-sm text-stone-700 leading-relaxed whitespace-pre-wrap rounded-r"
                                                 >
                                                   {bubble?.trim() || "—"}
@@ -1433,6 +1439,53 @@ export default function SessionDetailPage() {
                                                 —
                                               </blockquote>
                                             )}
+                                          </div>
+                                        </div>
+                                      );
+                                    })}
+                                  </div>
+                                ) : (
+                                  <div className="mt-1 flex gap-2 overflow-x-auto flex-nowrap">
+                                    {versions.map((ver) => {
+                                      return (
+                                        <div
+                                          key={ver.version_id}
+                                          className="flex-1 min-w-0 rounded-lg border border-stone-200 bg-stone-50/80 px-3 py-2"
+                                        >
+                                          <p className="text-[11px] font-medium uppercase tracking-wide text-stone-400">
+                                            {ver.version_name}
+                                          </p>
+                                          <p className="mt-1 text-[11px] text-stone-500">
+                                            Runs: {ver.run_count_requested} · Evidence: {ver.evidence_source}
+                                          </p>
+                                          <div className="mt-2 space-y-3">
+                                            {ver.runs.map((run) => {
+                                              const turnData = run.turns[i];
+                                              const bubbles = turnData?.response ?? [];
+                                              return (
+                                                <div key={run.run_id}>
+                                                  <p className="text-[11px] font-medium uppercase tracking-wide text-stone-400">
+                                                    Run {run.run_index}
+                                                  </p>
+                                                  <div className="mt-1 space-y-2">
+                                                    {bubbles.length > 0 ? (
+                                                      bubbles.map((bubble, bubbleIdx) => (
+                                                        <blockquote
+                                                          key={bubbleIdx}
+                                                          className="border-l-2 border-stone-300 bg-white/80 pl-3 py-1.5 pr-2 text-sm text-stone-700 leading-relaxed whitespace-pre-wrap rounded-r"
+                                                        >
+                                                          {bubble?.trim() || "—"}
+                                                        </blockquote>
+                                                      ))
+                                                    ) : (
+                                                      <blockquote className="border-l-2 border-stone-300 bg-white/80 pl-3 py-1.5 pr-2 text-sm text-stone-700 leading-relaxed whitespace-pre-wrap rounded-r">
+                                                        —
+                                                      </blockquote>
+                                                    )}
+                                                  </div>
+                                                </div>
+                                              );
+                                            })}
                                           </div>
                                         </div>
                                       );
@@ -1460,9 +1513,18 @@ export default function SessionDetailPage() {
                                     {flagsExpanded && (
                                       <div className="mt-2">
                                         {singleVersion ? (
-                                          <pre className="mt-1 whitespace-pre-wrap break-words text-xs text-stone-700 font-mono rounded-lg border border-stone-200 bg-white px-3 py-2">
-                                            {prettyDetectedFlags(turnVersions[0]?.detected_flags ?? "")}
-                                          </pre>
+                                          <div className="space-y-2">
+                                            {singleRuns.map((run) => (
+                                              <div key={run.run_id} className="rounded-lg border border-stone-200 bg-white px-3 py-2">
+                                                <p className="text-[11px] font-medium uppercase tracking-wide text-stone-400">
+                                                  Run {run.run_index}
+                                                </p>
+                                                <pre className="mt-1 whitespace-pre-wrap break-words text-xs text-stone-700 font-mono">
+                                                  {prettyDetectedFlags(run.turns[i]?.detected_flags ?? "")}
+                                                </pre>
+                                              </div>
+                                            ))}
+                                          </div>
                                         ) : (
                                           <div className="mt-1 flex gap-2 overflow-x-auto pb-1">
                                             {versions.map((ver) => (
@@ -1473,9 +1535,18 @@ export default function SessionDetailPage() {
                                                 <p className="text-[11px] font-medium uppercase tracking-wide text-stone-400">
                                                   {ver.version_name}
                                                 </p>
-                                                <pre className="mt-1 whitespace-pre-wrap break-words text-xs text-stone-700 font-mono">
-                                                  {prettyDetectedFlags(ver.turns[i]?.detected_flags ?? "")}
-                                                </pre>
+                                                <div className="mt-1 space-y-2">
+                                                  {ver.runs.map((run) => (
+                                                    <div key={run.run_id}>
+                                                      <p className="text-[11px] font-medium uppercase tracking-wide text-stone-400">
+                                                        Run {run.run_index}
+                                                      </p>
+                                                      <pre className="mt-1 whitespace-pre-wrap break-words text-xs text-stone-700 font-mono">
+                                                        {prettyDetectedFlags(run.turns[i]?.detected_flags ?? "")}
+                                                      </pre>
+                                                    </div>
+                                                  ))}
+                                                </div>
                                               </div>
                                             ))}
                                           </div>
@@ -1486,8 +1557,10 @@ export default function SessionDetailPage() {
                                 )}
                               </div>
                             </div>
-                          );
-                        });
+                              );
+                            })}
+                          </>
+                        );
                       })()}
                     </div>
                   </div>
@@ -1566,7 +1639,10 @@ export default function SessionDetailPage() {
                         <hr className="border-stone-200" />
                         <div>
                           <div className="flex items-center justify-between gap-2">
-                            <p className="text-xs font-medium uppercase tracking-wide text-stone-400">Version comparison</p>
+                            <div>
+                              <p className="text-xs font-medium uppercase tracking-wide text-stone-400">Version comparison</p>
+                              <p className="text-[11px] text-stone-500">Comparison basis: Run 1</p>
+                            </div>
                             <div className="flex items-center gap-2">
                               {aiEditingComparisonId === r.eval_result_id ? (
                                 <>
@@ -1679,7 +1755,7 @@ export default function SessionDetailPage() {
                                 {(() => {
                                   const ordered = (r.evren_responses ?? [])
                                     .slice(0, 3)
-                                    .map((v: VersionEntry) => v.version_id)
+                                    .map((v) => v.version_id)
                                     .filter((vid: string) => ranking.includes(vid));
                                   const seen = new Set<string>();
                                   const ids = [...ordered, ...ranking].filter((vid) => {

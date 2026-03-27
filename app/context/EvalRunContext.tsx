@@ -77,6 +77,7 @@ type EvalRunContextValue = {
   startRun: (params: {
     evren_model_api_url: string;
     mode: "single" | "comparison";
+    run_count: number;
     model_name?: string;
     summarizer_model?: string;
   }) => Promise<void>;
@@ -103,6 +104,7 @@ export function EvalRunProvider({ children }: { children: ReactNode }) {
     async (params: {
       evren_model_api_url: string;
       mode: "single" | "comparison";
+      run_count: number;
       model_name?: string;
       summarizer_model?: string;
     }) => {
@@ -121,6 +123,7 @@ export function EvalRunProvider({ children }: { children: ReactNode }) {
           body: JSON.stringify({
             evren_model_api_url: params.evren_model_api_url.trim(),
             mode: params.mode,
+            run_count: params.run_count,
             model_name: params.model_name || undefined,
             summarizer_model: params.summarizer_model || undefined,
           }),

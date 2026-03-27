@@ -22,6 +22,7 @@ export default function Home() {
   const { runState, startRun, cancelRun, clearRunState } = useEvalRun();
   const [evrenUrl, setEvrenUrl] = useState(FALLBACK_EVREN_URL);
   const [mode, setMode] = useState<SessionMode>("comparison");
+  const [runCount, setRunCount] = useState(1);
   const [evaluatorModel, setEvaluatorModel] = useState(FALLBACK_EVALUATOR_MODEL);
   const [summarizerModel, setSummarizerModel] = useState(FALLBACK_SUMMARIZER_MODEL);
 
@@ -51,6 +52,7 @@ export default function Home() {
     startRun({
       evren_model_api_url: evrenUrl.trim(),
       mode,
+      run_count: Math.max(1, Math.floor(runCount || 1)),
       model_name: mode === "single" ? (evaluatorModel || undefined) : undefined,
       summarizer_model: mode === "single" ? (summarizerModel || undefined) : undefined,
     });
@@ -98,6 +100,17 @@ export default function Home() {
             ))}
           </div>
         </fieldset>
+        <div className="mt-4">
+          <label className="block text-sm font-medium text-stone-700">Runs per case</label>
+          <input
+            type="number"
+            min={1}
+            step={1}
+            value={runCount}
+            onChange={(e) => setRunCount(Math.max(1, Math.floor(Number(e.target.value) || 1)))}
+            className="mt-1.5 block w-full rounded-lg border border-stone-200 bg-white px-3 py-2.5 text-stone-900 focus:border-stone-400 focus:outline-none focus:ring-1 focus:ring-stone-400"
+          />
+        </div>
         {mode === "single" && (
           <>
             <div className="mt-4">

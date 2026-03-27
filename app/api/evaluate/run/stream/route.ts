@@ -4,7 +4,7 @@ import { evaluateOne } from "@/lib/evaluator";
 import { buildRichReport, runSummarizer } from "@/lib/summarizer";
 import { loadEvaluatorSystemPrompt, loadSummarizerSystemPrompt } from "@/lib/prompts";
 import type { TestCase, EvrenOutput, EvaluationResult } from "@/lib/types";
-import type { Database, TestCasesRow, DefaultSettingsRow, VersionEntry } from "@/lib/db.types";
+import type { Database, DefaultSettingsRow, RunEntry, TestCasesRow, VersionEntry } from "@/lib/db.types";
 
 export const maxDuration = 300;
 
@@ -46,6 +46,7 @@ export async function POST(request: Request) {
   let body: {
     evren_model_api_url: string;
     mode?: "single" | "comparison";
+    run_count?: number;
     model_name?: string;
     summarizer_model?: string;
     system_prompt?: string;
@@ -67,6 +68,7 @@ export async function POST(request: Request) {
   }
 
   const sessionMode = body.mode === "comparison" ? "comparison" : "single";
+  const runCount = Number.isFinite(body.run_count) ? Math.max(1, Math.floor(body.run_count as number)) : 1;
   const useEvaluator = sessionMode === "single";
   const useSummarizer = sessionMode === "single";
   const apiKey = process.env.GEMINI_API_KEY;
@@ -187,35 +189,58 @@ export async function POST(request: Request) {
             message: "Waiting for Evren response…",
           });
 
-          let evrenOutputs: Awaited<ReturnType<typeof callEvrenApi>>;
-          try {
-            evrenOutputs = await callEvrenApi(evrenModelApiUrl, testCase);
-          } catch (evrenErr) {
-            const msg = evrenErr instanceof Error ? evrenErr.message : String(evrenErr);
-            console.error("[evaluate/run/stream] Evren error for", testCase.test_case_id, msg);
+          const runs: RunEntry[] = [];
+          for (let runIndex = 0; runIndex < runCount; runIndex++) {
             sendEvent(controller, "progress", {
-              stage: "error",
+              stage: "evren",
               index,
               total,
               test_case_id: testCase.test_case_id,
-              message: `Evren API failed: ${msg.slice(0, 80)}${msg.length > 80 ? "…" : ""}`,
+              message: `Waiting for Evren response (Run ${runIndex + 1}/${runCount})…`,
             });
-            continue;
+            try {
+              const runOutputs = await callEvrenApi(evrenModelApiUrl, testCase);
+              runs.push({
+                run_id: crypto.randomUUID(),
+                run_index: runIndex + 1,
+                turns: runOutputs.map((o) => ({
+                  response: Array.isArray(o.evren_response) ? o.evren_response.map(String) : [String(o.evren_response ?? "")],
+                  detected_flags: String(o.detected_states ?? ""),
+                })),
+              });
+            } catch (evrenErr) {
+              const msg = evrenErr instanceof Error ? evrenErr.message : String(evrenErr);
+              console.error("[evaluate/run/stream] Evren error for", testCase.test_case_id, msg);
+              sendEvent(controller, "progress", {
+                stage: "error",
+                index,
+                total,
+                test_case_id: testCase.test_case_id,
+                message: `Evren API failed on run ${runIndex + 1}: ${msg.slice(0, 80)}${msg.length > 80 ? "…" : ""}`,
+              });
+            }
           }
+          if (runs.length === 0) continue;
+
+          const run1Turns = runs[0]?.turns ?? [];
+          const run1Outputs = run1Turns.map((t) => ({
+            evren_response: t.response,
+            detected_states: t.detected_flags,
+          }));
 
           const versionEntry: VersionEntry = {
             version_id: versionId,
             version_name: "Version 1",
-            turns: evrenOutputs.map((o) => ({
-              response: Array.isArray(o.evren_response) ? o.evren_response.map(String) : [String(o.evren_response ?? "")],
-              detected_flags: String(o.detected_states ?? ""),
-            })),
+            run_count_requested: runCount,
+            evidence_source: runCount > 1 ? "automated" : "none",
+            comparison_basis_run_index: 1,
+            runs,
           };
           const evrenResponsesColumn = [versionEntry];
-          const lastOutput = evrenOutputs[evrenOutputs.length - 1] ?? { evren_response: "", detected_states: "" };
+          const lastOutput = run1Outputs[run1Outputs.length - 1] ?? { evren_response: "", detected_states: "" };
           if (useEvaluator) {
             const evalInput =
-              testCase.type === "multi_turn" && evrenOutputs.length > 1 ? evrenOutputs : lastOutput;
+              testCase.type === "multi_turn" && run1Outputs.length > 1 ? run1Outputs : lastOutput;
             sendEvent(controller, "progress", {
               stage: "evaluating",
               index,

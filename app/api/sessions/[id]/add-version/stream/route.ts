@@ -3,7 +3,7 @@ import { callEvrenApi } from "@/lib/evren";
 import { compareOverall } from "@/lib/comparator";
 import { loadComparatorOverallSystemPrompt } from "@/lib/prompts";
 import type { TestCase } from "@/lib/types";
-import type { TestCasesRow, EvalResultsRow, VersionEntry, DefaultSettingsRow } from "@/lib/db.types";
+import type { DefaultSettingsRow, EvalResultsRow, RunEntry, TestCasesRow, VersionEntry } from "@/lib/db.types";
 
 const FALLBACK_EVREN_URL = process.env.NEXT_PUBLIC_EVREN_API_URL || "http://localhost:8000";
 
@@ -28,13 +28,14 @@ export async function POST(
 ) {
   const { id } = await params;
 
-  let body: { version_name?: string; run_comparison?: boolean } = {};
+  let body: { version_name?: string; run_count?: number; run_comparison?: boolean } = {};
   try {
     body = await request.json();
   } catch {
     /* empty body is fine */
   }
   const runComparison = body.run_comparison ?? false;
+  const runCount = Number.isFinite(body.run_count) ? Math.max(1, Math.floor(body.run_count as number)) : 1;
 
   const supabase = await createClient();
 
@@ -145,29 +146,46 @@ export async function POST(
             forbidden: tc.forbidden ?? undefined,
           };
 
-          let newOutputs;
-          try {
-            newOutputs = await callEvrenApi(evrenModelApiUrl, testCase);
-          } catch (evrenErr) {
-            const msg = evrenErr instanceof Error ? evrenErr.message : String(evrenErr);
+          const runs: RunEntry[] = [];
+          for (let runIndex = 0; runIndex < runCount; runIndex++) {
             sendEvent(controller, "progress", {
-              stage: "error",
+              stage: "evren",
               index,
               total: rows.length,
               test_case_id: tc.test_case_id,
-              message: `Evren API failed: ${msg.slice(0, 80)}${msg.length > 80 ? "…" : ""}`,
+              message: `Rerunning Evren (Run ${runIndex + 1}/${runCount})…`,
             });
-            continue;
+            try {
+              const runOutputs = await callEvrenApi(evrenModelApiUrl, testCase);
+              runs.push({
+                run_id: crypto.randomUUID(),
+                run_index: runIndex + 1,
+                turns: runOutputs.map((o) => ({
+                  response: Array.isArray(o.evren_response) ? o.evren_response.map(String) : [String(o.evren_response ?? "")],
+                  detected_flags: String(o.detected_states ?? ""),
+                })),
+              });
+            } catch (evrenErr) {
+              const msg = evrenErr instanceof Error ? evrenErr.message : String(evrenErr);
+              sendEvent(controller, "progress", {
+                stage: "error",
+                index,
+                total: rows.length,
+                test_case_id: tc.test_case_id,
+                message: `Evren API failed on run ${runIndex + 1}: ${msg.slice(0, 80)}${msg.length > 80 ? "…" : ""}`,
+              });
+            }
           }
+          if (runs.length === 0) continue;
 
           const existing = Array.isArray(row.evren_responses) ? (row.evren_responses as VersionEntry[]) : [];
           const newVersion: VersionEntry = {
             version_id: newVersionId,
             version_name: versionName,
-            turns: newOutputs.map((o) => ({
-              response: Array.isArray(o.evren_response) ? o.evren_response.map(String) : [String(o.evren_response ?? "")],
-              detected_flags: String(o.detected_states ?? ""),
-            })),
+            run_count_requested: runCount,
+            evidence_source: runCount > 1 ? "automated" : "none",
+            comparison_basis_run_index: 1,
+            runs,
           };
           const mergedResponses = [...existing, newVersion];
 

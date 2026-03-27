@@ -33,11 +33,73 @@ export interface VersionTurn {
   detected_flags: string;
 }
 
+export type VersionEvidenceSource = "none" | "automated";
+
+export interface RunEntry {
+  run_id: string;
+  run_index: number;
+  turns: VersionTurn[];
+}
+
 /** One version stored in eval_results.evren_responses. */
 export interface VersionEntry {
   version_id: string;
   version_name: string;
+  run_count_requested: number;
+  evidence_source: VersionEvidenceSource;
+  comparison_basis_run_index: 1;
+  runs: RunEntry[];
+}
+
+/** Legacy shape kept for backward compatibility with older rows. */
+export interface LegacyVersionEntry {
+  version_id: string;
+  version_name: string;
   turns: VersionTurn[];
+}
+
+export type AnyVersionEntry = VersionEntry | LegacyVersionEntry;
+
+export function normalizeVersionEntry(version: AnyVersionEntry): VersionEntry {
+  if ("runs" in version && Array.isArray(version.runs)) {
+    return {
+      version_id: version.version_id,
+      version_name: version.version_name,
+      run_count_requested:
+        typeof version.run_count_requested === "number" && version.run_count_requested > 0
+          ? Math.floor(version.run_count_requested)
+          : version.runs.length || 1,
+      evidence_source:
+        version.evidence_source === "automated" || version.evidence_source === "none"
+          ? version.evidence_source
+          : (version.runs.length > 1 ? "automated" : "none"),
+      comparison_basis_run_index: 1,
+      runs: version.runs.map((run, idx) => ({
+        run_id: String(run.run_id ?? crypto.randomUUID()),
+        run_index:
+          typeof run.run_index === "number" && run.run_index > 0
+            ? Math.floor(run.run_index)
+            : idx + 1,
+        turns: Array.isArray(run.turns) ? run.turns : [],
+      })),
+    };
+  }
+
+  const turns = Array.isArray(version.turns) ? version.turns : [];
+  return {
+    version_id: version.version_id,
+    version_name: version.version_name,
+    run_count_requested: 1,
+    evidence_source: "none",
+    comparison_basis_run_index: 1,
+    runs: [
+      {
+        run_id: crypto.randomUUID(),
+        run_index: 1,
+        turns,
+      },
+    ],
+  };
 }
 
 export interface EvalResultsRow {

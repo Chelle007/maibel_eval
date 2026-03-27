@@ -1,7 +1,8 @@
 import { readFileSync } from "fs";
 import path from "path";
 import type { TestCase, EvrenOutput } from "./types";
-import type { VersionEntry } from "./db.types";
+import { normalizeVersionEntry } from "./db.types";
+import type { AnyVersionEntry } from "./db.types";
 
 const PROMPTS_DIR = path.join(process.cwd(), "content", "prompts");
 
@@ -104,21 +105,24 @@ export interface VersionSnapshot {
 
 /** Extract a single version's data by version_id. */
 function extractVersionSnapshot(
-  versions: VersionEntry[],
+  versions: AnyVersionEntry[],
   versionId: string
 ): VersionSnapshot {
   const entry = versions.find((v) => v.version_id === versionId);
   if (!entry) return { responses: [], flags: [] };
+  const normalized = normalizeVersionEntry(entry);
+  const run1 = normalized.runs.find((run) => run.run_index === 1) ?? normalized.runs[0];
+  const turns = run1?.turns ?? [];
   return {
-    responses: entry.turns.map((t) => t.response),
-    flags: entry.turns.map((t) => t.detected_flags),
+    responses: turns.map((t) => t.response),
+    flags: turns.map((t) => t.detected_flags),
   };
 }
 
 /** Build the user message for the comparator. Randomizes A/B to reduce position bias. */
 export function buildComparatorUserMessage(
   testCase: TestCase,
-  versions: VersionEntry[],
+  versions: AnyVersionEntry[],
   aId: string,
   bId: string
 ): { message: string; aIsFirst: boolean } {
@@ -176,7 +180,7 @@ export function buildComparatorUserMessage(
  */
 export function buildComparatorTripleUserMessage(
   testCase: TestCase,
-  versions: VersionEntry[],
+  versions: AnyVersionEntry[],
   versionIds: [string, string, string]
 ): { message: string; labelToVersionId: Record<"A" | "B" | "C", string> } {
   const shuffled = [...versionIds].sort(() => Math.random() - 0.5) as [string, string, string];
@@ -236,7 +240,7 @@ export function buildComparatorTripleUserMessage(
 /** Build the user message for the unified overall comparator. Supports 2 or 3 versions. Randomizes A/B(/C) to reduce position bias. */
 export function buildComparatorOverallUserMessage(
   testCase: TestCase,
-  versions: VersionEntry[],
+  versions: AnyVersionEntry[],
   versionIds: [string, string] | [string, string, string]
 ): {
   message: string;
