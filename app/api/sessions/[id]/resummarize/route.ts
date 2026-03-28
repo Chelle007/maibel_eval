@@ -5,7 +5,8 @@ import { buildRichReport, runSummarizer } from "@/lib/summarizer";
 import { loadSummarizerSystemPrompt } from "@/lib/prompts";
 import type { TestCase, EvrenOutput, EvaluationResult } from "@/lib/types";
 
-import type { VersionEntry } from "@/lib/db.types";
+import { normalizeVersionEntry } from "@/lib/db.types";
+import type { AnyVersionEntry, VersionEntry } from "@/lib/db.types";
 
 type EvalResultRow = {
   eval_result_id: string;
@@ -69,8 +70,10 @@ export async function POST(
       throw new Error(`Missing test_cases for eval_result ${r.eval_result_id}`);
     }
     const versions = Array.isArray(r.evren_responses) ? r.evren_responses : [];
-    const firstVersion = versions[0];
-    const lastTurn = firstVersion?.turns?.[firstVersion.turns.length - 1];
+    const firstRaw = versions[0] as AnyVersionEntry | undefined;
+    const normalized = firstRaw ? normalizeVersionEntry(firstRaw) : null;
+    const run1Turns = normalized?.runs[0]?.turns ?? [];
+    const lastTurn = run1Turns[run1Turns.length - 1];
     const testCase: TestCase = {
       test_case_id: tc.test_case_id,
       type: tc.type ?? "single_turn",
