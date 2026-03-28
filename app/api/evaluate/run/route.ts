@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
+import { getMaxConcurrentTestCases, runWithConcurrency } from "@/lib/evren-concurrency";
 import { callEvrenApi } from "@/lib/evren";
 import { evaluateOne } from "@/lib/evaluator";
 import { buildRichReport, runSummarizer } from "@/lib/summarizer";
@@ -8,38 +9,6 @@ import type { TestCase, EvrenOutput, EvaluationResult } from "@/lib/types";
 import type { Database, RunEntry, TestCasesRow, VersionEntry } from "@/lib/db.types";
 
 export const maxDuration = 300;
-
-const DEFAULT_MAX_INFLIGHT_EVREN_CALLS = 10;
-
-function getMaxInflightEvrenCalls(): number {
-  const raw = process.env.MAX_INFLIGHT_EVREN_CALLS;
-  const n = raw ? Number.parseInt(raw, 10) : NaN;
-  return Number.isFinite(n) && n > 0 ? n : DEFAULT_MAX_INFLIGHT_EVREN_CALLS;
-}
-
-function getMaxConcurrentTestCases(runCount: number): number {
-  const safeRunCount = Number.isFinite(runCount) && runCount > 0 ? runCount : 1;
-  return Math.max(1, Math.floor(getMaxInflightEvrenCalls() / safeRunCount));
-}
-
-async function runWithConcurrency<T>(
-  items: T[],
-  limit: number,
-  worker: (item: T, index: number) => Promise<void>
-): Promise<void> {
-  const safeLimit = Math.max(1, Math.floor(limit || 1));
-  let nextIndex = 0;
-
-  const runners = Array.from({ length: Math.min(safeLimit, items.length) }, async () => {
-    while (true) {
-      const i = nextIndex++;
-      if (i >= items.length) return;
-      await worker(items[i], i);
-    }
-  });
-
-  await Promise.all(runners);
-}
 
 export async function POST(request: Request) {
   const supabase = await createClient();
@@ -114,12 +83,14 @@ export async function POST(request: Request) {
   const summarizerModel = body.summarizer_model ?? modelName;
   const systemPrompt = body.system_prompt ?? loadEvaluatorSystemPrompt();
   let totalCostUsd = 0;
-  const richReportInputs: { testCase: TestCase; evrenOutput: EvrenOutput; result: EvaluationResult }[] = [];
+  type RichSlot = { testCase: TestCase; evrenOutput: EvrenOutput; result: EvaluationResult };
 
   const rows = (testCasesRows ?? []) as TestCasesRow[];
+  const richSlots: (RichSlot | null)[] = new Array(rows.length).fill(null);
   const versionId = crypto.randomUUID();
   const maxConcurrentTestCases = getMaxConcurrentTestCases(runCount);
-  await runWithConcurrency(rows, maxConcurrentTestCases, async (row) => {
+
+  await runWithConcurrency(rows, maxConcurrentTestCases, async (row, index) => {
     const testCase: TestCase = {
       test_case_id: row.test_case_id,
       type: row.type ?? "single_turn",
@@ -130,6 +101,7 @@ export async function POST(request: Request) {
       expected_behavior: row.expected_behavior ?? "",
       forbidden: row.forbidden ?? undefined,
     };
+
     const runPromises = Array.from({ length: runCount }, async () => callEvrenApi(evrenModelApiUrl, testCase));
     const runResults = await Promise.allSettled(runPromises);
     const runs: RunEntry[] = [];
@@ -137,8 +109,11 @@ export async function POST(request: Request) {
     for (let runIndex = 0; runIndex < runResults.length; runIndex++) {
       const settled = runResults[runIndex];
       if (settled.status !== "fulfilled") {
-        const msg = settled.reason instanceof Error ? settled.reason.message : String(settled.reason ?? "Evren error");
-        console.error("[evaluate/run] Evren error for", row.test_case_id, msg);
+        console.error(
+          "[evaluate/run] Evren error for",
+          row.test_case_id,
+          settled.reason instanceof Error ? settled.reason.message : settled.reason
+        );
         continue;
       }
       const runOutputs = settled.value;
@@ -175,7 +150,7 @@ export async function POST(request: Request) {
       const costUsd = result.token_usage?.cost_usd ?? 0;
       totalCostUsd += costUsd;
 
-      richReportInputs.push({ testCase, evrenOutput: lastOutput, result });
+      richSlots[index] = { testCase, evrenOutput: lastOutput, result };
 
       const evalPayload = {
         session_id: sessionId,
@@ -209,6 +184,8 @@ export async function POST(request: Request) {
       await supabase.from("eval_results").insert(evalPayload as any);
     }
   });
+
+  const richReportInputs = richSlots.filter((s): s is RichSlot => s != null);
 
   let summary: string | null = null;
   let title: string | null = null;

@@ -5,13 +5,13 @@ import { buildRichReport, runSummarizer } from "@/lib/summarizer";
 import { loadSummarizerSystemPrompt } from "@/lib/prompts";
 import type { TestCase, EvrenOutput, EvaluationResult } from "@/lib/types";
 
-import { normalizeVersionEntry, type AnyVersionEntry } from "@/lib/db.types";
+import type { VersionEntry } from "@/lib/db.types";
 
 type EvalResultRow = {
   eval_result_id: string;
   session_id: string;
   test_case_uuid: string;
-  evren_responses: AnyVersionEntry[];
+  evren_responses: VersionEntry[];
   success: boolean;
   score: number;
   reason: string | null;
@@ -69,9 +69,8 @@ export async function POST(
       throw new Error(`Missing test_cases for eval_result ${r.eval_result_id}`);
     }
     const versions = Array.isArray(r.evren_responses) ? r.evren_responses : [];
-    const firstVersion = versions[0] ? normalizeVersionEntry(versions[0]) : null;
-    const basisRun = firstVersion?.runs?.find((run) => run.run_index === 1) ?? firstVersion?.runs?.[0];
-    const lastTurn = basisRun?.turns?.[basisRun.turns.length - 1];
+    const firstVersion = versions[0];
+    const lastTurn = firstVersion?.turns?.[firstVersion.turns.length - 1];
     const testCase: TestCase = {
       test_case_id: tc.test_case_id,
       type: tc.type ?? "single_turn",

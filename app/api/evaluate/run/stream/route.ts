@@ -1,4 +1,5 @@
 import { createClient } from "@/lib/supabase/server";
+import { getMaxConcurrentTestCases, runWithConcurrency } from "@/lib/evren-concurrency";
 import { callEvrenApi } from "@/lib/evren";
 import { evaluateOne } from "@/lib/evaluator";
 import { buildRichReport, runSummarizer } from "@/lib/summarizer";
@@ -7,38 +8,6 @@ import type { TestCase, EvrenOutput, EvaluationResult } from "@/lib/types";
 import type { Database, DefaultSettingsRow, RunEntry, TestCasesRow, VersionEntry } from "@/lib/db.types";
 
 export const maxDuration = 300;
-
-const DEFAULT_MAX_INFLIGHT_EVREN_CALLS = 10;
-
-function getMaxInflightEvrenCalls(): number {
-  const raw = process.env.MAX_INFLIGHT_EVREN_CALLS;
-  const n = raw ? Number.parseInt(raw, 10) : NaN;
-  return Number.isFinite(n) && n > 0 ? n : DEFAULT_MAX_INFLIGHT_EVREN_CALLS;
-}
-
-function getMaxConcurrentTestCases(runCount: number): number {
-  const safeRunCount = Number.isFinite(runCount) && runCount > 0 ? runCount : 1;
-  return Math.max(1, Math.floor(getMaxInflightEvrenCalls() / safeRunCount));
-}
-
-async function runWithConcurrency<T>(
-  items: T[],
-  limit: number,
-  worker: (item: T, index: number) => Promise<void>
-): Promise<void> {
-  const safeLimit = Math.max(1, Math.floor(limit || 1));
-  let nextIndex = 0;
-
-  const runners = Array.from({ length: Math.min(safeLimit, items.length) }, async () => {
-    while (true) {
-      const i = nextIndex++;
-      if (i >= items.length) return;
-      await worker(items[i], i);
-    }
-  });
-
-  await Promise.all(runners);
-}
 
 function sendEvent(
   controller: ReadableStreamDefaultController<Uint8Array>,
@@ -189,7 +158,8 @@ export async function POST(request: Request) {
     async start(controller) {
       const evalStartMs = Date.now();
       let totalCostUsd = 0;
-      const richReportInputs: { testCase: TestCase; evrenOutput: EvrenOutput; result: EvaluationResult }[] = [];
+      type RichSlot = { testCase: TestCase; evrenOutput: EvrenOutput; result: EvaluationResult };
+      const richSlots: (RichSlot | null)[] = [];
       try {
         sendEvent(controller, "progress", {
           stage: "start",
@@ -199,6 +169,8 @@ export async function POST(request: Request) {
         });
 
         const rows = (testCasesRows ?? []) as TestCasesRow[];
+        richSlots.length = rows.length;
+        richSlots.fill(null);
         const versionId = crypto.randomUUID();
         const maxConcurrentTestCases = getMaxConcurrentTestCases(runCount);
         let completedCount = 0;
@@ -286,7 +258,7 @@ export async function POST(request: Request) {
             const costUsd = result.token_usage?.cost_usd ?? 0;
             totalCostUsd += costUsd;
 
-            richReportInputs.push({ testCase, evrenOutput: lastOutput, result });
+            richSlots[index] = { testCase, evrenOutput: lastOutput, result };
 
             const evalPayload = {
               session_id: sessionId,
@@ -329,6 +301,8 @@ export async function POST(request: Request) {
             message: `Completed ${completedCount} of ${total}`,
           });
         });
+
+        const richReportInputs = richSlots.filter((s): s is RichSlot => s != null);
 
         let summary: string | null = null;
         let title: string | null = null;

@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
+import { getMaxConcurrentTestCases, runWithConcurrency } from "@/lib/evren-concurrency";
 import { callEvrenApi } from "@/lib/evren";
 import { compareOverall } from "@/lib/comparator";
 import { loadComparatorOverallSystemPrompt } from "@/lib/prompts";
@@ -9,38 +10,6 @@ import type { DefaultSettingsRow, EvalResultsRow, RunEntry, TestCasesRow, Versio
 const FALLBACK_EVREN_URL = process.env.NEXT_PUBLIC_EVREN_API_URL || "http://localhost:8000";
 
 type EvalResultLite = Pick<EvalResultsRow, "eval_result_id" | "test_case_uuid" | "evren_responses" | "comparison">;
-
-const DEFAULT_MAX_INFLIGHT_EVREN_CALLS = 10;
-
-function getMaxInflightEvrenCalls(): number {
-  const raw = process.env.MAX_INFLIGHT_EVREN_CALLS;
-  const n = raw ? Number.parseInt(raw, 10) : NaN;
-  return Number.isFinite(n) && n > 0 ? n : DEFAULT_MAX_INFLIGHT_EVREN_CALLS;
-}
-
-function getMaxConcurrentTestCases(runCount: number): number {
-  const safeRunCount = Number.isFinite(runCount) && runCount > 0 ? runCount : 1;
-  return Math.max(1, Math.floor(getMaxInflightEvrenCalls() / safeRunCount));
-}
-
-async function runWithConcurrency<T>(
-  items: T[],
-  limit: number,
-  worker: (item: T, index: number) => Promise<void>
-): Promise<void> {
-  const safeLimit = Math.max(1, Math.floor(limit || 1));
-  let nextIndex = 0;
-
-  const runners = Array.from({ length: Math.min(safeLimit, items.length) }, async () => {
-    while (true) {
-      const i = nextIndex++;
-      if (i >= items.length) return;
-      await worker(items[i], i);
-    }
-  });
-
-  await Promise.all(runners);
-}
 
 export async function POST(
   request: Request,
@@ -114,6 +83,7 @@ export async function POST(
   const newVersionId = crypto.randomUUID();
 
   const maxConcurrentTestCases = getMaxConcurrentTestCases(runCount);
+
   await runWithConcurrency(rows, maxConcurrentTestCases, async (row) => {
     const tc = testCaseById.get(row.test_case_uuid);
     if (!tc) return;
@@ -136,7 +106,11 @@ export async function POST(
     for (let runIndex = 0; runIndex < runResults.length; runIndex++) {
       const settled = runResults[runIndex];
       if (settled.status !== "fulfilled") {
-        console.error("[sessions/add-version] Evren error for", tc.test_case_id, settled.reason);
+        console.error(
+          "[sessions/add-version] Evren error for",
+          tc.test_case_id,
+          settled.reason instanceof Error ? settled.reason.message : settled.reason
+        );
         continue;
       }
       const runOutputs = settled.value;
