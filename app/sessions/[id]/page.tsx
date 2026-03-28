@@ -18,6 +18,7 @@ type Session = {
   summary: string | null;
   mode?: "single" | "comparison";
   manually_edited: boolean;
+  repeated_runs_mode?: "auto" | "manual";
   created_at?: string | null;
   users?: { full_name: string | null; email: string } | null;
 };
@@ -166,6 +167,31 @@ function getTurnCount(versions: VersionEntry[]): number {
   return maxTurns;
 }
 
+function evalResultsHaveAnyMultiRun(results: EvalResult[]): boolean {
+  for (const r of results) {
+    const vers = Array.isArray(r.evren_responses) ? r.evren_responses.map(normalizeVersionEntry) : [];
+    for (const v of vers) {
+      if (v.runs.length > 1) return true;
+    }
+  }
+  return false;
+}
+
+type RepeatedRunsDisplay = "None" | "Manual" | "Automated";
+
+function getRepeatedRunsDisplay(
+  repeatedRunsMode: "auto" | "manual" | undefined,
+  results: EvalResult[]
+): RepeatedRunsDisplay {
+  if (repeatedRunsMode === "manual") return "Manual";
+  if (evalResultsHaveAnyMultiRun(results)) return "Automated";
+  return "None";
+}
+
+/** Shared style for secondary “Edit” actions (header, summary, result rows). */
+const editTriggerClassName =
+  "inline-flex items-center gap-1 rounded-md border border-stone-300 bg-white px-2 py-1 text-sm font-medium text-stone-600 transition-colors hover:border-stone-400 hover:bg-stone-50 hover:text-stone-900";
+
 function prettyDetectedFlags(value: string): string {
   const raw = String(value ?? "").trim();
   if (!raw) return "—";
@@ -213,6 +239,7 @@ export default function SessionDetailPage() {
   const [editTitle, setEditTitle] = useState("");
   const [savingHeader, setSavingHeader] = useState(false);
   const [headerError, setHeaderError] = useState<string | null>(null);
+  const [savingRepeatedRunsMode, setSavingRepeatedRunsMode] = useState(false);
   const [expandedResultId, setExpandedResultId] = useState<string | null>(null);
   const [expandedFlagsKeys, setExpandedFlagsKeys] = useState<Set<string>>(new Set());
   const [searchQuery, setSearchQuery] = useState("");
@@ -415,6 +442,7 @@ export default function SessionDetailPage() {
   }
 
   async function confirmAddVersion() {
+    if (!session) return;
     const cleanedNewVersionLabel = newVersionLabel.trim() || `Version ${draftVersions.length + 1}`;
 
     // Save any pending renames before adding version
@@ -445,12 +473,17 @@ export default function SessionDetailPage() {
     setError(null);
 
     try {
+      const sessionMode = session.repeated_runs_mode === "manual" ? "manual" : "auto";
+      const effectiveRunCount =
+        session.mode === "comparison" && sessionMode !== "manual"
+          ? 1
+          : Math.max(1, Math.floor(addVersionRunCount || 1));
       const res = await fetch(`/api/sessions/${id}/add-version/stream`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           version_name: cleanedNewVersionLabel,
-          run_count: Math.max(1, Math.floor(addVersionRunCount || 1)),
+          run_count: effectiveRunCount,
           run_comparison: runComparison,
         }),
       });
@@ -606,6 +639,27 @@ export default function SessionDetailPage() {
       .finally(() => setSavingSummary(false));
   }
 
+  function saveRepeatedRunsMode(next: "auto" | "manual") {
+    if (!session || session.mode !== "comparison") return;
+    const current = session.repeated_runs_mode === "manual" ? "manual" : "auto";
+    if (next === current) return;
+    setSavingRepeatedRunsMode(true);
+    setError(null);
+    fetch(`/api/sessions/${id}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ repeated_runs_mode: next }),
+    })
+      .then((res) => res.json())
+      .then((data) => {
+        if (data.error) throw new Error(data.error);
+        setSession((s) => (s ? { ...s, repeated_runs_mode: next } : null));
+        if (next === "auto") setAddVersionRunCount(1);
+      })
+      .catch((e) => setError(e.message))
+      .finally(() => setSavingRepeatedRunsMode(false));
+  }
+
   function saveHeader() {
     const sessionIdTrimmed = editSessionId.trim();
     if (!sessionIdTrimmed) {
@@ -690,6 +744,14 @@ export default function SessionDetailPage() {
 
   const evaluatedResults = results.filter(isResultEvaluated);
   const hasEvaluationResults = evaluatedResults.length > 0;
+  const sessionRepeatedRunsMode: "auto" | "manual" =
+    session.repeated_runs_mode === "manual" ? "manual" : "auto";
+  const canEditRepeatedRunCount =
+    session.mode !== "comparison" || sessionRepeatedRunsMode === "manual";
+  const repeatedRunsDisplay = getRepeatedRunsDisplay(session.repeated_runs_mode, results);
+  const anyMultiRunInSession = evalResultsHaveAnyMultiRun(results);
+  const repeatedRunsSelectValue =
+    repeatedRunsDisplay === "None" ? "none" : repeatedRunsDisplay === "Automated" ? "automated" : "manual";
 
   return (
     <div className="mx-auto max-w-5xl px-4 py-8 sm:px-6 lg:px-8">
@@ -738,10 +800,10 @@ export default function SessionDetailPage() {
                 setHeaderError(null);
                 setEditingHeader(true);
               }}
-              className="inline-flex items-center gap-1.5 rounded-lg border border-stone-300 bg-stone-50 px-2.5 py-1.5 text-sm font-medium text-stone-700 shadow-sm hover:bg-stone-100 hover:border-stone-400"
+              className={editTriggerClassName}
               title="Edit session ID and title"
             >
-              <span aria-hidden className="text-stone-500">✎</span>
+              <Pencil className="h-3.5 w-3.5 text-stone-500" strokeWidth={2} aria-hidden />
               Edit
             </button>
           </div>
@@ -833,15 +895,45 @@ export default function SessionDetailPage() {
               {hasEvaluationResults ? `${evaluatedResults.filter((r) => r.success).length} / ${evaluatedResults.length}` : "—"}
             </span>
           </div>
-          <div className="flex items-center gap-2 text-sm text-stone-700">
-            <svg className="h-4 w-4 shrink-0 text-stone-400" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden>
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" />
-            </svg>
-            <span>
-              <strong className="font-medium text-stone-800">Score:</strong>{" "}
-              {hasEvaluationResults ? (evaluatedResults.reduce((s, r) => s + r.score, 0) / evaluatedResults.length).toFixed(2) : "—"}
-            </span>
-          </div>
+          {session.mode === "comparison" ? (
+            <div className="flex flex-wrap items-center gap-2 text-sm text-stone-700 min-w-0">
+              <svg className="h-4 w-4 shrink-0 self-center text-stone-400" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden>
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+              </svg>
+              <span className="inline-flex flex-wrap items-baseline gap-x-1.5 gap-y-0.5">
+                <strong className="font-medium text-stone-800">Repeated runs:</strong>
+                <select
+                  value={repeatedRunsSelectValue}
+                  onChange={(e) => {
+                    const v = e.target.value;
+                    saveRepeatedRunsMode(v === "manual" ? "manual" : "auto");
+                  }}
+                  disabled={savingRepeatedRunsMode}
+                  className="max-w-[11rem] cursor-pointer rounded-sm border border-stone-300 bg-white py-0 pl-0 pr-6 text-sm font-normal text-stone-900 hover:bg-stone-50 focus:border-stone-400 focus:outline-none focus:ring-1 focus:ring-inset focus:ring-stone-400 disabled:opacity-50"
+                  aria-label="Repeated runs"
+                  title="None: one run per version. Automated: any version has multiple runs. Manual: you choose run count when adding a version."
+                >
+                  <option value="none" disabled={anyMultiRunInSession}>
+                    None
+                  </option>
+                  <option value="automated" disabled={!anyMultiRunInSession}>
+                    Automated
+                  </option>
+                  <option value="manual">Manual</option>
+                </select>
+              </span>
+            </div>
+          ) : (
+            <div className="flex items-center gap-2 text-sm text-stone-700">
+              <svg className="h-4 w-4 shrink-0 text-stone-400" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden>
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" />
+              </svg>
+              <span>
+                <strong className="font-medium text-stone-800">Score:</strong>{" "}
+                {hasEvaluationResults ? (evaluatedResults.reduce((s, r) => s + r.score, 0) / evaluatedResults.length).toFixed(2) : "—"}
+              </span>
+            </div>
+          )}
           {(session.total_eval_time_seconds != null && session.total_eval_time_seconds >= 0) && (
             <div className="flex items-center gap-2 text-sm text-stone-700">
               <svg className="h-4 w-4 shrink-0 text-stone-400" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden>
@@ -909,10 +1001,10 @@ export default function SessionDetailPage() {
                   setSummary(summaryForDisplay(session?.summary ?? ""));
                   setEditingSummary(true);
                 }}
-                className="inline-flex items-center gap-1.5 rounded-lg border border-stone-300 bg-stone-50 px-2.5 py-1.5 text-sm font-medium text-stone-700 shadow-sm hover:bg-stone-100 hover:border-stone-400"
+                className={editTriggerClassName}
                 title="Edit summary"
               >
-                <span aria-hidden className="text-stone-500">✎</span>
+                <Pencil className="h-3.5 w-3.5 text-stone-500" strokeWidth={2} aria-hidden />
                 Edit
               </button>
             )}
@@ -1073,10 +1165,16 @@ export default function SessionDetailPage() {
                   type="number"
                   min={1}
                   step={1}
-                  value={addVersionRunCount}
+                  value={canEditRepeatedRunCount ? addVersionRunCount : 1}
                   onChange={(e) => setAddVersionRunCount(Math.max(1, Math.floor(Number(e.target.value) || 1)))}
-                  className="mt-1 block w-full rounded-lg border border-stone-200 bg-white px-3 py-2 text-sm text-stone-900 focus:border-stone-400 focus:outline-none focus:ring-1 focus:ring-stone-400"
+                  disabled={!canEditRepeatedRunCount}
+                  className="mt-1 block w-full rounded-lg border border-stone-200 bg-white px-3 py-2 text-sm text-stone-900 focus:border-stone-400 focus:outline-none focus:ring-1 focus:ring-stone-400 disabled:bg-stone-50 disabled:text-stone-500"
                 />
+                {!canEditRepeatedRunCount && (
+                  <p className="mt-1 text-xs text-stone-500">
+                    Set repeated runs to <strong className="font-medium text-stone-700">Manual</strong> in Session details to request more than one run.
+                  </p>
+                )}
               </div>
               <div className="flex items-center justify-between pt-1">
                 <div>
@@ -1347,10 +1445,10 @@ export default function SessionDetailPage() {
                       setEditScore(r.score);
                       setEditSuccess(r.success);
                     }}
-                    className="inline-flex items-center gap-1.5 rounded-lg border border-stone-200 bg-white px-3 py-2 text-sm font-medium text-stone-700 shadow-sm hover:bg-stone-50 hover:border-stone-300"
-                    title="Click to edit this analysis"
+                    className={editTriggerClassName}
+                    title="Edit analysis"
                   >
-                    <span aria-hidden className="text-stone-500">✎</span>
+                    <Pencil className="h-3.5 w-3.5 text-stone-500" strokeWidth={2} aria-hidden />
                     Edit
                   </button>
                 ) : null}
@@ -1671,10 +1769,10 @@ export default function SessionDetailPage() {
                                     setAiEditingComparisonId(r.eval_result_id);
                                     setAiComparisonFeedback("");
                                   }}
-                                  className="inline-flex items-center gap-1.5 rounded-md border border-stone-200 bg-white px-3 py-1.5 text-xs font-medium text-stone-700 hover:bg-stone-50 hover:border-stone-300"
-                                  title="AI edit"
+                                  className={editTriggerClassName}
+                                  title="AI edit comparison"
                                 >
-                                  <span aria-hidden className="text-stone-500">✦</span>
+                                  <Pencil className="h-3.5 w-3.5 text-stone-500" strokeWidth={2} aria-hidden />
                                   Edit
                                 </button>
                               )}

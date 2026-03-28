@@ -25,6 +25,8 @@ export interface TestSessionsRow {
   summary: string | null;
   mode: "single" | "comparison";
   manually_edited: boolean;
+  /** auto: show None or Automated from eval data; manual: user can edit run counts for new versions. */
+  repeated_runs_mode: "auto" | "manual";
 }
 
 /** One turn of Evren output within a version. */
@@ -157,7 +159,16 @@ export interface Database {
   public: {
     Tables: {
       users: { Row: UsersRow; Insert: Omit<UsersRow, "user_id"> & { user_id?: string }; Update: Partial<UsersRow> };
-      test_sessions: { Row: TestSessionsRow; Insert: Omit<TestSessionsRow, "session_id" | "test_session_id" | "mode"> & { session_id?: string; test_session_id?: string; mode?: TestSessionsRow["mode"] }; Update: Partial<TestSessionsRow> };
+      test_sessions: {
+        Row: TestSessionsRow;
+        Insert: Omit<TestSessionsRow, "session_id" | "test_session_id" | "mode" | "repeated_runs_mode"> & {
+          session_id?: string;
+          test_session_id?: string;
+          mode?: TestSessionsRow["mode"];
+          repeated_runs_mode?: TestSessionsRow["repeated_runs_mode"];
+        };
+        Update: Partial<TestSessionsRow>;
+      };
       eval_results: { Row: EvalResultsRow; Insert: Omit<EvalResultsRow, "eval_result_id"> & { eval_result_id?: string }; Update: Partial<EvalResultsRow> };
       test_cases: { Row: TestCasesRow; Insert: Omit<TestCasesRow, "id" | "test_case_id"> & { id?: string; test_case_id?: string }; Update: Partial<TestCasesRow> };
       default_settings: { Row: DefaultSettingsRow; Insert: Omit<DefaultSettingsRow, "default_setting_id"> & { default_setting_id?: string }; Update: Partial<DefaultSettingsRow> };
