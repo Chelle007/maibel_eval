@@ -85,7 +85,7 @@ export function normalizeVersionEntry(version: AnyVersionEntry): VersionEntry {
     };
   }
 
-  const turns = Array.isArray(version.turns) ? version.turns : [];
+  const turns = "turns" in version && Array.isArray(version.turns) ? version.turns : [];
   return {
     version_id: version.version_id,
     version_name: version.version_name,

@@ -9,6 +9,38 @@ const FALLBACK_EVREN_URL = process.env.NEXT_PUBLIC_EVREN_API_URL || "http://loca
 
 type EvalResultLite = Pick<EvalResultsRow, "eval_result_id" | "test_case_uuid" | "evren_responses" | "comparison">;
 
+const DEFAULT_MAX_INFLIGHT_EVREN_CALLS = 10;
+
+function getMaxInflightEvrenCalls(): number {
+  const raw = process.env.MAX_INFLIGHT_EVREN_CALLS;
+  const n = raw ? Number.parseInt(raw, 10) : NaN;
+  return Number.isFinite(n) && n > 0 ? n : DEFAULT_MAX_INFLIGHT_EVREN_CALLS;
+}
+
+function getMaxConcurrentTestCases(runCount: number): number {
+  const safeRunCount = Number.isFinite(runCount) && runCount > 0 ? runCount : 1;
+  return Math.max(1, Math.floor(getMaxInflightEvrenCalls() / safeRunCount));
+}
+
+async function runWithConcurrency<T>(
+  items: T[],
+  limit: number,
+  worker: (item: T, index: number) => Promise<void>
+): Promise<void> {
+  const safeLimit = Math.max(1, Math.floor(limit || 1));
+  let nextIndex = 0;
+
+  const runners = Array.from({ length: Math.min(safeLimit, items.length) }, async () => {
+    while (true) {
+      const i = nextIndex++;
+      if (i >= items.length) return;
+      await worker(items[i], i);
+    }
+  });
+
+  await Promise.all(runners);
+}
+
 function sendEvent(
   controller: ReadableStreamDefaultController<Uint8Array>,
   type: string,
@@ -122,18 +154,24 @@ export async function POST(
           message: `Adding version for ${rows.length} test case${rows.length === 1 ? "" : "s"}…`,
         });
 
-        for (let index = 0; index < rows.length; index++) {
-          const row = rows[index];
-          const tc = testCaseById.get(row.test_case_uuid);
-          if (!tc) continue;
+        const maxConcurrentTestCases = getMaxConcurrentTestCases(runCount);
+        let completedCount = 0;
 
-          sendEvent(controller, "progress", {
-            stage: "evren",
-            index,
-            total: rows.length,
-            test_case_id: tc.test_case_id,
-            message: "Rerunning Evren…",
-          });
+        await runWithConcurrency(rows, maxConcurrentTestCases, async (row, index) => {
+          const tc = testCaseById.get(row.test_case_uuid);
+          const tcId = tc?.test_case_id ?? "(unknown)";
+
+          if (!tc) {
+            completedCount++;
+            sendEvent(controller, "progress", {
+              stage: "done",
+              index: completedCount,
+              total: rows.length,
+              test_case_id: tcId,
+              message: `Completed ${completedCount} of ${rows.length}`,
+            });
+            return;
+          }
 
           const testCase: TestCase = {
             test_case_id: tc.test_case_id,
@@ -146,27 +184,15 @@ export async function POST(
             forbidden: tc.forbidden ?? undefined,
           };
 
+          const runPromises = Array.from({ length: runCount }, async () => callEvrenApi(evrenModelApiUrl, testCase));
+          const runResults = await Promise.allSettled(runPromises);
           const runs: RunEntry[] = [];
-          for (let runIndex = 0; runIndex < runCount; runIndex++) {
-            sendEvent(controller, "progress", {
-              stage: "evren",
-              index,
-              total: rows.length,
-              test_case_id: tc.test_case_id,
-              message: `Rerunning Evren (Run ${runIndex + 1}/${runCount})…`,
-            });
-            try {
-              const runOutputs = await callEvrenApi(evrenModelApiUrl, testCase);
-              runs.push({
-                run_id: crypto.randomUUID(),
-                run_index: runIndex + 1,
-                turns: runOutputs.map((o) => ({
-                  response: Array.isArray(o.evren_response) ? o.evren_response.map(String) : [String(o.evren_response ?? "")],
-                  detected_flags: String(o.detected_states ?? ""),
-                })),
-              });
-            } catch (evrenErr) {
-              const msg = evrenErr instanceof Error ? evrenErr.message : String(evrenErr);
+
+          for (let runIndex = 0; runIndex < runResults.length; runIndex++) {
+            const settled = runResults[runIndex];
+            if (settled.status !== "fulfilled") {
+              const msg =
+                settled.reason instanceof Error ? settled.reason.message : String(settled.reason ?? "Evren error");
               sendEvent(controller, "progress", {
                 stage: "error",
                 index,
@@ -174,9 +200,29 @@ export async function POST(
                 test_case_id: tc.test_case_id,
                 message: `Evren API failed on run ${runIndex + 1}: ${msg.slice(0, 80)}${msg.length > 80 ? "…" : ""}`,
               });
+              continue;
             }
+            const runOutputs = settled.value;
+            runs.push({
+              run_id: crypto.randomUUID(),
+              run_index: runIndex + 1,
+              turns: runOutputs.map((o) => ({
+                response: Array.isArray(o.evren_response) ? o.evren_response.map(String) : [String(o.evren_response ?? "")],
+                detected_flags: String(o.detected_states ?? ""),
+              })),
+            });
           }
-          if (runs.length === 0) continue;
+          if (runs.length === 0) {
+            completedCount++;
+            sendEvent(controller, "progress", {
+              stage: "done",
+              index: completedCount,
+              total: rows.length,
+              test_case_id: tc.test_case_id,
+              message: `Completed ${completedCount} of ${rows.length}`,
+            });
+            return;
+          }
 
           const existing = Array.isArray(row.evren_responses) ? (row.evren_responses as VersionEntry[]) : [];
           const newVersion: VersionEntry = {
@@ -194,14 +240,15 @@ export async function POST(
             .update({ evren_responses: mergedResponses } as never)
             .eq("eval_result_id", row.eval_result_id);
 
+          completedCount++;
           sendEvent(controller, "progress", {
             stage: "done",
-            index: index + 1,
+            index: completedCount,
             total: rows.length,
             test_case_id: tc.test_case_id,
-            message: `Completed ${index + 1} of ${rows.length}`,
+            message: `Completed ${completedCount} of ${rows.length}`,
           });
-        }
+        });
 
         // --- Comparison phase ---
         if (runComparison && apiKey) {

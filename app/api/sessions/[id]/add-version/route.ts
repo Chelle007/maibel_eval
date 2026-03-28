@@ -10,6 +10,38 @@ const FALLBACK_EVREN_URL = process.env.NEXT_PUBLIC_EVREN_API_URL || "http://loca
 
 type EvalResultLite = Pick<EvalResultsRow, "eval_result_id" | "test_case_uuid" | "evren_responses" | "comparison">;
 
+const DEFAULT_MAX_INFLIGHT_EVREN_CALLS = 10;
+
+function getMaxInflightEvrenCalls(): number {
+  const raw = process.env.MAX_INFLIGHT_EVREN_CALLS;
+  const n = raw ? Number.parseInt(raw, 10) : NaN;
+  return Number.isFinite(n) && n > 0 ? n : DEFAULT_MAX_INFLIGHT_EVREN_CALLS;
+}
+
+function getMaxConcurrentTestCases(runCount: number): number {
+  const safeRunCount = Number.isFinite(runCount) && runCount > 0 ? runCount : 1;
+  return Math.max(1, Math.floor(getMaxInflightEvrenCalls() / safeRunCount));
+}
+
+async function runWithConcurrency<T>(
+  items: T[],
+  limit: number,
+  worker: (item: T, index: number) => Promise<void>
+): Promise<void> {
+  const safeLimit = Math.max(1, Math.floor(limit || 1));
+  let nextIndex = 0;
+
+  const runners = Array.from({ length: Math.min(safeLimit, items.length) }, async () => {
+    while (true) {
+      const i = nextIndex++;
+      if (i >= items.length) return;
+      await worker(items[i], i);
+    }
+  });
+
+  await Promise.all(runners);
+}
+
 export async function POST(
   request: Request,
   { params }: { params: Promise<{ id: string }> }
@@ -81,9 +113,10 @@ export async function POST(
   const versionName = body.version_name?.trim() || `Version ${existingVersions.length + 1}`;
   const newVersionId = crypto.randomUUID();
 
-  for (const row of rows) {
+  const maxConcurrentTestCases = getMaxConcurrentTestCases(runCount);
+  await runWithConcurrency(rows, maxConcurrentTestCases, async (row) => {
     const tc = testCaseById.get(row.test_case_uuid);
-    if (!tc) continue;
+    if (!tc) return;
 
     const testCase: TestCase = {
       test_case_id: tc.test_case_id,
@@ -96,23 +129,27 @@ export async function POST(
       forbidden: tc.forbidden ?? undefined,
     };
 
+    const runPromises = Array.from({ length: runCount }, async () => callEvrenApi(evrenModelApiUrl, testCase));
+    const runResults = await Promise.allSettled(runPromises);
     const runs: RunEntry[] = [];
-    for (let runIndex = 0; runIndex < runCount; runIndex++) {
-      try {
-        const runOutputs = await callEvrenApi(evrenModelApiUrl, testCase);
-        runs.push({
-          run_id: crypto.randomUUID(),
-          run_index: runIndex + 1,
-          turns: runOutputs.map((o) => ({
-            response: Array.isArray(o.evren_response) ? o.evren_response.map(String) : [String(o.evren_response ?? "")],
-            detected_flags: String(o.detected_states ?? ""),
-          })),
-        });
-      } catch (evrenErr) {
-        console.error("[sessions/add-version] Evren error for", tc.test_case_id, evrenErr);
+
+    for (let runIndex = 0; runIndex < runResults.length; runIndex++) {
+      const settled = runResults[runIndex];
+      if (settled.status !== "fulfilled") {
+        console.error("[sessions/add-version] Evren error for", tc.test_case_id, settled.reason);
+        continue;
       }
+      const runOutputs = settled.value;
+      runs.push({
+        run_id: crypto.randomUUID(),
+        run_index: runIndex + 1,
+        turns: runOutputs.map((o) => ({
+          response: Array.isArray(o.evren_response) ? o.evren_response.map(String) : [String(o.evren_response ?? "")],
+          detected_flags: String(o.detected_states ?? ""),
+        })),
+      });
     }
-    if (runs.length === 0) continue;
+    if (runs.length === 0) return;
 
     const existing = Array.isArray(row.evren_responses) ? (row.evren_responses as VersionEntry[]) : [];
     const newVersion: VersionEntry = {
@@ -129,7 +166,7 @@ export async function POST(
       .from("eval_results")
       .update({ evren_responses: mergedResponses } as never)
       .eq("eval_result_id", row.eval_result_id);
-  }
+  });
 
   if (runComparison && apiKey) {
     const { data: freshRows } = await supabase

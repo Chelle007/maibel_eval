@@ -9,6 +9,38 @@ import type { Database, RunEntry, TestCasesRow, VersionEntry } from "@/lib/db.ty
 
 export const maxDuration = 300;
 
+const DEFAULT_MAX_INFLIGHT_EVREN_CALLS = 10;
+
+function getMaxInflightEvrenCalls(): number {
+  const raw = process.env.MAX_INFLIGHT_EVREN_CALLS;
+  const n = raw ? Number.parseInt(raw, 10) : NaN;
+  return Number.isFinite(n) && n > 0 ? n : DEFAULT_MAX_INFLIGHT_EVREN_CALLS;
+}
+
+function getMaxConcurrentTestCases(runCount: number): number {
+  const safeRunCount = Number.isFinite(runCount) && runCount > 0 ? runCount : 1;
+  return Math.max(1, Math.floor(getMaxInflightEvrenCalls() / safeRunCount));
+}
+
+async function runWithConcurrency<T>(
+  items: T[],
+  limit: number,
+  worker: (item: T, index: number) => Promise<void>
+): Promise<void> {
+  const safeLimit = Math.max(1, Math.floor(limit || 1));
+  let nextIndex = 0;
+
+  const runners = Array.from({ length: Math.min(safeLimit, items.length) }, async () => {
+    while (true) {
+      const i = nextIndex++;
+      if (i >= items.length) return;
+      await worker(items[i], i);
+    }
+  });
+
+  await Promise.all(runners);
+}
+
 export async function POST(request: Request) {
   const supabase = await createClient();
   const { data: { user: authUser } } = await supabase.auth.getUser();
@@ -86,7 +118,8 @@ export async function POST(request: Request) {
 
   const rows = (testCasesRows ?? []) as TestCasesRow[];
   const versionId = crypto.randomUUID();
-  for (const row of rows) {
+  const maxConcurrentTestCases = getMaxConcurrentTestCases(runCount);
+  await runWithConcurrency(rows, maxConcurrentTestCases, async (row) => {
     const testCase: TestCase = {
       test_case_id: row.test_case_id,
       type: row.type ?? "single_turn",
@@ -97,23 +130,28 @@ export async function POST(request: Request) {
       expected_behavior: row.expected_behavior ?? "",
       forbidden: row.forbidden ?? undefined,
     };
+    const runPromises = Array.from({ length: runCount }, async () => callEvrenApi(evrenModelApiUrl, testCase));
+    const runResults = await Promise.allSettled(runPromises);
     const runs: RunEntry[] = [];
-    for (let runIndex = 0; runIndex < runCount; runIndex++) {
-      try {
-        const runOutputs = await callEvrenApi(evrenModelApiUrl, testCase);
-        runs.push({
-          run_id: crypto.randomUUID(),
-          run_index: runIndex + 1,
-          turns: runOutputs.map((o) => ({
-            response: Array.isArray(o.evren_response) ? o.evren_response.map(String) : [String(o.evren_response ?? "")],
-            detected_flags: String(o.detected_states ?? ""),
-          })),
-        });
-      } catch (evrenErr) {
-        console.error("[evaluate/run] Evren error for", row.test_case_id, evrenErr instanceof Error ? evrenErr.message : evrenErr);
+
+    for (let runIndex = 0; runIndex < runResults.length; runIndex++) {
+      const settled = runResults[runIndex];
+      if (settled.status !== "fulfilled") {
+        const msg = settled.reason instanceof Error ? settled.reason.message : String(settled.reason ?? "Evren error");
+        console.error("[evaluate/run] Evren error for", row.test_case_id, msg);
+        continue;
       }
+      const runOutputs = settled.value;
+      runs.push({
+        run_id: crypto.randomUUID(),
+        run_index: runIndex + 1,
+        turns: runOutputs.map((o) => ({
+          response: Array.isArray(o.evren_response) ? o.evren_response.map(String) : [String(o.evren_response ?? "")],
+          detected_flags: String(o.detected_states ?? ""),
+        })),
+      });
     }
-    if (runs.length === 0) continue;
+    if (runs.length === 0) return;
 
     const run1Turns = runs[0]?.turns ?? [];
     const run1Outputs = run1Turns.map((t) => ({
@@ -170,7 +208,7 @@ export async function POST(request: Request) {
       } as Database["public"]["Tables"]["eval_results"]["Insert"];
       await supabase.from("eval_results").insert(evalPayload as any);
     }
-  }
+  });
 
   let summary: string | null = null;
   let title: string | null = null;
