@@ -62,6 +62,7 @@ CREATE TABLE test_sessions (
   summary            TEXT,
   mode               TEXT NOT NULL DEFAULT 'single' CHECK (mode IN ('single', 'comparison')),
   manually_edited    BOOLEAN NOT NULL DEFAULT FALSE,
+  repeated_runs_mode TEXT NOT NULL DEFAULT 'auto' CHECK (repeated_runs_mode IN ('auto', 'manual')),
   created_at         TIMESTAMPTZ NOT NULL DEFAULT now(),
   updated_at         TIMESTAMPTZ NOT NULL DEFAULT now()
 );

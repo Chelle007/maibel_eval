@@ -7,7 +7,11 @@ export async function PATCH(
   { params }: { params: Promise<{ id: string }> }
 ) {
   const { id } = await params;
-  const body = (await request.json()) as { title?: string; test_session_id?: string };
+  const body = (await request.json()) as {
+    title?: string;
+    test_session_id?: string;
+    repeated_runs_mode?: string;
+  };
   const supabase = await createClient();
 
   const newSessionId = typeof body.test_session_id === "string" ? body.test_session_id.trim() : undefined;
@@ -35,8 +39,14 @@ export async function PATCH(
   const payload: Database["public"]["Tables"]["test_sessions"]["Update"] = {};
   if (newTitle !== undefined) payload.title = newTitle || null;
   if (newSessionId !== undefined) payload.test_session_id = newSessionId;
+  if (body.repeated_runs_mode === "auto" || body.repeated_runs_mode === "manual") {
+    payload.repeated_runs_mode = body.repeated_runs_mode;
+  }
   if (Object.keys(payload).length === 0) {
-    return NextResponse.json({ error: "Provide title and/or test_session_id" }, { status: 400 });
+    return NextResponse.json(
+      { error: "Provide title, test_session_id, and/or repeated_runs_mode" },
+      { status: 400 }
+    );
   }
 
   const { data, error } = await supabase

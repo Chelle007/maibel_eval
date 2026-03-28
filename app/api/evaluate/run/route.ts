@@ -1,11 +1,12 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
+import { getMaxConcurrentTestCases, runWithConcurrency } from "@/lib/evren-concurrency";
 import { callEvrenApi } from "@/lib/evren";
 import { evaluateOne } from "@/lib/evaluator";
 import { buildRichReport, runSummarizer } from "@/lib/summarizer";
 import { loadEvaluatorSystemPrompt, loadSummarizerSystemPrompt } from "@/lib/prompts";
 import type { TestCase, EvrenOutput, EvaluationResult } from "@/lib/types";
-import type { Database, TestCasesRow, VersionEntry } from "@/lib/db.types";
+import type { Database, RunEntry, TestCasesRow, VersionEntry } from "@/lib/db.types";
 
 export const maxDuration = 300;
 
@@ -29,6 +30,7 @@ export async function POST(request: Request) {
   let body: {
     evren_model_api_url: string;
     mode?: "single" | "comparison";
+    run_count?: number;
     model_name?: string;
     summarizer_model?: string;
     system_prompt?: string;
@@ -41,6 +43,7 @@ export async function POST(request: Request) {
   const evrenModelApiUrl = body.evren_model_api_url;
   if (!evrenModelApiUrl?.trim()) return NextResponse.json({ error: "evren_model_api_url required" }, { status: 400 });
   const sessionMode = body.mode === "comparison" ? "comparison" : "single";
+  const runCount = Number.isFinite(body.run_count) ? Math.max(1, Math.floor(body.run_count as number)) : 1;
   const useEvaluator = sessionMode === "single";
   const useSummarizer = sessionMode === "single";
   const apiKey = process.env.GEMINI_API_KEY;
@@ -80,11 +83,14 @@ export async function POST(request: Request) {
   const summarizerModel = body.summarizer_model ?? modelName;
   const systemPrompt = body.system_prompt ?? loadEvaluatorSystemPrompt();
   let totalCostUsd = 0;
-  const richReportInputs: { testCase: TestCase; evrenOutput: EvrenOutput; result: EvaluationResult }[] = [];
+  type RichSlot = { testCase: TestCase; evrenOutput: EvrenOutput; result: EvaluationResult };
 
   const rows = (testCasesRows ?? []) as TestCasesRow[];
+  const richSlots: (RichSlot | null)[] = new Array(rows.length).fill(null);
   const versionId = crypto.randomUUID();
-  for (const row of rows) {
+  const maxConcurrentTestCases = getMaxConcurrentTestCases(runCount);
+
+  await runWithConcurrency(rows, maxConcurrentTestCases, async (row, index) => {
     const testCase: TestCase = {
       test_case_id: row.test_case_id,
       type: row.type ?? "single_turn",
@@ -95,31 +101,56 @@ export async function POST(request: Request) {
       expected_behavior: row.expected_behavior ?? "",
       forbidden: row.forbidden ?? undefined,
     };
-    let evrenOutputs: Awaited<ReturnType<typeof callEvrenApi>>;
-    try {
-      evrenOutputs = await callEvrenApi(evrenModelApiUrl, testCase);
-    } catch (evrenErr) {
-      console.error("[evaluate/run] Evren error for", row.test_case_id, evrenErr instanceof Error ? evrenErr.message : evrenErr);
-      continue;
+
+    const runPromises = Array.from({ length: runCount }, async () => callEvrenApi(evrenModelApiUrl, testCase));
+    const runResults = await Promise.allSettled(runPromises);
+    const runs: RunEntry[] = [];
+
+    for (let runIndex = 0; runIndex < runResults.length; runIndex++) {
+      const settled = runResults[runIndex];
+      if (settled.status !== "fulfilled") {
+        console.error(
+          "[evaluate/run] Evren error for",
+          row.test_case_id,
+          settled.reason instanceof Error ? settled.reason.message : settled.reason
+        );
+        continue;
+      }
+      const runOutputs = settled.value;
+      runs.push({
+        run_id: crypto.randomUUID(),
+        run_index: runIndex + 1,
+        turns: runOutputs.map((o) => ({
+          response: Array.isArray(o.evren_response) ? o.evren_response.map(String) : [String(o.evren_response ?? "")],
+          detected_flags: String(o.detected_states ?? ""),
+        })),
+      });
     }
+    if (runs.length === 0) return;
+
+    const run1Turns = runs[0]?.turns ?? [];
+    const run1Outputs = run1Turns.map((t) => ({
+      evren_response: t.response,
+      detected_states: t.detected_flags,
+    }));
     const versionEntry: VersionEntry = {
       version_id: versionId,
       version_name: "Version 1",
-      turns: evrenOutputs.map((o) => ({
-        response: Array.isArray(o.evren_response) ? o.evren_response.map(String) : [String(o.evren_response ?? "")],
-        detected_flags: String(o.detected_states ?? ""),
-      })),
+      run_count_requested: runCount,
+      evidence_source: runCount > 1 ? "automated" : "none",
+      comparison_basis_run_index: 1,
+      runs,
     };
     const evrenResponsesColumn = [versionEntry];
-    const lastOutput = evrenOutputs[evrenOutputs.length - 1] ?? { evren_response: "", detected_states: "" };
+    const lastOutput = run1Outputs[run1Outputs.length - 1] ?? { evren_response: "", detected_states: "" };
     if (useEvaluator) {
       const evalInput =
-        testCase.type === "multi_turn" && evrenOutputs.length > 1 ? evrenOutputs : lastOutput;
+        testCase.type === "multi_turn" && run1Outputs.length > 1 ? run1Outputs : lastOutput;
       const result = await evaluateOne(testCase, evalInput, apiKey as string, modelName, systemPrompt);
       const costUsd = result.token_usage?.cost_usd ?? 0;
       totalCostUsd += costUsd;
 
-      richReportInputs.push({ testCase, evrenOutput: lastOutput, result });
+      richSlots[index] = { testCase, evrenOutput: lastOutput, result };
 
       const evalPayload = {
         session_id: sessionId,
@@ -152,7 +183,9 @@ export async function POST(request: Request) {
       } as Database["public"]["Tables"]["eval_results"]["Insert"];
       await supabase.from("eval_results").insert(evalPayload as any);
     }
-  }
+  });
+
+  const richReportInputs = richSlots.filter((s): s is RichSlot => s != null);
 
   let summary: string | null = null;
   let title: string | null = null;

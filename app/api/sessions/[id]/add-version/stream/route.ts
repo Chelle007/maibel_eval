@@ -1,9 +1,10 @@
 import { createClient } from "@/lib/supabase/server";
+import { getMaxConcurrentTestCases, runWithConcurrency } from "@/lib/evren-concurrency";
 import { callEvrenApi } from "@/lib/evren";
 import { compareOverall } from "@/lib/comparator";
 import { loadComparatorOverallSystemPrompt } from "@/lib/prompts";
 import type { TestCase } from "@/lib/types";
-import type { TestCasesRow, EvalResultsRow, VersionEntry, DefaultSettingsRow } from "@/lib/db.types";
+import type { DefaultSettingsRow, EvalResultsRow, RunEntry, TestCasesRow, VersionEntry } from "@/lib/db.types";
 
 const FALLBACK_EVREN_URL = process.env.NEXT_PUBLIC_EVREN_API_URL || "http://localhost:8000";
 
@@ -28,13 +29,14 @@ export async function POST(
 ) {
   const { id } = await params;
 
-  let body: { version_name?: string; run_comparison?: boolean } = {};
+  let body: { version_name?: string; run_count?: number; run_comparison?: boolean } = {};
   try {
     body = await request.json();
   } catch {
     /* empty body is fine */
   }
   const runComparison = body.run_comparison ?? false;
+  const runCount = Number.isFinite(body.run_count) ? Math.max(1, Math.floor(body.run_count as number)) : 1;
 
   const supabase = await createClient();
 
@@ -121,18 +123,12 @@ export async function POST(
           message: `Adding version for ${rows.length} test case${rows.length === 1 ? "" : "s"}…`,
         });
 
-        for (let index = 0; index < rows.length; index++) {
-          const row = rows[index];
-          const tc = testCaseById.get(row.test_case_uuid);
-          if (!tc) continue;
+        const maxConcurrentTestCases = getMaxConcurrentTestCases(runCount);
+        let completedCount = 0;
 
-          sendEvent(controller, "progress", {
-            stage: "evren",
-            index,
-            total: rows.length,
-            test_case_id: tc.test_case_id,
-            message: "Rerunning Evren…",
-          });
+        await runWithConcurrency(rows, maxConcurrentTestCases, async (row) => {
+          const tc = testCaseById.get(row.test_case_uuid);
+          if (!tc) return;
 
           const testCase: TestCase = {
             test_case_id: tc.test_case_id,
@@ -145,45 +141,56 @@ export async function POST(
             forbidden: tc.forbidden ?? undefined,
           };
 
-          let newOutputs;
-          try {
-            newOutputs = await callEvrenApi(evrenModelApiUrl, testCase);
-          } catch (evrenErr) {
-            const msg = evrenErr instanceof Error ? evrenErr.message : String(evrenErr);
-            sendEvent(controller, "progress", {
-              stage: "error",
-              index,
-              total: rows.length,
-              test_case_id: tc.test_case_id,
-              message: `Evren API failed: ${msg.slice(0, 80)}${msg.length > 80 ? "…" : ""}`,
+          const runPromises = Array.from({ length: runCount }, async () => callEvrenApi(evrenModelApiUrl, testCase));
+          const runResults = await Promise.allSettled(runPromises);
+          const runs: RunEntry[] = [];
+
+          for (let runIndex = 0; runIndex < runResults.length; runIndex++) {
+            const settled = runResults[runIndex];
+            if (settled.status !== "fulfilled") {
+              const msg =
+                settled.reason instanceof Error ? settled.reason.message : String(settled.reason ?? "Evren error");
+              console.error("[add-version/stream] Evren error for", tc.test_case_id, msg);
+              continue;
+            }
+            const runOutputs = settled.value;
+            runs.push({
+              run_id: crypto.randomUUID(),
+              run_index: runIndex + 1,
+              turns: runOutputs.map((o) => ({
+                response: Array.isArray(o.evren_response) ? o.evren_response.map(String) : [String(o.evren_response ?? "")],
+                detected_flags: String(o.detected_states ?? ""),
+              })),
             });
-            continue;
           }
 
-          const existing = Array.isArray(row.evren_responses) ? (row.evren_responses as VersionEntry[]) : [];
-          const newVersion: VersionEntry = {
-            version_id: newVersionId,
-            version_name: versionName,
-            turns: newOutputs.map((o) => ({
-              response: Array.isArray(o.evren_response) ? o.evren_response.map(String) : [String(o.evren_response ?? "")],
-              detected_flags: String(o.detected_states ?? ""),
-            })),
-          };
-          const mergedResponses = [...existing, newVersion];
+          if (runs.length > 0) {
+            const existing = Array.isArray(row.evren_responses) ? (row.evren_responses as VersionEntry[]) : [];
+            const newVersion: VersionEntry = {
+              version_id: newVersionId,
+              version_name: versionName,
+              run_count_requested: runCount,
+              evidence_source: runCount > 1 ? "automated" : "none",
+              comparison_basis_run_index: 1,
+              runs,
+            };
+            const mergedResponses = [...existing, newVersion];
 
-          await supabase
-            .from("eval_results")
-            .update({ evren_responses: mergedResponses } as never)
-            .eq("eval_result_id", row.eval_result_id);
+            await supabase
+              .from("eval_results")
+              .update({ evren_responses: mergedResponses } as never)
+              .eq("eval_result_id", row.eval_result_id);
+          }
 
+          completedCount++;
           sendEvent(controller, "progress", {
             stage: "done",
-            index: index + 1,
+            index: completedCount,
             total: rows.length,
             test_case_id: tc.test_case_id,
-            message: `Completed ${index + 1} of ${rows.length}`,
+            message: `Completed ${completedCount} of ${rows.length}`,
           });
-        }
+        });
 
         // --- Comparison phase ---
         if (runComparison && apiKey) {

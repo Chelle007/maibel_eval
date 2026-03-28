@@ -1,10 +1,11 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
+import { getMaxConcurrentTestCases, runWithConcurrency } from "@/lib/evren-concurrency";
 import { callEvrenApi } from "@/lib/evren";
 import { compareOverall } from "@/lib/comparator";
 import { loadComparatorOverallSystemPrompt } from "@/lib/prompts";
 import type { TestCase } from "@/lib/types";
-import type { TestCasesRow, EvalResultsRow, VersionEntry, DefaultSettingsRow } from "@/lib/db.types";
+import type { DefaultSettingsRow, EvalResultsRow, RunEntry, TestCasesRow, VersionEntry } from "@/lib/db.types";
 
 const FALLBACK_EVREN_URL = process.env.NEXT_PUBLIC_EVREN_API_URL || "http://localhost:8000";
 
@@ -16,13 +17,14 @@ export async function POST(
 ) {
   const { id } = await params;
 
-  let body: { version_name?: string; run_comparison?: boolean } = {};
+  let body: { version_name?: string; run_count?: number; run_comparison?: boolean } = {};
   try {
     body = await request.json();
   } catch {
     /* empty body is fine */
   }
   const runComparison = body.run_comparison ?? false;
+  const runCount = Number.isFinite(body.run_count) ? Math.max(1, Math.floor(body.run_count as number)) : 1;
 
   const supabase = await createClient();
 
@@ -80,9 +82,11 @@ export async function POST(
   const versionName = body.version_name?.trim() || `Version ${existingVersions.length + 1}`;
   const newVersionId = crypto.randomUUID();
 
-  for (const row of rows) {
+  const maxConcurrentTestCases = getMaxConcurrentTestCases(runCount);
+
+  await runWithConcurrency(rows, maxConcurrentTestCases, async (row) => {
     const tc = testCaseById.get(row.test_case_uuid);
-    if (!tc) continue;
+    if (!tc) return;
 
     const testCase: TestCase = {
       test_case_id: tc.test_case_id,
@@ -95,22 +99,40 @@ export async function POST(
       forbidden: tc.forbidden ?? undefined,
     };
 
-    let newOutputs;
-    try {
-      newOutputs = await callEvrenApi(evrenModelApiUrl, testCase);
-    } catch (evrenErr) {
-      console.error("[sessions/add-version] Evren error for", tc.test_case_id, evrenErr);
-      continue;
+    const runPromises = Array.from({ length: runCount }, async () => callEvrenApi(evrenModelApiUrl, testCase));
+    const runResults = await Promise.allSettled(runPromises);
+    const runs: RunEntry[] = [];
+
+    for (let runIndex = 0; runIndex < runResults.length; runIndex++) {
+      const settled = runResults[runIndex];
+      if (settled.status !== "fulfilled") {
+        console.error(
+          "[sessions/add-version] Evren error for",
+          tc.test_case_id,
+          settled.reason instanceof Error ? settled.reason.message : settled.reason
+        );
+        continue;
+      }
+      const runOutputs = settled.value;
+      runs.push({
+        run_id: crypto.randomUUID(),
+        run_index: runIndex + 1,
+        turns: runOutputs.map((o) => ({
+          response: Array.isArray(o.evren_response) ? o.evren_response.map(String) : [String(o.evren_response ?? "")],
+          detected_flags: String(o.detected_states ?? ""),
+        })),
+      });
     }
+    if (runs.length === 0) return;
 
     const existing = Array.isArray(row.evren_responses) ? (row.evren_responses as VersionEntry[]) : [];
     const newVersion: VersionEntry = {
       version_id: newVersionId,
       version_name: versionName,
-      turns: newOutputs.map((o) => ({
-        response: Array.isArray(o.evren_response) ? o.evren_response.map(String) : [String(o.evren_response ?? "")],
-        detected_flags: String(o.detected_states ?? ""),
-      })),
+      run_count_requested: runCount,
+      evidence_source: runCount > 1 ? "automated" : "none",
+      comparison_basis_run_index: 1,
+      runs,
     };
     const mergedResponses = [...existing, newVersion];
 
@@ -118,7 +140,7 @@ export async function POST(
       .from("eval_results")
       .update({ evren_responses: mergedResponses } as never)
       .eq("eval_result_id", row.eval_result_id);
-  }
+  });
 
   if (runComparison && apiKey) {
     const { data: freshRows } = await supabase
