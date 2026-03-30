@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { Pencil, RefreshCw, Save, X, Trash2, Check, Plus } from "lucide-react";
 import { useParams, useRouter } from "next/navigation";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import ReactMarkdown from "react-markdown";
 import { SummaryEditor } from "@/app/components/SummaryEditor";
 import {
@@ -246,6 +246,8 @@ export default function SessionDetailPage() {
     Record<string, Record<string, VersionBehaviorReview>>
   >({});
   const [savingBehaviorReviewId, setSavingBehaviorReviewId] = useState<string | null>(null);
+  const [savedBehaviorReviewId, setSavedBehaviorReviewId] = useState<string | null>(null);
+  const behaviorReviewSavedTimeoutRef = useRef<number | null>(null);
   const [summary, setSummary] = useState("");
   const [editingSummary, setEditingSummary] = useState(false);
   const [savingSummary, setSavingSummary] = useState(false);
@@ -419,6 +421,11 @@ export default function SessionDetailPage() {
     for (const ver of reviewVersions) {
       payload[ver.version_id] = getBehaviorReviewDraft(r, ver.version_id, behaviorReviewDraft);
     }
+    setSavedBehaviorReviewId((prev) => (prev === r.eval_result_id ? null : prev));
+    if (behaviorReviewSavedTimeoutRef.current != null) {
+      window.clearTimeout(behaviorReviewSavedTimeoutRef.current);
+      behaviorReviewSavedTimeoutRef.current = null;
+    }
     setSavingBehaviorReviewId(r.eval_result_id);
     setError(null);
     try {
@@ -449,6 +456,10 @@ export default function SessionDetailPage() {
         delete next[r.eval_result_id];
         return next;
       });
+      setSavedBehaviorReviewId(r.eval_result_id);
+      behaviorReviewSavedTimeoutRef.current = window.setTimeout(() => {
+        setSavedBehaviorReviewId((cur) => (cur === r.eval_result_id ? null : cur));
+      }, 2000);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Failed to save behavior review");
     } finally {
@@ -1843,25 +1854,38 @@ export default function SessionDetailPage() {
                                 e.stopPropagation();
                                 void saveBehaviorReview(r);
                               }}
-                              disabled={savingBehaviorReviewId === r.eval_result_id}
-                              className="rounded-lg bg-stone-900 px-3 py-1.5 text-xs font-medium text-white hover:bg-stone-800 disabled:opacity-50"
+                              disabled={
+                                savingBehaviorReviewId === r.eval_result_id ||
+                                savedBehaviorReviewId === r.eval_result_id
+                              }
+                              className={`rounded-lg px-3 py-1.5 text-xs font-medium text-white transition-colors disabled:opacity-60 ${
+                                savingBehaviorReviewId === r.eval_result_id
+                                  ? "bg-stone-700"
+                                  : savedBehaviorReviewId === r.eval_result_id
+                                    ? "bg-emerald-600"
+                                    : "bg-stone-900 hover:bg-stone-800"
+                              }`}
                             >
-                              {savingBehaviorReviewId === r.eval_result_id ? "Saving…" : "Save review"}
+                              {savingBehaviorReviewId === r.eval_result_id
+                                ? "Saving…"
+                                : savedBehaviorReviewId === r.eval_result_id
+                                  ? "Saved"
+                                  : "Save review"}
                             </button>
                           </div>
-                          <div className="mt-3 flex gap-3 overflow-x-auto pb-2">
+                          {/* Mobile: keep cards (tables get cramped). */}
+                          <div className="mt-3 grid grid-cols-1 gap-3 sm:hidden">
                             {reviewVersions.map((ver) => (
                               <div
                                 key={ver.version_id}
-                                className="min-w-[320px] flex-1 rounded-lg border border-stone-200 bg-stone-50/80 px-3 py-3"
+                                className="min-w-0 rounded-lg border border-stone-200 bg-stone-50/80 px-3 py-3"
                               >
                                 <p className="text-xs font-medium text-stone-700">{ver.version_name}</p>
                                 <div className="mt-2 space-y-2">
                                   {BEHAVIOR_REVIEW_DIMENSIONS.map((dim) => {
                                     const draft = getBehaviorReviewDraft(r, ver.version_id, behaviorReviewDraft);
                                     const val = draft[dim.key];
-                                    const selectVal =
-                                      val === "pass" || val === "fail" || val === "na" ? val : "";
+                                    const selectVal = val === "pass" || val === "fail" || val === "na" ? val : "";
                                     return (
                                       <div key={dim.key} className="flex flex-wrap items-center gap-2 sm:flex-nowrap">
                                         <div className="min-w-0 flex-1">
@@ -1892,10 +1916,7 @@ export default function SessionDetailPage() {
                                             setBehaviorReviewDraft((prev) => {
                                               const rid = r.eval_result_id;
                                               const cur = getBehaviorReviewDraft(r, ver.version_id, prev);
-                                              const updated: VersionBehaviorReview = {
-                                                ...cur,
-                                                [dim.key]: nextRating,
-                                              };
+                                              const updated: VersionBehaviorReview = { ...cur, [dim.key]: nextRating };
                                               return {
                                                 ...prev,
                                                 [rid]: {
@@ -1929,10 +1950,7 @@ export default function SessionDetailPage() {
                                       setBehaviorReviewDraft((prev) => {
                                         const rid = r.eval_result_id;
                                         const cur = getBehaviorReviewDraft(r, ver.version_id, prev);
-                                        const updated: VersionBehaviorReview = {
-                                          ...cur,
-                                          notes: text || null,
-                                        };
+                                        const updated: VersionBehaviorReview = { ...cur, notes: text || null };
                                         return {
                                           ...prev,
                                           [rid]: {
@@ -1948,6 +1966,127 @@ export default function SessionDetailPage() {
                                 </div>
                               </div>
                             ))}
+                          </div>
+
+                          {/* Desktop: matrix (rows=versions, columns=dimensions). */}
+                          <div className="mt-3 hidden sm:block">
+                            <div className="rounded-lg border border-stone-200 bg-white">
+                              <table className="w-full table-fixed border-separate border-spacing-0">
+                                <thead className="bg-stone-50/80">
+                                  <tr>
+                                    <th
+                                      scope="col"
+                                      className="sticky left-0 z-10 w-[140px] border-b border-stone-200 bg-stone-50/80 px-3 py-2 text-left text-[11px] font-medium uppercase tracking-wide text-stone-500"
+                                    >
+                                      Version
+                                    </th>
+                                    {BEHAVIOR_REVIEW_DIMENSIONS.map((dim) => (
+                                      <th
+                                        key={dim.key}
+                                        scope="col"
+                                        className="border-b border-stone-200 px-2 py-2 text-left text-[11px] font-medium uppercase tracking-wide text-stone-500"
+                                      >
+                                        <span className="inline-flex items-center gap-2">
+                                          <span className="leading-tight">{dim.label}</span>
+                                          <span className="relative inline-flex">
+                                            <span
+                                              role="img"
+                                              aria-label={`${dim.label} help`}
+                                              tabIndex={0}
+                                              className="peer inline-flex h-4 w-4 items-center justify-center rounded-full border border-stone-300 bg-white text-[11px] font-semibold leading-none text-stone-600 cursor-help select-none focus:outline-none focus:ring-2 focus:ring-stone-300"
+                                            >
+                                              ?
+                                            </span>
+                                            <span className="pointer-events-none absolute left-1/2 top-full z-20 mt-1 w-72 -translate-x-1/2 rounded-md border border-stone-200 bg-white px-2 py-1.5 text-xs font-normal normal-case tracking-normal text-stone-700 shadow-lg opacity-0 transition-opacity duration-75 peer-hover:opacity-100 peer-focus:opacity-100">
+                                              {dim.hint}
+                                            </span>
+                                          </span>
+                                        </span>
+                                      </th>
+                                    ))}
+                                  </tr>
+                                </thead>
+                                <tbody className="divide-y divide-stone-200">
+                                  {reviewVersions.map((ver) => (
+                                    <tr key={ver.version_id} className="bg-white">
+                                      <th
+                                        scope="row"
+                                        className="sticky left-0 z-10 border-b border-stone-200 bg-white px-3 py-2 text-left text-sm font-medium text-stone-700"
+                                      >
+                                        {ver.version_name}
+                                      </th>
+                                      {BEHAVIOR_REVIEW_DIMENSIONS.map((dim) => {
+                                        const draft = getBehaviorReviewDraft(r, ver.version_id, behaviorReviewDraft);
+                                        const val = draft[dim.key];
+                                        const selectVal = val === "pass" || val === "fail" || val === "na" ? val : "";
+                                        return (
+                                          <td key={dim.key} className="border-b border-stone-200 px-2 py-2 align-top">
+                                            <select
+                                              value={selectVal}
+                                              onClick={(e) => e.stopPropagation()}
+                                              onChange={(e) => {
+                                                const raw = e.target.value;
+                                                const nextRating: BehaviorReviewRating | null =
+                                                  raw === "pass" || raw === "fail" || raw === "na" ? raw : null;
+                                                setBehaviorReviewDraft((prev) => {
+                                                  const rid = r.eval_result_id;
+                                                  const cur = getBehaviorReviewDraft(r, ver.version_id, prev);
+                                                  const updated: VersionBehaviorReview = { ...cur, [dim.key]: nextRating };
+                                                  return {
+                                                    ...prev,
+                                                    [rid]: {
+                                                      ...(prev[rid] ?? {}),
+                                                      [ver.version_id]: updated,
+                                                    },
+                                                  };
+                                                });
+                                              }}
+                                              className="w-full min-w-0 rounded-md border border-stone-200 bg-white px-2 py-1 text-sm text-stone-900 focus:border-stone-400 focus:outline-none focus:ring-1 focus:ring-stone-400"
+                                            >
+                                              <option value="">—</option>
+                                              <option value="pass">Pass</option>
+                                              <option value="fail">Fail</option>
+                                              <option value="na">N/A</option>
+                                            </select>
+                                          </td>
+                                        );
+                                      })}
+                                    </tr>
+                                  ))}
+                                </tbody>
+                              </table>
+                            </div>
+                            <div className="mt-2 grid grid-cols-1 gap-2 lg:grid-cols-3">
+                              {reviewVersions.map((ver) => (
+                                <div key={ver.version_id} className="rounded-lg border border-stone-200 bg-stone-50/60 px-3 py-2">
+                                  <p className="text-[11px] font-medium uppercase tracking-wide text-stone-500">
+                                    {ver.version_name} notes (optional)
+                                  </p>
+                                  <textarea
+                                    rows={2}
+                                    value={getBehaviorReviewDraft(r, ver.version_id, behaviorReviewDraft).notes ?? ""}
+                                    onClick={(e) => e.stopPropagation()}
+                                    onChange={(e) => {
+                                      const text = e.target.value;
+                                      setBehaviorReviewDraft((prev) => {
+                                        const rid = r.eval_result_id;
+                                        const cur = getBehaviorReviewDraft(r, ver.version_id, prev);
+                                        const updated: VersionBehaviorReview = { ...cur, notes: text || null };
+                                        return {
+                                          ...prev,
+                                          [rid]: {
+                                            ...(prev[rid] ?? {}),
+                                            [ver.version_id]: updated,
+                                          },
+                                        };
+                                      });
+                                    }}
+                                    placeholder="Short context for this version…"
+                                    className="mt-1 block w-full rounded-md border border-stone-200 bg-white px-2 py-1 text-sm text-stone-900 leading-relaxed focus:border-stone-400 focus:outline-none focus:ring-1 focus:ring-stone-400"
+                                  />
+                                </div>
+                              ))}
+                            </div>
                           </div>
                         </div>
                       </>
