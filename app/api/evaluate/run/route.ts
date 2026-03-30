@@ -164,6 +164,7 @@ export async function POST(request: Request) {
         total_tokens: result.token_usage?.total_tokens ?? null,
         cost_usd: costUsd || null,
         manually_edited: false,
+        behavior_review: {},
       } as Database["public"]["Tables"]["eval_results"]["Insert"];
       await supabase.from("eval_results").insert(evalPayload as any);
     } else {
@@ -180,6 +181,7 @@ export async function POST(request: Request) {
         total_tokens: null,
         cost_usd: null,
         manually_edited: false,
+        behavior_review: {},
       } as Database["public"]["Tables"]["eval_results"]["Insert"];
       await supabase.from("eval_results").insert(evalPayload as any);
     }

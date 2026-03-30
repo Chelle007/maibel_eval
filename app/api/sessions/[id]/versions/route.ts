@@ -3,9 +3,13 @@ import { createClient } from "@/lib/supabase/server";
 import { compareOverall } from "@/lib/comparator";
 import { loadComparatorOverallSystemPrompt } from "@/lib/prompts";
 import type { TestCase, ComparisonData } from "@/lib/types";
+import { pruneBehaviorReviewForVersions } from "@/lib/behavior-review";
 import type { EvalResultsRow, VersionEntry, TestCasesRow, DefaultSettingsRow } from "@/lib/db.types";
 
-type EvalResultLite = Pick<EvalResultsRow, "eval_result_id" | "test_case_uuid" | "evren_responses" | "comparison">;
+type EvalResultLite = Pick<
+  EvalResultsRow,
+  "eval_result_id" | "test_case_uuid" | "evren_responses" | "comparison" | "behavior_review"
+>;
 
 export async function DELETE(
   request: Request,
@@ -42,7 +46,7 @@ export async function DELETE(
 
   const { data: evalRows, error: evalError } = await supabase
     .from("eval_results")
-    .select("eval_result_id, test_case_uuid, evren_responses, comparison")
+    .select("eval_result_id, test_case_uuid, evren_responses, comparison, behavior_review")
     .eq("session_id", sessionId)
     .order("eval_result_id");
   if (evalError) return NextResponse.json({ error: evalError.message }, { status: 500 });
@@ -61,6 +65,8 @@ export async function DELETE(
   for (const row of rows) {
     const existing = Array.isArray(row.evren_responses) ? (row.evren_responses as VersionEntry[]) : [];
     const updated = existing.filter((v) => v.version_id !== versionId);
+    const keptIds = new Set(updated.map((v) => v.version_id));
+    const prunedReview = pruneBehaviorReviewForVersions(row.behavior_review, keptIds);
 
     let adjustedComparison: ComparisonData | null = null;
     const updatedIds = updated.map((v) => v.version_id).slice(0, 3);
@@ -97,7 +103,11 @@ export async function DELETE(
 
     await supabase
       .from("eval_results")
-      .update({ evren_responses: updated, comparison: adjustedComparison } as never)
+      .update({
+        evren_responses: updated,
+        comparison: adjustedComparison,
+        behavior_review: prunedReview,
+      } as never)
       .eq("eval_result_id", row.eval_result_id);
   }
 

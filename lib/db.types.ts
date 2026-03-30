@@ -119,6 +119,8 @@ export interface EvalResultsRow {
   total_tokens: number | null;
   cost_usd: number | null;
   manually_edited: boolean;
+  /** Per version_id: pass | fail | na per dimension (+ optional notes). See lib/behavior-review.ts. */
+  behavior_review: Json;
   /** Pairwise comparison data (champion-challenge results). */
   comparison: Json | null;
 }
@@ -170,7 +172,14 @@ export interface Database {
         };
         Update: Partial<TestSessionsRow>;
       };
-      eval_results: { Row: EvalResultsRow; Insert: Omit<EvalResultsRow, "eval_result_id"> & { eval_result_id?: string }; Update: Partial<EvalResultsRow> };
+      eval_results: {
+        Row: EvalResultsRow;
+        Insert: Omit<EvalResultsRow, "eval_result_id" | "behavior_review"> & {
+          eval_result_id?: string;
+          behavior_review?: Json;
+        };
+        Update: Partial<EvalResultsRow>;
+      };
       test_cases: { Row: TestCasesRow; Insert: Omit<TestCasesRow, "id" | "test_case_id"> & { id?: string; test_case_id?: string }; Update: Partial<TestCasesRow> };
       default_settings: { Row: DefaultSettingsRow; Insert: Omit<DefaultSettingsRow, "default_setting_id"> & { default_setting_id?: string }; Update: Partial<DefaultSettingsRow> };
       categories: { Row: CategoriesRow; Insert: Omit<CategoriesRow, "category_id"> & { category_id?: string }; Update: Partial<CategoriesRow> };
