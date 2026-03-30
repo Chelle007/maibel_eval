@@ -285,6 +285,7 @@ export default function SessionDetailPage() {
   const [savingRepeatedRunsMode, setSavingRepeatedRunsMode] = useState(false);
   const [expandedResultId, setExpandedResultId] = useState<string | null>(null);
   const [expandedFlagsKeys, setExpandedFlagsKeys] = useState<Set<string>>(new Set());
+  const [expandedRunsKeys, setExpandedRunsKeys] = useState<Set<string>>(new Set());
   const [searchQuery, setSearchQuery] = useState("");
   const [passFailFilter, setPassFailFilter] = useState<"" | "pass" | "fail">("");
   const [typeFilter, setTypeFilter] = useState<"" | "single_turn" | "multi_turn">("");
@@ -1618,6 +1619,8 @@ export default function SessionDetailPage() {
                           : [];
                         const versions = allVersions.slice(0, 3);
                         const turnCount = getTurnCount(versions);
+                        const runsExpanded = expandedRunsKeys.has(r.eval_result_id);
+                        const totalRunCount = Math.max(0, ...versions.map((v) => v.runs.length));
                         const versionMeta = versions.map((v) => `${v.version_name}: ${v.run_count_requested} run${v.run_count_requested === 1 ? "" : "s"} (${v.evidence_source})`).join(" · ");
                         if (turnCount === 0 && versions.length === 0) {
                           return (
@@ -1642,6 +1645,26 @@ export default function SessionDetailPage() {
                             {versionMeta && (
                               <p className="text-[11px] text-stone-500">{versionMeta}</p>
                             )}
+                            {totalRunCount > 1 && (
+                              <div className={versionMeta ? "mt-2" : ""}>
+                                <button
+                                  type="button"
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    setExpandedRunsKeys((prev) => {
+                                      const next = new Set(prev);
+                                      if (next.has(r.eval_result_id)) next.delete(r.eval_result_id);
+                                      else next.add(r.eval_result_id);
+                                      return next;
+                                    });
+                                  }}
+                                  className="inline-flex items-center gap-1 rounded border border-stone-200 bg-stone-50 px-2 py-1 text-xs font-medium text-stone-600 hover:bg-stone-100"
+                                >
+                                  <span className={`shrink-0 transition-transform ${runsExpanded ? "rotate-90" : ""}`} aria-hidden>▶</span>
+                                  {runsExpanded ? "Collapse runs" : `Show all ${totalRunCount} runs`}
+                                </button>
+                              </div>
+                            )}
                             {Array.from({ length: turnCount }, (_, i) => {
                           const flagsKey = `${r.eval_result_id}-${i}`;
                           const flagsExpanded = expandedFlagsKeys.has(flagsKey);
@@ -1650,6 +1673,10 @@ export default function SessionDetailPage() {
                           );
                           const singleVersion = versions.length <= 1;
                           const singleRuns = versions[0]?.runs ?? [];
+                          const singleRunsCollapsed = singleRuns.filter((run) => run.run_index === 1);
+                          const displaySingleRuns = runsExpanded
+                            ? singleRuns
+                            : (singleRunsCollapsed.length > 0 ? singleRunsCollapsed : singleRuns.slice(0, 1));
                               return (
                             <div key={i} className="space-y-2">
                               <div>
@@ -1664,7 +1691,7 @@ export default function SessionDetailPage() {
                                 <p className="text-xs font-medium text-stone-500">evren:</p>
                                 {singleVersion ? (
                                   <div className="mt-1 space-y-3">
-                                    {singleRuns.map((run) => {
+                                    {displaySingleRuns.map((run) => {
                                       const turnData = run.turns[i];
                                       const bubbles = turnData?.response ?? [];
                                       return (
@@ -1707,7 +1734,12 @@ export default function SessionDetailPage() {
                                             Runs: {ver.run_count_requested} · Evidence: {ver.evidence_source}
                                           </p>
                                           <div className="mt-2 space-y-3">
-                                            {ver.runs.map((run) => {
+                                            {(() => {
+                                              const collapsedRuns = ver.runs.filter((run) => run.run_index === 1);
+                                              const displayRuns = runsExpanded
+                                                ? ver.runs
+                                                : (collapsedRuns.length > 0 ? collapsedRuns : ver.runs.slice(0, 1));
+                                              return displayRuns.map((run) => {
                                               const turnData = run.turns[i];
                                               const bubbles = turnData?.response ?? [];
                                               return (
@@ -1733,7 +1765,8 @@ export default function SessionDetailPage() {
                                                   </div>
                                                 </div>
                                               );
-                                            })}
+                                              });
+                                            })()}
                                           </div>
                                         </div>
                                       );
@@ -1762,7 +1795,7 @@ export default function SessionDetailPage() {
                                       <div className="mt-2">
                                         {singleVersion ? (
                                           <div className="space-y-2">
-                                            {singleRuns.map((run) => (
+                                            {displaySingleRuns.map((run) => (
                                               <div key={run.run_id} className="rounded-lg border border-stone-200 bg-white px-3 py-2">
                                                 <p className="text-[11px] font-medium uppercase tracking-wide text-stone-400">
                                                   Run {run.run_index}
@@ -1784,16 +1817,22 @@ export default function SessionDetailPage() {
                                                   {ver.version_name}
                                                 </p>
                                                 <div className="mt-1 space-y-2">
-                                                  {ver.runs.map((run) => (
-                                                    <div key={run.run_id}>
-                                                      <p className="text-[11px] font-medium uppercase tracking-wide text-stone-400">
-                                                        Run {run.run_index}
-                                                      </p>
-                                                      <pre className="mt-1 whitespace-pre-wrap break-words text-xs text-stone-700 font-mono">
-                                                        {prettyDetectedFlags(run.turns[i]?.detected_flags ?? "")}
-                                                      </pre>
-                                                    </div>
-                                                  ))}
+                                                  {(() => {
+                                                    const collapsedRuns = ver.runs.filter((run) => run.run_index === 1);
+                                                    const displayRuns = runsExpanded
+                                                      ? ver.runs
+                                                      : (collapsedRuns.length > 0 ? collapsedRuns : ver.runs.slice(0, 1));
+                                                    return displayRuns.map((run) => (
+                                                      <div key={run.run_id}>
+                                                        <p className="text-[11px] font-medium uppercase tracking-wide text-stone-400">
+                                                          Run {run.run_index}
+                                                        </p>
+                                                        <pre className="mt-1 whitespace-pre-wrap break-words text-xs text-stone-700 font-mono">
+                                                          {prettyDetectedFlags(run.turns[i]?.detected_flags ?? "")}
+                                                        </pre>
+                                                      </div>
+                                                    ));
+                                                  })()}
                                                 </div>
                                               </div>
                                             ))}
@@ -1843,10 +1882,6 @@ export default function SessionDetailPage() {
                           <div className="flex flex-wrap items-center justify-between gap-2">
                             <div>
                               <p className="text-xs font-medium uppercase tracking-wide text-stone-400">Behavior review</p>
-                              <p className="mt-0.5 text-[11px] text-stone-500">
-                                Per test case and model version (not session summary). Hover a dimension for
-                                criteria. Pass / Fail / N/A — optional notes if multiple runs disagree.
-                              </p>
                             </div>
                             <button
                               type="button"
