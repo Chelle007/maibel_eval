@@ -254,6 +254,19 @@ export default function SessionDetailPage() {
   const [deleting, setDeleting] = useState(false);
   const [addingVersion, setAddingVersion] = useState(false);
   const [addVersionProgress, setAddVersionProgress] = useState<AddVersionProgress | null>(null);
+  const [addVersionCounts, setAddVersionCounts] = useState<{
+    versionAddedDone: number;
+    versionAddedTotal: number;
+    comparisonDone: number;
+    comparisonTotal: number;
+    comparisonEnabled: boolean;
+  }>({
+    versionAddedDone: 0,
+    versionAddedTotal: 0,
+    comparisonDone: 0,
+    comparisonTotal: 0,
+    comparisonEnabled: false,
+  });
   const [showAddVersionModal, setShowAddVersionModal] = useState(false);
   const [draftVersions, setDraftVersions] = useState<{ version_id: string; version_name: string }[]>([]);
   const [newVersionLabel, setNewVersionLabel] = useState("Version 2");
@@ -544,6 +557,13 @@ export default function SessionDetailPage() {
 
     setAddingVersion(true);
     setAddVersionProgress({ stage: "start", message: "Starting add version…" });
+    setAddVersionCounts({
+      versionAddedDone: 0,
+      versionAddedTotal: 0,
+      comparisonDone: 0,
+      comparisonTotal: 0,
+      comparisonEnabled: runComparison,
+    });
     setError(null);
 
     try {
@@ -597,6 +617,47 @@ export default function SessionDetailPage() {
                 total: data.total,
                 test_case_id: data.test_case_id,
               });
+
+              setAddVersionCounts((prev) => {
+                const stage = String(data.stage ?? "");
+                const total = typeof data.total === "number" ? data.total : undefined;
+                const index = typeof data.index === "number" ? data.index : undefined;
+
+                if (stage === "start") {
+                  return {
+                    versionAddedDone: 0,
+                    versionAddedTotal: total ?? prev.versionAddedTotal,
+                    comparisonDone: 0,
+                    comparisonTotal: total ?? prev.comparisonTotal,
+                    comparisonEnabled: prev.comparisonEnabled,
+                  };
+                }
+
+                if (stage === "done") {
+                  return {
+                    ...prev,
+                    versionAddedDone: Math.max(prev.versionAddedDone, index ?? prev.versionAddedDone),
+                    versionAddedTotal: total ?? prev.versionAddedTotal,
+                  };
+                }
+
+                if (stage === "compared" || stage === "compare_error" || stage === "comparing_skip") {
+                  return {
+                    ...prev,
+                    comparisonDone: Math.max(prev.comparisonDone, index ?? prev.comparisonDone),
+                    comparisonTotal: total ?? prev.comparisonTotal,
+                  };
+                }
+
+                if (stage === "comparing") {
+                  return {
+                    ...prev,
+                    comparisonTotal: total ?? prev.comparisonTotal,
+                  };
+                }
+
+                return prev;
+              });
             } else if (data.type === "complete") {
               const nextResults = Array.isArray(data.results) ? data.results : [];
               setResults(nextResults);
@@ -618,6 +679,13 @@ export default function SessionDetailPage() {
     } finally {
       setAddingVersion(false);
       setAddVersionProgress(null);
+      setAddVersionCounts((prev) => ({
+        ...prev,
+        versionAddedDone: 0,
+        versionAddedTotal: 0,
+        comparisonDone: 0,
+        comparisonTotal: 0,
+      }));
     }
   }
 
@@ -1263,17 +1331,28 @@ export default function SessionDetailPage() {
             {addingVersion && addVersionProgress && (
               <div className="mt-4 rounded-lg border border-stone-200 bg-stone-50 px-4 py-3 text-sm text-stone-700">
                 <div className="font-medium text-stone-800">
-                  {addVersionProgress.message ?? addVersionProgress.stage}
+                  {(() => {
+                    const stage = String(addVersionProgress.stage ?? "");
+                    const isComparingStage =
+                      stage === "comparing" ||
+                      stage === "compared" ||
+                      stage === "comparing_skip" ||
+                      stage === "compare_error";
+                    if (isComparingStage) return "Comparing versions";
+                    return "Adding version";
+                  })()}
                 </div>
                 <div className="mt-1 text-stone-600">
-                  {addVersionProgress.total != null && addVersionProgress.index != null && (
+                  {addVersionCounts.versionAddedTotal > 0 && (
                     <span>
-                      Test case {addVersionProgress.stage === "done" ? addVersionProgress.index : (addVersionProgress.index + 1)} of {addVersionProgress.total}
+                      Version added {Math.min(addVersionCounts.versionAddedDone, addVersionCounts.versionAddedTotal)} of{" "}
+                      {addVersionCounts.versionAddedTotal}
                     </span>
                   )}
-                  {addVersionProgress.test_case_id && (
-                    <span className={addVersionProgress.total != null ? " ml-1" : ""}>
-                      — {addVersionProgress.test_case_id}
+                  {addVersionCounts.comparisonEnabled && addVersionCounts.comparisonTotal > 0 && (
+                    <span className={addVersionCounts.versionAddedTotal > 0 ? " ml-2" : ""}>
+                      / Comparison done {Math.min(addVersionCounts.comparisonDone, addVersionCounts.comparisonTotal)} of{" "}
+                      {addVersionCounts.comparisonTotal}
                     </span>
                   )}
                 </div>
