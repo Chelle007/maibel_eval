@@ -3,9 +3,17 @@
 import Link from "next/link";
 import { Pencil, RefreshCw, Save, X, Trash2, Check, Plus } from "lucide-react";
 import { useParams, useRouter } from "next/navigation";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import ReactMarkdown from "react-markdown";
 import { SummaryEditor } from "@/app/components/SummaryEditor";
+import {
+  BEHAVIOR_REVIEW_DIMENSIONS,
+  emptyVersionBehaviorReview,
+  parseVersionBehaviorReview,
+  type BehaviorReviewByVersion,
+  type BehaviorReviewRating,
+  type VersionBehaviorReview,
+} from "@/lib/behavior-review";
 import { normalizeVersionEntry } from "@/lib/db.types";
 import type { AnyVersionEntry, VersionEntry } from "@/lib/db.types";
 
@@ -120,6 +128,7 @@ type EvalResult = {
   evren_responses?: AnyVersionEntry[] | null;
   test_cases?: { input_message: string; expected_state: string; expected_behavior: string; title?: string | null; type?: "single_turn" | "multi_turn"; turns?: string[] | null } | null;
   comparison?: ComparisonData;
+  behavior_review?: BehaviorReviewByVersion | null;
 };
 
 type AddVersionProgress = {
@@ -203,6 +212,21 @@ function prettyDetectedFlags(value: string): string {
   }
 }
 
+function getBehaviorReviewDraft(
+  r: EvalResult,
+  versionId: string,
+  draftByResult: Record<string, Record<string, VersionBehaviorReview>>
+): VersionBehaviorReview {
+  const chunk = draftByResult[r.eval_result_id];
+  if (chunk?.[versionId]) return chunk[versionId];
+  const br = r.behavior_review;
+  if (br && typeof br === "object" && !Array.isArray(br)) {
+    const parsed = parseVersionBehaviorReview((br as Record<string, unknown>)[versionId]);
+    if (parsed) return parsed;
+  }
+  return emptyVersionBehaviorReview();
+}
+
 export default function SessionDetailPage() {
   const params = useParams();
   const id = params.id as string;
@@ -218,6 +242,12 @@ export default function SessionDetailPage() {
   const [editScore, setEditScore] = useState<number>(0);
   const [editSuccess, setEditSuccess] = useState<boolean>(true);
   const [savingReason, setSavingReason] = useState(false);
+  const [behaviorReviewDraft, setBehaviorReviewDraft] = useState<
+    Record<string, Record<string, VersionBehaviorReview>>
+  >({});
+  const [savingBehaviorReviewId, setSavingBehaviorReviewId] = useState<string | null>(null);
+  const [savedBehaviorReviewId, setSavedBehaviorReviewId] = useState<string | null>(null);
+  const behaviorReviewSavedTimeoutRef = useRef<number | null>(null);
   const [summary, setSummary] = useState("");
   const [editingSummary, setEditingSummary] = useState(false);
   const [savingSummary, setSavingSummary] = useState(false);
@@ -226,6 +256,19 @@ export default function SessionDetailPage() {
   const [deleting, setDeleting] = useState(false);
   const [addingVersion, setAddingVersion] = useState(false);
   const [addVersionProgress, setAddVersionProgress] = useState<AddVersionProgress | null>(null);
+  const [addVersionCounts, setAddVersionCounts] = useState<{
+    versionAddedDone: number;
+    versionAddedTotal: number;
+    comparisonDone: number;
+    comparisonTotal: number;
+    comparisonEnabled: boolean;
+  }>({
+    versionAddedDone: 0,
+    versionAddedTotal: 0,
+    comparisonDone: 0,
+    comparisonTotal: 0,
+    comparisonEnabled: false,
+  });
   const [showAddVersionModal, setShowAddVersionModal] = useState(false);
   const [draftVersions, setDraftVersions] = useState<{ version_id: string; version_name: string }[]>([]);
   const [newVersionLabel, setNewVersionLabel] = useState("Version 2");
@@ -242,6 +285,7 @@ export default function SessionDetailPage() {
   const [savingRepeatedRunsMode, setSavingRepeatedRunsMode] = useState(false);
   const [expandedResultId, setExpandedResultId] = useState<string | null>(null);
   const [expandedFlagsKeys, setExpandedFlagsKeys] = useState<Set<string>>(new Set());
+  const [expandedRunsKeys, setExpandedRunsKeys] = useState<Set<string>>(new Set());
   const [searchQuery, setSearchQuery] = useState("");
   const [passFailFilter, setPassFailFilter] = useState<"" | "pass" | "fail">("");
   const [typeFilter, setTypeFilter] = useState<"" | "single_turn" | "multi_turn">("");
@@ -369,6 +413,61 @@ export default function SessionDetailPage() {
       .finally(() => setSavingReason(false));
   }
 
+  async function saveBehaviorReview(r: EvalResult) {
+    const reviewVersions = (Array.isArray(r.evren_responses) ? r.evren_responses : [])
+      .slice(0, 3)
+      .map((v) => normalizeVersionEntry(v as AnyVersionEntry));
+    if (reviewVersions.length === 0) return;
+    const payload: BehaviorReviewByVersion = {};
+    for (const ver of reviewVersions) {
+      payload[ver.version_id] = getBehaviorReviewDraft(r, ver.version_id, behaviorReviewDraft);
+    }
+    setSavedBehaviorReviewId((prev) => (prev === r.eval_result_id ? null : prev));
+    if (behaviorReviewSavedTimeoutRef.current != null) {
+      window.clearTimeout(behaviorReviewSavedTimeoutRef.current);
+      behaviorReviewSavedTimeoutRef.current = null;
+    }
+    setSavingBehaviorReviewId(r.eval_result_id);
+    setError(null);
+    try {
+      const res = await fetch(`/api/eval-results/${r.eval_result_id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ behavior_review: payload }),
+      });
+      const data = (await res.json().catch(() => ({}))) as {
+        error?: string;
+        behavior_review?: BehaviorReviewByVersion;
+        manually_edited?: boolean;
+      };
+      if (!res.ok || data.error) throw new Error(data.error ?? `Request failed (${res.status})`);
+      setResults((prev) =>
+        prev.map((x) =>
+          x.eval_result_id === r.eval_result_id
+            ? {
+                ...x,
+                behavior_review: data.behavior_review ?? x.behavior_review,
+                manually_edited: data.manually_edited ?? true,
+              }
+            : x
+        )
+      );
+      setBehaviorReviewDraft((prev) => {
+        const next = { ...prev };
+        delete next[r.eval_result_id];
+        return next;
+      });
+      setSavedBehaviorReviewId(r.eval_result_id);
+      behaviorReviewSavedTimeoutRef.current = window.setTimeout(() => {
+        setSavedBehaviorReviewId((cur) => (cur === r.eval_result_id ? null : cur));
+      }, 2000);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Failed to save behavior review");
+    } finally {
+      setSavingBehaviorReviewId(null);
+    }
+  }
+
   async function applyAiComparisonEdits(r: EvalResult) {
     if (aiEditingComparisonId !== r.eval_result_id) return;
     const feedback = aiComparisonFeedback.trim();
@@ -470,14 +569,17 @@ export default function SessionDetailPage() {
 
     setAddingVersion(true);
     setAddVersionProgress({ stage: "start", message: "Starting add version…" });
+    setAddVersionCounts({
+      versionAddedDone: 0,
+      versionAddedTotal: 0,
+      comparisonDone: 0,
+      comparisonTotal: 0,
+      comparisonEnabled: runComparison,
+    });
     setError(null);
 
     try {
-      const sessionMode = session.repeated_runs_mode === "manual" ? "manual" : "auto";
-      const effectiveRunCount =
-        session.mode === "comparison" && sessionMode !== "manual"
-          ? 1
-          : Math.max(1, Math.floor(addVersionRunCount || 1));
+      const effectiveRunCount = Math.max(1, Math.floor(addVersionRunCount || 1));
       const res = await fetch(`/api/sessions/${id}/add-version/stream`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -527,6 +629,47 @@ export default function SessionDetailPage() {
                 total: data.total,
                 test_case_id: data.test_case_id,
               });
+
+              setAddVersionCounts((prev) => {
+                const stage = String(data.stage ?? "");
+                const total = typeof data.total === "number" ? data.total : undefined;
+                const index = typeof data.index === "number" ? data.index : undefined;
+
+                if (stage === "start") {
+                  return {
+                    versionAddedDone: 0,
+                    versionAddedTotal: total ?? prev.versionAddedTotal,
+                    comparisonDone: 0,
+                    comparisonTotal: total ?? prev.comparisonTotal,
+                    comparisonEnabled: prev.comparisonEnabled,
+                  };
+                }
+
+                if (stage === "done") {
+                  return {
+                    ...prev,
+                    versionAddedDone: Math.max(prev.versionAddedDone, index ?? prev.versionAddedDone),
+                    versionAddedTotal: total ?? prev.versionAddedTotal,
+                  };
+                }
+
+                if (stage === "compared" || stage === "compare_error" || stage === "comparing_skip") {
+                  return {
+                    ...prev,
+                    comparisonDone: Math.max(prev.comparisonDone, index ?? prev.comparisonDone),
+                    comparisonTotal: total ?? prev.comparisonTotal,
+                  };
+                }
+
+                if (stage === "comparing") {
+                  return {
+                    ...prev,
+                    comparisonTotal: total ?? prev.comparisonTotal,
+                  };
+                }
+
+                return prev;
+              });
             } else if (data.type === "complete") {
               const nextResults = Array.isArray(data.results) ? data.results : [];
               setResults(nextResults);
@@ -548,6 +691,13 @@ export default function SessionDetailPage() {
     } finally {
       setAddingVersion(false);
       setAddVersionProgress(null);
+      setAddVersionCounts((prev) => ({
+        ...prev,
+        versionAddedDone: 0,
+        versionAddedTotal: 0,
+        comparisonDone: 0,
+        comparisonTotal: 0,
+      }));
     }
   }
 
@@ -744,10 +894,6 @@ export default function SessionDetailPage() {
 
   const evaluatedResults = results.filter(isResultEvaluated);
   const hasEvaluationResults = evaluatedResults.length > 0;
-  const sessionRepeatedRunsMode: "auto" | "manual" =
-    session.repeated_runs_mode === "manual" ? "manual" : "auto";
-  const canEditRepeatedRunCount =
-    session.mode !== "comparison" || sessionRepeatedRunsMode === "manual";
   const repeatedRunsDisplay = getRepeatedRunsDisplay(session.repeated_runs_mode, results);
   const anyMultiRunInSession = evalResultsHaveAnyMultiRun(results);
   const repeatedRunsSelectValue =
@@ -1165,16 +1311,10 @@ export default function SessionDetailPage() {
                   type="number"
                   min={1}
                   step={1}
-                  value={canEditRepeatedRunCount ? addVersionRunCount : 1}
+                  value={addVersionRunCount}
                   onChange={(e) => setAddVersionRunCount(Math.max(1, Math.floor(Number(e.target.value) || 1)))}
-                  disabled={!canEditRepeatedRunCount}
-                  className="mt-1 block w-full rounded-lg border border-stone-200 bg-white px-3 py-2 text-sm text-stone-900 focus:border-stone-400 focus:outline-none focus:ring-1 focus:ring-stone-400 disabled:bg-stone-50 disabled:text-stone-500"
+                  className="mt-1 block w-full rounded-lg border border-stone-200 bg-white px-3 py-2 text-sm text-stone-900 focus:border-stone-400 focus:outline-none focus:ring-1 focus:ring-stone-400"
                 />
-                {!canEditRepeatedRunCount && (
-                  <p className="mt-1 text-xs text-stone-500">
-                    Set repeated runs to <strong className="font-medium text-stone-700">Manual</strong> in Session details to request more than one run.
-                  </p>
-                )}
               </div>
               <div className="flex items-center justify-between pt-1">
                 <div>
@@ -1203,17 +1343,28 @@ export default function SessionDetailPage() {
             {addingVersion && addVersionProgress && (
               <div className="mt-4 rounded-lg border border-stone-200 bg-stone-50 px-4 py-3 text-sm text-stone-700">
                 <div className="font-medium text-stone-800">
-                  {addVersionProgress.message ?? addVersionProgress.stage}
+                  {(() => {
+                    const stage = String(addVersionProgress.stage ?? "");
+                    const isComparingStage =
+                      stage === "comparing" ||
+                      stage === "compared" ||
+                      stage === "comparing_skip" ||
+                      stage === "compare_error";
+                    if (isComparingStage) return "Comparing versions";
+                    return "Adding version";
+                  })()}
                 </div>
                 <div className="mt-1 text-stone-600">
-                  {addVersionProgress.total != null && addVersionProgress.index != null && (
+                  {addVersionCounts.versionAddedTotal > 0 && (
                     <span>
-                      Test case {addVersionProgress.stage === "done" ? addVersionProgress.index : (addVersionProgress.index + 1)} of {addVersionProgress.total}
+                      Version added {Math.min(addVersionCounts.versionAddedDone, addVersionCounts.versionAddedTotal)} of{" "}
+                      {addVersionCounts.versionAddedTotal}
                     </span>
                   )}
-                  {addVersionProgress.test_case_id && (
-                    <span className={addVersionProgress.total != null ? " ml-1" : ""}>
-                      — {addVersionProgress.test_case_id}
+                  {addVersionCounts.comparisonEnabled && addVersionCounts.comparisonTotal > 0 && (
+                    <span className={addVersionCounts.versionAddedTotal > 0 ? " ml-2" : ""}>
+                      / Comparison done {Math.min(addVersionCounts.comparisonDone, addVersionCounts.comparisonTotal)} of{" "}
+                      {addVersionCounts.comparisonTotal}
                     </span>
                   )}
                 </div>
@@ -1468,6 +1619,8 @@ export default function SessionDetailPage() {
                           : [];
                         const versions = allVersions.slice(0, 3);
                         const turnCount = getTurnCount(versions);
+                        const runsExpanded = expandedRunsKeys.has(r.eval_result_id);
+                        const totalRunCount = Math.max(0, ...versions.map((v) => v.runs.length));
                         const versionMeta = versions.map((v) => `${v.version_name}: ${v.run_count_requested} run${v.run_count_requested === 1 ? "" : "s"} (${v.evidence_source})`).join(" · ");
                         if (turnCount === 0 && versions.length === 0) {
                           return (
@@ -1492,6 +1645,26 @@ export default function SessionDetailPage() {
                             {versionMeta && (
                               <p className="text-[11px] text-stone-500">{versionMeta}</p>
                             )}
+                            {totalRunCount > 1 && (
+                              <div className={versionMeta ? "mt-2" : ""}>
+                                <button
+                                  type="button"
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    setExpandedRunsKeys((prev) => {
+                                      const next = new Set(prev);
+                                      if (next.has(r.eval_result_id)) next.delete(r.eval_result_id);
+                                      else next.add(r.eval_result_id);
+                                      return next;
+                                    });
+                                  }}
+                                  className="inline-flex items-center gap-1 rounded border border-stone-200 bg-stone-50 px-2 py-1 text-xs font-medium text-stone-600 hover:bg-stone-100"
+                                >
+                                  <span className={`shrink-0 transition-transform ${runsExpanded ? "rotate-90" : ""}`} aria-hidden>▶</span>
+                                  {runsExpanded ? "Collapse runs" : `Show all ${totalRunCount} runs`}
+                                </button>
+                              </div>
+                            )}
                             {Array.from({ length: turnCount }, (_, i) => {
                           const flagsKey = `${r.eval_result_id}-${i}`;
                           const flagsExpanded = expandedFlagsKeys.has(flagsKey);
@@ -1500,6 +1673,10 @@ export default function SessionDetailPage() {
                           );
                           const singleVersion = versions.length <= 1;
                           const singleRuns = versions[0]?.runs ?? [];
+                          const singleRunsCollapsed = singleRuns.filter((run) => run.run_index === 1);
+                          const displaySingleRuns = runsExpanded
+                            ? singleRuns
+                            : (singleRunsCollapsed.length > 0 ? singleRunsCollapsed : singleRuns.slice(0, 1));
                               return (
                             <div key={i} className="space-y-2">
                               <div>
@@ -1514,7 +1691,7 @@ export default function SessionDetailPage() {
                                 <p className="text-xs font-medium text-stone-500">evren:</p>
                                 {singleVersion ? (
                                   <div className="mt-1 space-y-3">
-                                    {singleRuns.map((run) => {
+                                    {displaySingleRuns.map((run) => {
                                       const turnData = run.turns[i];
                                       const bubbles = turnData?.response ?? [];
                                       return (
@@ -1557,7 +1734,12 @@ export default function SessionDetailPage() {
                                             Runs: {ver.run_count_requested} · Evidence: {ver.evidence_source}
                                           </p>
                                           <div className="mt-2 space-y-3">
-                                            {ver.runs.map((run) => {
+                                            {(() => {
+                                              const collapsedRuns = ver.runs.filter((run) => run.run_index === 1);
+                                              const displayRuns = runsExpanded
+                                                ? ver.runs
+                                                : (collapsedRuns.length > 0 ? collapsedRuns : ver.runs.slice(0, 1));
+                                              return displayRuns.map((run) => {
                                               const turnData = run.turns[i];
                                               const bubbles = turnData?.response ?? [];
                                               return (
@@ -1583,7 +1765,8 @@ export default function SessionDetailPage() {
                                                   </div>
                                                 </div>
                                               );
-                                            })}
+                                              });
+                                            })()}
                                           </div>
                                         </div>
                                       );
@@ -1612,7 +1795,7 @@ export default function SessionDetailPage() {
                                       <div className="mt-2">
                                         {singleVersion ? (
                                           <div className="space-y-2">
-                                            {singleRuns.map((run) => (
+                                            {displaySingleRuns.map((run) => (
                                               <div key={run.run_id} className="rounded-lg border border-stone-200 bg-white px-3 py-2">
                                                 <p className="text-[11px] font-medium uppercase tracking-wide text-stone-400">
                                                   Run {run.run_index}
@@ -1634,16 +1817,22 @@ export default function SessionDetailPage() {
                                                   {ver.version_name}
                                                 </p>
                                                 <div className="mt-1 space-y-2">
-                                                  {ver.runs.map((run) => (
-                                                    <div key={run.run_id}>
-                                                      <p className="text-[11px] font-medium uppercase tracking-wide text-stone-400">
-                                                        Run {run.run_index}
-                                                      </p>
-                                                      <pre className="mt-1 whitespace-pre-wrap break-words text-xs text-stone-700 font-mono">
-                                                        {prettyDetectedFlags(run.turns[i]?.detected_flags ?? "")}
-                                                      </pre>
-                                                    </div>
-                                                  ))}
+                                                  {(() => {
+                                                    const collapsedRuns = ver.runs.filter((run) => run.run_index === 1);
+                                                    const displayRuns = runsExpanded
+                                                      ? ver.runs
+                                                      : (collapsedRuns.length > 0 ? collapsedRuns : ver.runs.slice(0, 1));
+                                                    return displayRuns.map((run) => (
+                                                      <div key={run.run_id}>
+                                                        <p className="text-[11px] font-medium uppercase tracking-wide text-stone-400">
+                                                          Run {run.run_index}
+                                                        </p>
+                                                        <pre className="mt-1 whitespace-pre-wrap break-words text-xs text-stone-700 font-mono">
+                                                          {prettyDetectedFlags(run.turns[i]?.detected_flags ?? "")}
+                                                        </pre>
+                                                      </div>
+                                                    ));
+                                                  })()}
                                                 </div>
                                               </div>
                                             ))}
@@ -1680,6 +1869,264 @@ export default function SessionDetailPage() {
                       {typeof r.test_cases.expected_state === "string" && r.test_cases.expected_state.trim() ? r.test_cases.expected_state : "—"}
                     </p>
                   </div>
+
+                  {(() => {
+                    const reviewVersions = (Array.isArray(r.evren_responses) ? r.evren_responses : [])
+                      .slice(0, 3)
+                      .map((v) => normalizeVersionEntry(v as AnyVersionEntry));
+                    if (reviewVersions.length === 0) return null;
+                    return (
+                      <>
+                        <hr className="border-stone-200" />
+                        <div>
+                          <div className="flex flex-wrap items-center justify-between gap-2">
+                            <div>
+                              <p className="text-xs font-medium uppercase tracking-wide text-stone-400">Behavior review</p>
+                            </div>
+                            <button
+                              type="button"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                void saveBehaviorReview(r);
+                              }}
+                              disabled={
+                                savingBehaviorReviewId === r.eval_result_id ||
+                                savedBehaviorReviewId === r.eval_result_id
+                              }
+                              className={`rounded-lg px-3 py-1.5 text-xs font-medium text-white transition-colors disabled:opacity-60 ${
+                                savingBehaviorReviewId === r.eval_result_id
+                                  ? "bg-stone-700"
+                                  : savedBehaviorReviewId === r.eval_result_id
+                                    ? "bg-emerald-600"
+                                    : "bg-stone-900 hover:bg-stone-800"
+                              }`}
+                            >
+                              {savingBehaviorReviewId === r.eval_result_id
+                                ? "Saving…"
+                                : savedBehaviorReviewId === r.eval_result_id
+                                  ? "Saved"
+                                  : "Save review"}
+                            </button>
+                          </div>
+                          {/* Mobile: keep cards (tables get cramped). */}
+                          <div className="mt-3 grid grid-cols-1 gap-3 sm:hidden">
+                            {reviewVersions.map((ver) => (
+                              <div
+                                key={ver.version_id}
+                                className="min-w-0 rounded-lg border border-stone-200 bg-stone-50/80 px-3 py-3"
+                              >
+                                <p className="text-xs font-medium text-stone-700">{ver.version_name}</p>
+                                <div className="mt-2 space-y-2">
+                                  {BEHAVIOR_REVIEW_DIMENSIONS.map((dim) => {
+                                    const draft = getBehaviorReviewDraft(r, ver.version_id, behaviorReviewDraft);
+                                    const val = draft[dim.key];
+                                    const selectVal = val === "pass" || val === "fail" || val === "na" ? val : "";
+                                    return (
+                                      <div key={dim.key} className="flex flex-wrap items-center gap-2 sm:flex-nowrap">
+                                        <div className="min-w-0 flex-1">
+                                          <div className="flex items-center gap-2">
+                                            <span className="text-sm text-stone-700">{dim.label}</span>
+                                            <span className="relative inline-flex">
+                                              <span
+                                                role="img"
+                                                aria-label={`${dim.label} help`}
+                                                tabIndex={0}
+                                                className="peer inline-flex h-4 w-4 items-center justify-center rounded-full border border-stone-300 bg-white text-[11px] font-semibold leading-none text-stone-600 cursor-help select-none focus:outline-none focus:ring-2 focus:ring-stone-300"
+                                              >
+                                                ?
+                                              </span>
+                                              <span className="pointer-events-none absolute left-1/2 top-full z-20 mt-1 w-72 -translate-x-1/2 rounded-md border border-stone-200 bg-white px-2 py-1.5 text-xs text-stone-700 shadow-lg opacity-0 transition-opacity duration-75 peer-hover:opacity-100 peer-focus:opacity-100">
+                                                {dim.hint}
+                                              </span>
+                                            </span>
+                                          </div>
+                                        </div>
+                                        <select
+                                          value={selectVal}
+                                          onClick={(e) => e.stopPropagation()}
+                                          onChange={(e) => {
+                                            const raw = e.target.value;
+                                            const nextRating: BehaviorReviewRating | null =
+                                              raw === "pass" || raw === "fail" || raw === "na" ? raw : null;
+                                            setBehaviorReviewDraft((prev) => {
+                                              const rid = r.eval_result_id;
+                                              const cur = getBehaviorReviewDraft(r, ver.version_id, prev);
+                                              const updated: VersionBehaviorReview = { ...cur, [dim.key]: nextRating };
+                                              return {
+                                                ...prev,
+                                                [rid]: {
+                                                  ...(prev[rid] ?? {}),
+                                                  [ver.version_id]: updated,
+                                                },
+                                              };
+                                            });
+                                          }}
+                                          className="rounded-md border border-stone-200 bg-white px-2 py-1 text-sm text-stone-900 focus:border-stone-400 focus:outline-none focus:ring-1 focus:ring-stone-400"
+                                        >
+                                          <option value="">—</option>
+                                          <option value="pass">Pass</option>
+                                          <option value="fail">Fail</option>
+                                          <option value="na">N/A</option>
+                                        </select>
+                                      </div>
+                                    );
+                                  })}
+                                </div>
+                                <div className="mt-2">
+                                  <label className="text-[11px] font-medium uppercase tracking-wide text-stone-400">
+                                    Notes (optional)
+                                  </label>
+                                  <textarea
+                                    rows={2}
+                                    value={getBehaviorReviewDraft(r, ver.version_id, behaviorReviewDraft).notes ?? ""}
+                                    onClick={(e) => e.stopPropagation()}
+                                    onChange={(e) => {
+                                      const text = e.target.value;
+                                      setBehaviorReviewDraft((prev) => {
+                                        const rid = r.eval_result_id;
+                                        const cur = getBehaviorReviewDraft(r, ver.version_id, prev);
+                                        const updated: VersionBehaviorReview = { ...cur, notes: text || null };
+                                        return {
+                                          ...prev,
+                                          [rid]: {
+                                            ...(prev[rid] ?? {}),
+                                            [ver.version_id]: updated,
+                                          },
+                                        };
+                                      });
+                                    }}
+                                    placeholder="Short context for this version…"
+                                    className="mt-1 block w-full rounded-lg border border-stone-200 bg-white px-3 py-2 text-sm text-stone-900 leading-relaxed focus:border-stone-400 focus:outline-none focus:ring-1 focus:ring-stone-400"
+                                  />
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+
+                          {/* Desktop: matrix (rows=versions, columns=dimensions). */}
+                          <div className="mt-3 hidden sm:block">
+                            <div className="rounded-lg border border-stone-200 bg-white">
+                              <table className="w-full table-fixed border-separate border-spacing-0">
+                                <thead className="bg-stone-50/80">
+                                  <tr>
+                                    <th
+                                      scope="col"
+                                      className="sticky left-0 z-10 w-[140px] border-b border-stone-200 bg-stone-50/80 px-3 py-2 text-left text-[11px] font-medium uppercase tracking-wide text-stone-500"
+                                    >
+                                      Version
+                                    </th>
+                                    {BEHAVIOR_REVIEW_DIMENSIONS.map((dim) => (
+                                      <th
+                                        key={dim.key}
+                                        scope="col"
+                                        className="border-b border-stone-200 px-2 py-2 text-left text-[11px] font-medium uppercase tracking-wide text-stone-500"
+                                      >
+                                        <span className="inline-flex items-center gap-2">
+                                          <span className="leading-tight">{dim.label}</span>
+                                          <span className="relative inline-flex">
+                                            <span
+                                              role="img"
+                                              aria-label={`${dim.label} help`}
+                                              tabIndex={0}
+                                              className="peer inline-flex h-4 w-4 items-center justify-center rounded-full border border-stone-300 bg-white text-[11px] font-semibold leading-none text-stone-600 cursor-help select-none focus:outline-none focus:ring-2 focus:ring-stone-300"
+                                            >
+                                              ?
+                                            </span>
+                                            <span className="pointer-events-none absolute left-1/2 top-full z-20 mt-1 w-72 -translate-x-1/2 rounded-md border border-stone-200 bg-white px-2 py-1.5 text-xs font-normal normal-case tracking-normal text-stone-700 shadow-lg opacity-0 transition-opacity duration-75 peer-hover:opacity-100 peer-focus:opacity-100">
+                                              {dim.hint}
+                                            </span>
+                                          </span>
+                                        </span>
+                                      </th>
+                                    ))}
+                                  </tr>
+                                </thead>
+                                <tbody className="divide-y divide-stone-200">
+                                  {reviewVersions.map((ver) => (
+                                    <tr key={ver.version_id} className="bg-white">
+                                      <th
+                                        scope="row"
+                                        className="sticky left-0 z-10 border-b border-stone-200 bg-white px-3 py-2 text-left text-sm font-medium text-stone-700"
+                                      >
+                                        {ver.version_name}
+                                      </th>
+                                      {BEHAVIOR_REVIEW_DIMENSIONS.map((dim) => {
+                                        const draft = getBehaviorReviewDraft(r, ver.version_id, behaviorReviewDraft);
+                                        const val = draft[dim.key];
+                                        const selectVal = val === "pass" || val === "fail" || val === "na" ? val : "";
+                                        return (
+                                          <td key={dim.key} className="border-b border-stone-200 px-2 py-2 align-top">
+                                            <select
+                                              value={selectVal}
+                                              onClick={(e) => e.stopPropagation()}
+                                              onChange={(e) => {
+                                                const raw = e.target.value;
+                                                const nextRating: BehaviorReviewRating | null =
+                                                  raw === "pass" || raw === "fail" || raw === "na" ? raw : null;
+                                                setBehaviorReviewDraft((prev) => {
+                                                  const rid = r.eval_result_id;
+                                                  const cur = getBehaviorReviewDraft(r, ver.version_id, prev);
+                                                  const updated: VersionBehaviorReview = { ...cur, [dim.key]: nextRating };
+                                                  return {
+                                                    ...prev,
+                                                    [rid]: {
+                                                      ...(prev[rid] ?? {}),
+                                                      [ver.version_id]: updated,
+                                                    },
+                                                  };
+                                                });
+                                              }}
+                                              className="w-full min-w-0 rounded-md border border-stone-200 bg-white px-2 py-1 text-sm text-stone-900 focus:border-stone-400 focus:outline-none focus:ring-1 focus:ring-stone-400"
+                                            >
+                                              <option value="">—</option>
+                                              <option value="pass">Pass</option>
+                                              <option value="fail">Fail</option>
+                                              <option value="na">N/A</option>
+                                            </select>
+                                          </td>
+                                        );
+                                      })}
+                                    </tr>
+                                  ))}
+                                </tbody>
+                              </table>
+                            </div>
+                            <div className="mt-2 grid grid-cols-1 gap-2 lg:grid-cols-3">
+                              {reviewVersions.map((ver) => (
+                                <div key={ver.version_id} className="rounded-lg border border-stone-200 bg-stone-50/60 px-3 py-2">
+                                  <p className="text-[11px] font-medium uppercase tracking-wide text-stone-500">
+                                    {ver.version_name} notes (optional)
+                                  </p>
+                                  <textarea
+                                    rows={2}
+                                    value={getBehaviorReviewDraft(r, ver.version_id, behaviorReviewDraft).notes ?? ""}
+                                    onClick={(e) => e.stopPropagation()}
+                                    onChange={(e) => {
+                                      const text = e.target.value;
+                                      setBehaviorReviewDraft((prev) => {
+                                        const rid = r.eval_result_id;
+                                        const cur = getBehaviorReviewDraft(r, ver.version_id, prev);
+                                        const updated: VersionBehaviorReview = { ...cur, notes: text || null };
+                                        return {
+                                          ...prev,
+                                          [rid]: {
+                                            ...(prev[rid] ?? {}),
+                                            [ver.version_id]: updated,
+                                          },
+                                        };
+                                      });
+                                    }}
+                                    placeholder="Short context for this version…"
+                                    className="mt-1 block w-full rounded-md border border-stone-200 bg-white px-2 py-1 text-sm text-stone-900 leading-relaxed focus:border-stone-400 focus:outline-none focus:ring-1 focus:ring-stone-400"
+                                  />
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+                        </div>
+                      </>
+                    );
+                  })()}
 
                   {isEvaluated && (
                     <>

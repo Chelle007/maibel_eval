@@ -7,6 +7,40 @@ import type { TestCase } from "@/lib/types";
 import type { DefaultSettingsRow, EvalResultsRow, RunEntry, TestCasesRow, VersionEntry } from "@/lib/db.types";
 
 const FALLBACK_EVREN_URL = process.env.NEXT_PUBLIC_EVREN_API_URL || "http://localhost:8000";
+const DEFAULT_MAX_INFLIGHT_COMPARISONS = 3;
+
+function getMaxConcurrentComparisons(): number {
+  const raw = process.env.MAX_INFLIGHT_COMPARISONS;
+  const n = raw ? Number.parseInt(raw, 10) : NaN;
+  return Number.isFinite(n) && n > 0 ? n : DEFAULT_MAX_INFLIGHT_COMPARISONS;
+}
+
+function createLimiter(maxInFlight: number) {
+  const limit = Number.isFinite(maxInFlight) && maxInFlight > 0 ? Math.floor(maxInFlight) : 1;
+  let active = 0;
+  const queue: Array<() => void> = [];
+
+  const next = () => {
+    if (active >= limit) return;
+    const run = queue.shift();
+    if (!run) return;
+    active++;
+    run();
+  };
+
+  return async <T>(fn: () => Promise<T>): Promise<T> =>
+    await new Promise<T>((resolve, reject) => {
+      queue.push(() => {
+        fn()
+          .then(resolve, reject)
+          .finally(() => {
+            active--;
+            next();
+          });
+      });
+      next();
+    });
+}
 
 type EvalResultLite = Pick<EvalResultsRow, "eval_result_id" | "test_case_uuid" | "evren_responses" | "comparison">;
 
@@ -126,6 +160,14 @@ export async function POST(
         const maxConcurrentTestCases = getMaxConcurrentTestCases(runCount);
         let completedCount = 0;
 
+        // If enabled, start comparisons as soon as each test case finishes adding its new version,
+        // bounded by a separate concurrency limit. This overlaps "add version" and "compare" work.
+        const comparatorPrompt = runComparison ? loadComparatorOverallSystemPrompt() : "";
+        const maxConcurrentComparisons = runComparison ? getMaxConcurrentComparisons() : 1;
+        const limitComparison = createLimiter(maxConcurrentComparisons);
+        const comparisonPromises: Promise<void>[] = [];
+        let comparedCount = 0;
+
         await runWithConcurrency(rows, maxConcurrentTestCases, async (row) => {
           const tc = testCaseById.get(row.test_case_uuid);
           if (!tc) return;
@@ -180,6 +222,68 @@ export async function POST(
               .from("eval_results")
               .update({ evren_responses: mergedResponses } as never)
               .eq("eval_result_id", row.eval_result_id);
+
+            if (runComparison && apiKey) {
+              comparisonPromises.push(
+                limitComparison(async () => {
+                  const versions = mergedResponses;
+                  if (versions.length < 2) return;
+
+                  const versionIds = versions.map((v) => v.version_id).slice(0, 3);
+                  if (versionIds.length < 2) return;
+
+                  const testCase: TestCase = {
+                    test_case_id: tc.test_case_id,
+                    type: tc.type ?? "single_turn",
+                    input_message: tc.input_message,
+                    img_url: tc.img_url ?? undefined,
+                    turns: tc.turns ?? undefined,
+                    expected_state: tc.expected_state ?? "",
+                    expected_behavior: tc.expected_behavior ?? "",
+                    forbidden: tc.forbidden ?? undefined,
+                    notes: tc.notes ?? undefined,
+                  };
+
+                  try {
+                    const compResult = await compareOverall(
+                      testCase,
+                      versions,
+                      versionIds.length === 2
+                        ? ([versionIds[0], versionIds[1]] as [string, string])
+                        : ([versionIds[0], versionIds[1], versionIds[2]] as [string, string, string]),
+                      apiKey,
+                      comparatorModel,
+                      comparatorPrompt
+                    );
+
+                    await supabase
+                      .from("eval_results")
+                      .update({ comparison: compResult } as never)
+                      .eq("eval_result_id", row.eval_result_id);
+
+                    comparedCount++;
+                    sendEvent(controller, "progress", {
+                      stage: "compared",
+                      index: comparedCount,
+                      total: rows.length,
+                      test_case_id: tc.test_case_id,
+                      message: `Compared ${comparedCount} of ${rows.length}`,
+                    });
+                  } catch (compErr) {
+                    comparedCount++;
+                    const msg = compErr instanceof Error ? compErr.message : String(compErr);
+                    console.error("[add-version/stream] Comparison error for", tc.test_case_id, msg);
+                    sendEvent(controller, "progress", {
+                      stage: "compare_error",
+                      index: comparedCount,
+                      total: rows.length,
+                      test_case_id: tc.test_case_id,
+                      message: `Comparison failed: ${msg.slice(0, 80)}`,
+                    });
+                  }
+                })
+              );
+            }
           }
 
           completedCount++;
@@ -192,101 +296,13 @@ export async function POST(
           });
         });
 
-        // --- Comparison phase ---
         if (runComparison && apiKey) {
-          const { data: freshRows } = await supabase
-            .from("eval_results")
-            .select("eval_result_id, test_case_uuid, evren_responses, comparison")
-            .eq("session_id", sessionId)
-            .order("eval_result_id");
-          const compRows = (freshRows ?? []) as EvalResultLite[];
-          const compTotal = compRows.length;
-
           sendEvent(controller, "progress", {
             stage: "comparing",
-            total: compTotal,
-            message: `Running comparisons for ${compTotal} test case${compTotal === 1 ? "" : "s"}…`,
+            total: rows.length,
+            message: `Running comparisons for ${rows.length} test case${rows.length === 1 ? "" : "s"}…`,
           });
-
-          const comparatorPrompt = loadComparatorOverallSystemPrompt();
-
-          for (let ci = 0; ci < compRows.length; ci++) {
-            const compRow = compRows[ci];
-            const tc = testCaseById.get(compRow.test_case_uuid);
-            if (!tc) continue;
-
-            const versions = Array.isArray(compRow.evren_responses) ? (compRow.evren_responses as VersionEntry[]) : [];
-
-            if (versions.length < 2) {
-              sendEvent(controller, "progress", {
-                stage: "comparing_skip",
-                index: ci,
-                total: compTotal,
-                test_case_id: tc.test_case_id,
-                message: "Only 1 version, skipping comparison.",
-              });
-              continue;
-            }
-
-            const versionIds = versions.map((v) => v.version_id).slice(0, 3);
-            if (versionIds.length < 2) continue;
-
-            sendEvent(controller, "progress", {
-              stage: "comparing",
-              index: ci,
-              total: compTotal,
-              test_case_id: tc.test_case_id,
-              message: "Comparing versions…",
-            });
-
-            const testCase: TestCase = {
-              test_case_id: tc.test_case_id,
-              type: tc.type ?? "single_turn",
-              input_message: tc.input_message,
-              img_url: tc.img_url ?? undefined,
-              turns: tc.turns ?? undefined,
-              expected_state: tc.expected_state ?? "",
-              expected_behavior: tc.expected_behavior ?? "",
-              forbidden: tc.forbidden ?? undefined,
-              notes: tc.notes ?? undefined,
-            };
-
-            try {
-              const compResult = await compareOverall(
-                testCase,
-                versions,
-                versionIds.length === 2
-                  ? ([versionIds[0], versionIds[1]] as [string, string])
-                  : ([versionIds[0], versionIds[1], versionIds[2]] as [string, string, string]),
-                apiKey,
-                comparatorModel,
-                comparatorPrompt
-              );
-
-              await supabase
-                .from("eval_results")
-                .update({ comparison: compResult } as never)
-                .eq("eval_result_id", compRow.eval_result_id);
-
-              sendEvent(controller, "progress", {
-                stage: "compared",
-                index: ci + 1,
-                total: compTotal,
-                test_case_id: tc.test_case_id,
-                message: `Compared ${ci + 1} of ${compTotal}`,
-              });
-            } catch (compErr) {
-              const msg = compErr instanceof Error ? compErr.message : String(compErr);
-              console.error("[add-version/stream] Comparison error for", tc.test_case_id, msg);
-              sendEvent(controller, "progress", {
-                stage: "compare_error",
-                index: ci,
-                total: compTotal,
-                test_case_id: tc.test_case_id,
-                message: `Comparison failed: ${msg.slice(0, 80)}`,
-              });
-            }
-          }
+          await Promise.allSettled(comparisonPromises);
         }
 
         const { data: updatedResults, error: resultsError } = await supabase

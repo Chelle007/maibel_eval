@@ -81,6 +81,7 @@ CREATE TABLE eval_results (
   total_tokens       INTEGER,
   cost_usd           DOUBLE PRECISION,
   manually_edited    BOOLEAN NOT NULL DEFAULT FALSE,
+  behavior_review    JSONB NOT NULL DEFAULT '{}'::jsonb,
   created_at         TIMESTAMPTZ NOT NULL DEFAULT now(),
   updated_at         TIMESTAMPTZ NOT NULL DEFAULT now()
 );
