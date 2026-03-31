@@ -60,6 +60,8 @@ CREATE TABLE test_sessions (
   total_cost_usd     DOUBLE PRECISION,
   total_eval_time_seconds DOUBLE PRECISION,
   summary            TEXT,
+  -- Session-level human interpretation layer (TASK-021). Structured + short; lives above per-dimension reviews.
+  session_review_summary JSONB NOT NULL DEFAULT '{}'::jsonb,
   mode               TEXT NOT NULL DEFAULT 'single' CHECK (mode IN ('single', 'comparison')),
   manually_edited    BOOLEAN NOT NULL DEFAULT FALSE,
   repeated_runs_mode TEXT NOT NULL DEFAULT 'auto' CHECK (repeated_runs_mode IN ('auto', 'manual')),

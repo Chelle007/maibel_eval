@@ -23,6 +23,8 @@ export interface TestSessionsRow {
   total_cost_usd: number | null;
   total_eval_time_seconds: number | null;
   summary: string | null;
+  /** Session-level human interpretation layer (TASK-021). Structured; sits above per-dimension review. */
+  session_review_summary: Json;
   mode: "single" | "comparison";
   manually_edited: boolean;
   /** auto: show None or Automated from eval data; manual: user can edit run counts for new versions. */

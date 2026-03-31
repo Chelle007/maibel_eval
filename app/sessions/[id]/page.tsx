@@ -16,6 +16,16 @@ import {
 } from "@/lib/behavior-review";
 import { normalizeVersionEntry } from "@/lib/db.types";
 import type { AnyVersionEntry, VersionEntry } from "@/lib/db.types";
+import {
+  SESSION_REVIEW_FAILURE_TAXONOMY,
+  emptySessionReviewSummaryV0,
+  parseSessionReviewSummaryV0,
+  type SessionReviewFailureThemeKey,
+  type SessionReviewSummaryV0,
+  type SessionOverallFinding,
+  type SessionRecommendation,
+  type SessionTrustSeverity,
+} from "@/lib/session-review-summary";
 
 type Session = {
   test_session_id: string;
@@ -24,6 +34,7 @@ type Session = {
   total_cost_usd: number | null;
   total_eval_time_seconds?: number | null;
   summary: string | null;
+  session_review_summary?: unknown;
   mode?: "single" | "comparison";
   manually_edited: boolean;
   repeated_runs_mode?: "auto" | "manual";
@@ -251,6 +262,12 @@ export default function SessionDetailPage() {
   const [summary, setSummary] = useState("");
   const [editingSummary, setEditingSummary] = useState(false);
   const [savingSummary, setSavingSummary] = useState(false);
+  const [sessionReviewSummary, setSessionReviewSummary] = useState<SessionReviewSummaryV0>(
+    emptySessionReviewSummaryV0()
+  );
+  const [savingSessionReviewSummary, setSavingSessionReviewSummary] = useState(false);
+  const [savedSessionReviewSummary, setSavedSessionReviewSummary] = useState(false);
+  const sessionReviewSavedTimeoutRef = useRef<number | null>(null);
   const [refiningWording, setRefiningWording] = useState(false);
   const [resummarizing, setResummarizing] = useState(false);
   const [deleting, setDeleting] = useState(false);
@@ -375,13 +392,68 @@ export default function SessionDetailPage() {
       .then((r) => r.json())
       .then((data) => {
         if (data.error) throw new Error(data.error);
-        setSession(data.session);
-        setResults(data.results ?? []);
-        setSummary(summaryForDisplay(data.session?.summary ?? ""));
+        const nextSession = data.session as Session | null;
+        const nextResults = (Array.isArray(data.results) ? data.results : []) as EvalResult[];
+        setSession(nextSession);
+        setResults(nextResults);
+        setSummary(summaryForDisplay(nextSession?.summary ?? ""));
+
+        const parsed = parseSessionReviewSummaryV0(nextSession?.session_review_summary);
+        const passCount = nextResults.filter((r) => r && typeof r.success === "boolean" && r.success).length;
+        const totalCount = nextResults.filter((r) => r && typeof r.success === "boolean").length;
+        const versionsText = (() => {
+          const versions = getVersionEntries(nextResults);
+          if (versions.length === 0) return null;
+          const names = versions.map((v) => v.version_name).filter(Boolean);
+          if (names.length === 0) return null;
+          return names.join(", ");
+        })();
+        const suggestedCasesVersions =
+          totalCount > 0
+            ? `${totalCount} cases; versions: ${versionsText ?? "—"}`
+            : versionsText
+              ? `versions: ${versionsText}`
+              : null;
+        const suggestedPassFail =
+          totalCount > 0 ? `${passCount} / ${totalCount} passed` : null;
+        setSessionReviewSummary({
+          ...parsed,
+          cases_versions_tested: parsed.cases_versions_tested ?? suggestedCasesVersions,
+          pass_fail_summary: parsed.pass_fail_summary ?? suggestedPassFail,
+        });
       })
       .catch((e) => setError(e.message))
       .finally(() => setLoading(false));
   }, [id]);
+
+  async function saveSessionReviewSummary() {
+    if (!id) return;
+    setSavedSessionReviewSummary(false);
+    if (sessionReviewSavedTimeoutRef.current != null) {
+      window.clearTimeout(sessionReviewSavedTimeoutRef.current);
+      sessionReviewSavedTimeoutRef.current = null;
+    }
+    setSavingSessionReviewSummary(true);
+    setError(null);
+    try {
+      const res = await fetch(`/api/sessions/${id}/review-summary`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ session_review_summary: sessionReviewSummary }),
+      });
+      const data = (await res.json().catch(() => ({}))) as { error?: string; session?: Session };
+      if (!res.ok || data.error) throw new Error(data.error ?? `Request failed (${res.status})`);
+      if (data.session) setSession(data.session);
+      setSavedSessionReviewSummary(true);
+      sessionReviewSavedTimeoutRef.current = window.setTimeout(() => {
+        setSavedSessionReviewSummary(false);
+      }, 2000);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Failed to save session review summary");
+    } finally {
+      setSavingSessionReviewSummary(false);
+    }
+  }
 
   function getVersionLabel(versionId: string): string {
     const entry = versionEntries.find((v) => v.version_id === versionId);
@@ -1222,6 +1294,166 @@ export default function SessionDetailPage() {
           )}
         </div>
       )}
+
+      <div className="mt-6 rounded-xl border border-stone-200 bg-white p-5 shadow-sm">
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <div>
+            <h2 className="text-xl font-semibold tracking-tight text-stone-900">Session review summary</h2>
+            <p className="mt-1 text-sm text-stone-600">
+              Short, structured interpretation layer (doesn’t duplicate per-dimension review).
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={() => { void saveSessionReviewSummary(); }}
+            disabled={savingSessionReviewSummary}
+            className={`inline-flex items-center gap-1.5 rounded-lg px-4 py-2 text-sm font-medium text-white disabled:opacity-50 ${
+              savingSessionReviewSummary
+                ? "bg-stone-700"
+                : savedSessionReviewSummary
+                  ? "bg-emerald-600"
+                  : "bg-stone-900 hover:bg-stone-800"
+            }`}
+          >
+            <Save className="h-4 w-4 shrink-0" aria-hidden />
+            {savingSessionReviewSummary ? "Saving…" : savedSessionReviewSummary ? "Saved" : "Save"}
+          </button>
+        </div>
+
+        <div className="mt-4 grid grid-cols-1 gap-4 lg:grid-cols-2">
+          <div className="space-y-3">
+            <div>
+              <label className="text-xs font-medium uppercase tracking-wide text-stone-400">Goal</label>
+              <textarea
+                rows={2}
+                value={sessionReviewSummary.goal ?? ""}
+                onChange={(e) => setSessionReviewSummary((p) => ({ ...p, goal: e.target.value.trim() ? e.target.value : null }))}
+                placeholder="What was this session trying to validate?"
+                className="mt-1 block w-full rounded-lg border border-stone-200 bg-white px-3 py-2 text-sm text-stone-900 leading-relaxed focus:border-stone-400 focus:outline-none focus:ring-1 focus:ring-stone-400"
+              />
+            </div>
+
+            <div>
+              <label className="text-xs font-medium uppercase tracking-wide text-stone-400">Cases / versions tested</label>
+              <input
+                type="text"
+                value={sessionReviewSummary.cases_versions_tested ?? ""}
+                onChange={(e) => setSessionReviewSummary((p) => ({ ...p, cases_versions_tested: e.target.value.trim() ? e.target.value : null }))}
+                placeholder="e.g. 24 cases; versions: v1, v2"
+                className="mt-1 block w-full rounded-lg border border-stone-200 bg-white px-3 py-2 text-sm text-stone-900 focus:border-stone-400 focus:outline-none focus:ring-1 focus:ring-stone-400"
+              />
+            </div>
+
+            <div>
+              <label className="text-xs font-medium uppercase tracking-wide text-stone-400">Pass/fail summary</label>
+              <input
+                type="text"
+                value={sessionReviewSummary.pass_fail_summary ?? ""}
+                onChange={(e) => setSessionReviewSummary((p) => ({ ...p, pass_fail_summary: e.target.value.trim() ? e.target.value : null }))}
+                placeholder="e.g. 18 / 24 passed"
+                className="mt-1 block w-full rounded-lg border border-stone-200 bg-white px-3 py-2 text-sm text-stone-900 focus:border-stone-400 focus:outline-none focus:ring-1 focus:ring-stone-400"
+              />
+            </div>
+
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+              <div>
+                <label className="text-xs font-medium uppercase tracking-wide text-stone-400">Overall finding</label>
+                <select
+                  value={sessionReviewSummary.overall_finding ?? ""}
+                  onChange={(e) => {
+                    const v = e.target.value as SessionOverallFinding | "";
+                    setSessionReviewSummary((p) => ({ ...p, overall_finding: v === "deterministic" || v === "likely_variable" || v === "unclear" ? v : null }));
+                  }}
+                  className="mt-1 block w-full rounded-lg border border-stone-200 bg-white px-3 py-2 text-sm text-stone-900 focus:border-stone-400 focus:outline-none focus:ring-1 focus:ring-stone-400"
+                >
+                  <option value="">—</option>
+                  <option value="deterministic">Deterministic</option>
+                  <option value="likely_variable">Likely variable</option>
+                  <option value="unclear">Unclear</option>
+                </select>
+              </div>
+
+              <div>
+                <label className="text-xs font-medium uppercase tracking-wide text-stone-400">Trust severity</label>
+                <select
+                  value={sessionReviewSummary.trust_severity ?? ""}
+                  onChange={(e) => {
+                    const v = e.target.value as SessionTrustSeverity | "";
+                    setSessionReviewSummary((p) => ({ ...p, trust_severity: v === "high" || v === "medium" || v === "low" ? v : null }));
+                  }}
+                  className="mt-1 block w-full rounded-lg border border-stone-200 bg-white px-3 py-2 text-sm text-stone-900 focus:border-stone-400 focus:outline-none focus:ring-1 focus:ring-stone-400"
+                >
+                  <option value="">—</option>
+                  <option value="high">High</option>
+                  <option value="medium">Medium</option>
+                  <option value="low">Low</option>
+                </select>
+              </div>
+
+              <div>
+                <label className="text-xs font-medium uppercase tracking-wide text-stone-400">Recommendation</label>
+                <select
+                  value={sessionReviewSummary.recommendation ?? ""}
+                  onChange={(e) => {
+                    const v = e.target.value as SessionRecommendation | "";
+                    setSessionReviewSummary((p) => ({ ...p, recommendation: v === "ship" || v === "hold" || v === "investigate" ? v : null }));
+                  }}
+                  className="mt-1 block w-full rounded-lg border border-stone-200 bg-white px-3 py-2 text-sm text-stone-900 focus:border-stone-400 focus:outline-none focus:ring-1 focus:ring-stone-400"
+                >
+                  <option value="">—</option>
+                  <option value="ship">Ship</option>
+                  <option value="hold">Hold</option>
+                  <option value="investigate">Investigate</option>
+                </select>
+              </div>
+            </div>
+          </div>
+
+          <div className="space-y-3">
+            <div>
+              <label className="text-xs font-medium uppercase tracking-wide text-stone-400">Top failure themes</label>
+              <div className="mt-2 grid grid-cols-1 gap-2 sm:grid-cols-2">
+                {SESSION_REVIEW_FAILURE_TAXONOMY.map((t) => {
+                  const checked = sessionReviewSummary.top_failure_themes.includes(t.key);
+                  return (
+                    <label
+                      key={t.key}
+                      className="flex items-start gap-2 rounded-lg border border-stone-200 bg-stone-50/40 px-3 py-2 text-sm text-stone-800"
+                    >
+                      <input
+                        type="checkbox"
+                        checked={checked}
+                        onChange={(e) => {
+                          const next = e.target.checked;
+                          setSessionReviewSummary((p) => {
+                            const cur = new Set<SessionReviewFailureThemeKey>(p.top_failure_themes);
+                            if (next) cur.add(t.key);
+                            else cur.delete(t.key);
+                            return { ...p, top_failure_themes: Array.from(cur) };
+                          });
+                        }}
+                        className="mt-0.5 h-4 w-4 rounded border-stone-300 text-stone-900 focus:ring-stone-400"
+                      />
+                      <span className="leading-snug">{t.label}</span>
+                    </label>
+                  );
+                })}
+              </div>
+            </div>
+
+            <div>
+              <label className="text-xs font-medium uppercase tracking-wide text-stone-400">What still needs confirmation</label>
+              <textarea
+                rows={4}
+                value={sessionReviewSummary.needs_confirmation ?? ""}
+                onChange={(e) => setSessionReviewSummary((p) => ({ ...p, needs_confirmation: e.target.value.trim() ? e.target.value : null }))}
+                placeholder="What would you rerun / double-check to be confident?"
+                className="mt-1 block w-full rounded-lg border border-stone-200 bg-white px-3 py-2 text-sm text-stone-900 leading-relaxed focus:border-stone-400 focus:outline-none focus:ring-1 focus:ring-stone-400"
+              />
+            </div>
+          </div>
+        </div>
+      </div>
 
       {error && (
         <div className="mt-5 rounded-lg border border-red-200 bg-red-50 p-4 text-sm text-red-800">
