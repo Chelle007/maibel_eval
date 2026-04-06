@@ -57,6 +57,13 @@ export function loadComparatorOverallEditSystemPrompt(): string {
   return content.replace(/\{base_system_prompt\}/g, base);
 }
 
+/** Load behavior review drafter system prompt and inject base prompt. */
+export function loadBehaviorReviewDrafterSystemPrompt(): string {
+  const content = readPrompt("behavior_review_drafter_system_prompt.txt");
+  const base = loadBaseSystemPrompt();
+  return content.replace(/\{base_system_prompt\}/g, base);
+}
+
 export function buildComparatorOverallEditUserMessage(args: {
   feedback: string;
   version_entries: { version_id: string; version_name: string }[];
@@ -339,6 +346,49 @@ export function buildEvaluatorUserMessage(
     sections.push(`Evren response: ${responseText}`);
     sections.push(`Detected flags: ${out.detected_states}`);
     sections.push("");
+  }
+
+  return sections.join("\n");
+}
+
+/** Build the user message for the AI behavior review drafter. */
+export function buildBehaviorReviewDrafterUserMessage(args: {
+  testCase: TestCase;
+  versions: { version_id: string; version_name: string; turns: { response: string[]; detected_flags: string }[] }[];
+  evaluatorReason?: string | null;
+}): string {
+  const { testCase: tc, versions, evaluatorReason } = args;
+  const sections: string[] = [];
+
+  sections.push("=== TEST CASE ===");
+  sections.push(`test_case_id: ${tc.test_case_id}`);
+  if (tc.img_url) sections.push(`Img url: ${tc.img_url}`);
+  sections.push(`Expected states: ${tc.expected_state}`);
+  sections.push(`Expected behavior: ${tc.expected_behavior}`);
+  if (tc.forbidden) sections.push(`Forbidden: ${tc.forbidden}`);
+  if (tc.notes) sections.push(`Notes: ${tc.notes}`);
+
+  const userMessages: string[] =
+    tc.type === "multi_turn" && Array.isArray(tc.turns) && tc.turns.length > 0
+      ? tc.turns.map((s) => String(s ?? "").trim())
+      : [tc.input_message?.trim() ?? ""];
+
+  for (const ver of versions) {
+    sections.push("");
+    sections.push(`=== VERSION: ${ver.version_name} (id: ${ver.version_id}) ===`);
+    for (let i = 0; i < ver.turns.length; i++) {
+      const turn = ver.turns[i];
+      sections.push(`--- Turn ${i + 1} ---`);
+      sections.push(`User: ${userMessages[i] ?? "(no user message)"}`);
+      sections.push(`Evren response: ${turn.response.join("\n") || "(empty)"}`);
+      sections.push(`Detected flags: ${turn.detected_flags}`);
+    }
+  }
+
+  if (evaluatorReason?.trim()) {
+    sections.push("");
+    sections.push("=== EVALUATOR ANALYSIS ===");
+    sections.push(evaluatorReason.trim());
   }
 
   return sections.join("\n");

@@ -2,6 +2,7 @@ import { createClient } from "@/lib/supabase/server";
 import { getMaxConcurrentTestCases, runWithConcurrency } from "@/lib/evren-concurrency";
 import { callEvrenApi } from "@/lib/evren";
 import { evaluateOne } from "@/lib/evaluator";
+import { draftBehaviorReview, draftBehaviorReviewForVersionEntries } from "@/lib/behavior-review-drafter";
 import { buildRichReport, runSummarizer } from "@/lib/summarizer";
 import { loadEvaluatorSystemPrompt, loadSummarizerSystemPrompt } from "@/lib/prompts";
 import { loadContextPack } from "@/lib/context-pack";
@@ -284,6 +285,31 @@ export async function POST(request: Request) {
 
             richSlots[index] = { testCase, evrenOutput: lastOutput, result };
 
+            let behaviorReview: Record<string, unknown> = {};
+            try {
+              const run1 = versionEntry.runs.find((r) => r.run_index === 1) ?? versionEntry.runs[0];
+              const draftResult = await draftBehaviorReview({
+                testCase,
+                versions: [{
+                  version_id: versionId,
+                  version_name: "Version 1",
+                  turns: (run1?.turns ?? []).map((t) => ({ response: t.response, detected_flags: t.detected_flags })),
+                }],
+                evaluatorReason: result.reason,
+                apiKey: apiKey as string,
+                modelName,
+                contextPack: contextPack ? { text: contextPack.text, bundleId: contextPack.bundleId } : undefined,
+              });
+              if (Object.keys(draftResult.reviews).length > 0) {
+                behaviorReview = draftResult.reviews;
+              }
+              if (draftResult.token_usage) {
+                totalCostUsd += draftResult.token_usage.cost_usd;
+              }
+            } catch (brErr) {
+              console.error("[evaluate/run/stream] behavior review draft failed:", brErr instanceof Error ? brErr.message : brErr);
+            }
+
             const evalPayload = {
               session_id: sessionId,
               test_case_uuid: row.id,
@@ -296,10 +322,34 @@ export async function POST(request: Request) {
               total_tokens: result.token_usage?.total_tokens ?? null,
               cost_usd: costUsd || null,
               manually_edited: false,
-              behavior_review: {},
+              behavior_review: behaviorReview,
             } as Database["public"]["Tables"]["eval_results"]["Insert"];
             await supabase.from("eval_results").insert(evalPayload as any);
           } else {
+            let behaviorReview: Record<string, unknown> = {};
+            if (apiKey) {
+              try {
+                const draftResult = await draftBehaviorReviewForVersionEntries({
+                  testCase,
+                  versions: [versionEntry],
+                  evaluatorReason: null,
+                  apiKey: apiKey as string,
+                  modelName,
+                  includeExtended: includeExtendedContext,
+                });
+                if (Object.keys(draftResult.reviews).length > 0) {
+                  behaviorReview = draftResult.reviews;
+                }
+                if (draftResult.token_usage) {
+                  totalCostUsd += draftResult.token_usage.cost_usd;
+                }
+              } catch (brErr) {
+                console.error(
+                  "[evaluate/run/stream] behavior review draft failed (comparison mode):",
+                  brErr instanceof Error ? brErr.message : brErr
+                );
+              }
+            }
             const evalPayload = {
               session_id: sessionId,
               test_case_uuid: row.id,
@@ -313,7 +363,7 @@ export async function POST(request: Request) {
               total_tokens: null,
               cost_usd: null,
               manually_edited: false,
-              behavior_review: {},
+              behavior_review: behaviorReview,
             } as Database["public"]["Tables"]["eval_results"]["Insert"];
             await supabase.from("eval_results").insert(evalPayload as any);
           }

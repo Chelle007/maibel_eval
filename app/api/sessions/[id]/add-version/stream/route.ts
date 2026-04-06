@@ -1,6 +1,8 @@
 import { createClient } from "@/lib/supabase/server";
 import { getMaxConcurrentTestCases, runWithConcurrency } from "@/lib/evren-concurrency";
 import { callEvrenApi } from "@/lib/evren";
+import { mergeBehaviorReviewMap } from "@/lib/behavior-review";
+import { draftBehaviorReviewForVersionEntries } from "@/lib/behavior-review-drafter";
 import { compareOverall } from "@/lib/comparator";
 import { loadComparatorOverallSystemPrompt } from "@/lib/prompts";
 import { loadContextPack } from "@/lib/context-pack";
@@ -43,7 +45,10 @@ function createLimiter(maxInFlight: number) {
     });
 }
 
-type EvalResultLite = Pick<EvalResultsRow, "eval_result_id" | "test_case_uuid" | "evren_responses" | "comparison">;
+type EvalResultLite = Pick<
+  EvalResultsRow,
+  "eval_result_id" | "test_case_uuid" | "evren_responses" | "comparison" | "reason"
+>;
 
 function sendEvent(
   controller: ReadableStreamDefaultController<Uint8Array>,
@@ -116,7 +121,7 @@ export async function POST(
 
   const { data: evalRows, error: evalError } = await supabase
     .from("eval_results")
-    .select("eval_result_id, test_case_uuid, evren_responses, comparison")
+    .select("eval_result_id, test_case_uuid, evren_responses, comparison, reason")
     .eq("session_id", sessionId)
     .order("eval_result_id");
   if (evalError) {
@@ -275,6 +280,33 @@ export async function POST(
                       .from("eval_results")
                       .update({ comparison: compResult } as never)
                       .eq("eval_result_id", row.eval_result_id);
+
+                    const reasonText =
+                      (typeof row.reason === "string" && row.reason.trim() ? row.reason : null) ??
+                      compResult.overall_reason ??
+                      null;
+                    try {
+                      const draftResult = await draftBehaviorReviewForVersionEntries({
+                        testCase,
+                        versions,
+                        evaluatorReason: reasonText,
+                        apiKey,
+                        modelName: comparatorModel,
+                        includeExtended: useExtended,
+                      });
+                      if (Object.keys(draftResult.reviews).length > 0) {
+                        const allowed = new Set(versionIds);
+                        const merged = mergeBehaviorReviewMap({}, draftResult.reviews, allowed);
+                        if (merged) {
+                          await supabase
+                            .from("eval_results")
+                            .update({ behavior_review: merged } as never)
+                            .eq("eval_result_id", row.eval_result_id);
+                        }
+                      }
+                    } catch (brErr) {
+                      console.error("[add-version/stream] Behavior review draft error for", tc.test_case_id, brErr);
+                    }
 
                     comparedCount++;
                     sendEvent(controller, "progress", {

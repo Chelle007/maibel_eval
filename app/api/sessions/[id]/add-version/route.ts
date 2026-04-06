@@ -2,6 +2,8 @@ import { NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import { getMaxConcurrentTestCases, runWithConcurrency } from "@/lib/evren-concurrency";
 import { callEvrenApi } from "@/lib/evren";
+import { mergeBehaviorReviewMap } from "@/lib/behavior-review";
+import { draftBehaviorReviewForVersionEntries } from "@/lib/behavior-review-drafter";
 import { compareOverall } from "@/lib/comparator";
 import { loadComparatorOverallSystemPrompt } from "@/lib/prompts";
 import { loadContextPack } from "@/lib/context-pack";
@@ -10,7 +12,10 @@ import type { DefaultSettingsRow, EvalResultsRow, RunEntry, TestCasesRow, Versio
 
 const FALLBACK_EVREN_URL = process.env.NEXT_PUBLIC_EVREN_API_URL || "http://localhost:8000";
 
-type EvalResultLite = Pick<EvalResultsRow, "eval_result_id" | "test_case_uuid" | "evren_responses" | "comparison">;
+type EvalResultLite = Pick<
+  EvalResultsRow,
+  "eval_result_id" | "test_case_uuid" | "evren_responses" | "comparison" | "reason"
+>;
 
 export async function POST(
   request: Request,
@@ -64,10 +69,10 @@ export async function POST(
 
   const { data: evalRows, error: evalError } = await supabase
     .from("eval_results")
-    .select("eval_result_id, test_case_uuid, evren_responses, comparison")
+    .select("eval_result_id, test_case_uuid, evren_responses, comparison, reason")
     .eq("session_id", sessionId)
     .order("eval_result_id");
-  if (evalError) {
+    if (evalError) {
     return NextResponse.json({ error: evalError.message }, { status: 500 });
   }
 
@@ -154,7 +159,7 @@ export async function POST(
   if (runComparison && apiKey) {
     const { data: freshRows } = await supabase
       .from("eval_results")
-      .select("eval_result_id, test_case_uuid, evren_responses, comparison")
+      .select("eval_result_id, test_case_uuid, evren_responses, comparison, reason")
       .eq("session_id", sessionId)
       .order("eval_result_id");
     const compRows = (freshRows ?? []) as EvalResultLite[];
@@ -202,6 +207,33 @@ export async function POST(
           .from("eval_results")
           .update({ comparison: compResult } as never)
           .eq("eval_result_id", compRow.eval_result_id);
+
+        const reasonText =
+          (typeof compRow.reason === "string" && compRow.reason.trim() ? compRow.reason : null) ??
+          compResult.overall_reason ??
+          null;
+        try {
+          const draftResult = await draftBehaviorReviewForVersionEntries({
+            testCase,
+            versions,
+            evaluatorReason: reasonText,
+            apiKey,
+            modelName: comparatorModel,
+            includeExtended: useExtended,
+          });
+          if (Object.keys(draftResult.reviews).length > 0) {
+            const allowed = new Set(versionIds);
+            const merged = mergeBehaviorReviewMap({}, draftResult.reviews, allowed);
+            if (merged) {
+              await supabase
+                .from("eval_results")
+                .update({ behavior_review: merged } as never)
+                .eq("eval_result_id", compRow.eval_result_id);
+            }
+          }
+        } catch (brErr) {
+          console.error("[sessions/add-version] Behavior review draft error for", tc.test_case_id, brErr);
+        }
       } catch (compErr) {
         console.error("[sessions/add-version] Comparison error for", tc.test_case_id, compErr);
       }

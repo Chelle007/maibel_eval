@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { Pencil, RefreshCw, Save, X, Trash2, Check, Plus, Eye, EyeOff } from "lucide-react";
+import { Pencil, RefreshCw, Save, X, Trash2, Check, Plus, Eye, EyeOff, Eraser } from "lucide-react";
 import { useParams, useRouter } from "next/navigation";
 import { useEffect, useMemo, useRef, useState } from "react";
 import ReactMarkdown from "react-markdown";
@@ -12,6 +12,8 @@ import {
   emptyVersionBehaviorReview,
   parseVersionBehaviorReview,
   type BehaviorReviewByVersion,
+  type BehaviorReviewConfidence,
+  type BehaviorReviewDimensionKey,
   type BehaviorReviewRating,
   type VersionBehaviorReview,
 } from "@/lib/behavior-review";
@@ -571,6 +573,21 @@ export default function SessionDetailPage() {
     } finally {
       setSavingBehaviorReviewId(null);
     }
+  }
+
+  function clearBehaviorReview(r: EvalResult) {
+    const reviewVersions = (Array.isArray(r.evren_responses) ? r.evren_responses : [])
+      .slice(0, 3)
+      .map((v) => normalizeVersionEntry(v as AnyVersionEntry));
+    if (reviewVersions.length === 0) return;
+    const cleared: Record<string, VersionBehaviorReview> = {};
+    for (const ver of reviewVersions) {
+      cleared[ver.version_id] = emptyVersionBehaviorReview();
+    }
+    setBehaviorReviewDraft((prev) => ({
+      ...prev,
+      [r.eval_result_id]: cleared,
+    }));
   }
 
   async function applyAiComparisonEdits(r: EvalResult) {
@@ -2366,33 +2383,46 @@ export default function SessionDetailPage() {
                         <hr className="border-stone-200" />
                         <div>
                           <div className="flex flex-wrap items-center justify-between gap-2">
-                            <div>
+                            <div className="flex items-center gap-2">
                               <p className="text-xs font-medium uppercase tracking-wide text-stone-400">Behavior review</p>
                             </div>
-                            <button
-                              type="button"
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                void saveBehaviorReview(r);
-                              }}
-                              disabled={
-                                savingBehaviorReviewId === r.eval_result_id ||
-                                savedBehaviorReviewId === r.eval_result_id
-                              }
-                              className={`rounded-lg px-3 py-1.5 text-xs font-medium text-white transition-colors disabled:opacity-60 ${
-                                savingBehaviorReviewId === r.eval_result_id
-                                  ? "bg-stone-700"
+                            <div className="flex items-center gap-2">
+                              <button
+                                type="button"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  clearBehaviorReview(r);
+                                }}
+                                className="inline-flex items-center gap-1 rounded-lg border border-stone-300 bg-white px-2.5 py-1.5 text-xs font-medium text-stone-600 transition-colors hover:bg-stone-50"
+                              >
+                                <Eraser className="h-3 w-3" />
+                                Clear
+                              </button>
+                              <button
+                                type="button"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  void saveBehaviorReview(r);
+                                }}
+                                disabled={
+                                  savingBehaviorReviewId === r.eval_result_id ||
+                                  savedBehaviorReviewId === r.eval_result_id
+                                }
+                                className={`rounded-lg px-3 py-1.5 text-xs font-medium text-white transition-colors disabled:opacity-60 ${
+                                  savingBehaviorReviewId === r.eval_result_id
+                                    ? "bg-stone-700"
+                                    : savedBehaviorReviewId === r.eval_result_id
+                                      ? "bg-emerald-600"
+                                      : "bg-stone-900 hover:bg-stone-800"
+                                }`}
+                              >
+                                {savingBehaviorReviewId === r.eval_result_id
+                                  ? "Saving…"
                                   : savedBehaviorReviewId === r.eval_result_id
-                                    ? "bg-emerald-600"
-                                    : "bg-stone-900 hover:bg-stone-800"
-                              }`}
-                            >
-                              {savingBehaviorReviewId === r.eval_result_id
-                                ? "Saving…"
-                                : savedBehaviorReviewId === r.eval_result_id
-                                  ? "Saved"
-                                  : "Save review"}
-                            </button>
+                                    ? "Saved"
+                                    : "Save review"}
+                              </button>
+                            </div>
                           </div>
                           {/* Mobile: keep cards (tables get cramped). */}
                           <div className="mt-3 grid grid-cols-1 gap-3 sm:hidden">
@@ -2407,6 +2437,8 @@ export default function SessionDetailPage() {
                                     const draft = getBehaviorReviewDraft(r, ver.version_id, behaviorReviewDraft);
                                     const val = draft[dim.key];
                                     const selectVal = val === "pass" || val === "fail" || val === "na" ? val : "";
+                                    const conf = draft.confidence?.[dim.key as BehaviorReviewDimensionKey] as BehaviorReviewConfidence | null | undefined;
+                                    const confColor = conf === "high" ? "bg-emerald-400" : conf === "medium" ? "bg-amber-400" : conf === "low" ? "bg-red-400" : null;
                                     return (
                                       <div key={dim.key} className="flex flex-wrap items-center gap-2 sm:flex-nowrap">
                                         <div className="min-w-0 flex-1">
@@ -2427,33 +2459,41 @@ export default function SessionDetailPage() {
                                             </span>
                                           </div>
                                         </div>
-                                        <select
-                                          value={selectVal}
-                                          onClick={(e) => e.stopPropagation()}
-                                          onChange={(e) => {
-                                            const raw = e.target.value;
-                                            const nextRating: BehaviorReviewRating | null =
-                                              raw === "pass" || raw === "fail" || raw === "na" ? raw : null;
-                                            setBehaviorReviewDraft((prev) => {
-                                              const rid = r.eval_result_id;
-                                              const cur = getBehaviorReviewDraft(r, ver.version_id, prev);
-                                              const updated: VersionBehaviorReview = { ...cur, [dim.key]: nextRating };
-                                              return {
-                                                ...prev,
-                                                [rid]: {
-                                                  ...(prev[rid] ?? {}),
-                                                  [ver.version_id]: updated,
-                                                },
-                                              };
-                                            });
-                                          }}
-                                          className="rounded-md border border-stone-200 bg-white px-2 py-1 text-sm text-stone-900 focus:border-stone-400 focus:outline-none focus:ring-1 focus:ring-stone-400"
-                                        >
-                                          <option value="">—</option>
-                                          <option value="pass">Pass</option>
-                                          <option value="fail">Fail</option>
-                                          <option value="na">N/A</option>
-                                        </select>
+                                        <div className="flex items-center gap-1">
+                                          <select
+                                            value={selectVal}
+                                            onClick={(e) => e.stopPropagation()}
+                                            onChange={(e) => {
+                                              const raw = e.target.value;
+                                              const nextRating: BehaviorReviewRating | null =
+                                                raw === "pass" || raw === "fail" || raw === "na" ? raw : null;
+                                              setBehaviorReviewDraft((prev) => {
+                                                const rid = r.eval_result_id;
+                                                const cur = getBehaviorReviewDraft(r, ver.version_id, prev);
+                                                const updated: VersionBehaviorReview = { ...cur, [dim.key]: nextRating };
+                                                return {
+                                                  ...prev,
+                                                  [rid]: {
+                                                    ...(prev[rid] ?? {}),
+                                                    [ver.version_id]: updated,
+                                                  },
+                                                };
+                                              });
+                                            }}
+                                            className="rounded-md border border-stone-200 bg-white px-2 py-1 text-sm text-stone-900 focus:border-stone-400 focus:outline-none focus:ring-1 focus:ring-stone-400"
+                                          >
+                                            <option value="">—</option>
+                                            <option value="pass">Pass</option>
+                                            <option value="fail">Fail</option>
+                                            <option value="na">N/A</option>
+                                          </select>
+                                          {confColor && (
+                                            <span
+                                              title={`AI confidence: ${conf}`}
+                                              className={`inline-block h-2 w-2 flex-shrink-0 rounded-full ${confColor}`}
+                                            />
+                                          )}
+                                        </div>
                                       </div>
                                     );
                                   })}
@@ -2540,35 +2580,45 @@ export default function SessionDetailPage() {
                                         const draft = getBehaviorReviewDraft(r, ver.version_id, behaviorReviewDraft);
                                         const val = draft[dim.key];
                                         const selectVal = val === "pass" || val === "fail" || val === "na" ? val : "";
+                                        const conf = draft.confidence?.[dim.key as BehaviorReviewDimensionKey] as BehaviorReviewConfidence | null | undefined;
+                                        const confColor = conf === "high" ? "bg-emerald-400" : conf === "medium" ? "bg-amber-400" : conf === "low" ? "bg-red-400" : null;
                                         return (
                                           <td key={dim.key} className="border-b border-stone-200 px-2 py-2 align-top">
-                                            <select
-                                              value={selectVal}
-                                              onClick={(e) => e.stopPropagation()}
-                                              onChange={(e) => {
-                                                const raw = e.target.value;
-                                                const nextRating: BehaviorReviewRating | null =
-                                                  raw === "pass" || raw === "fail" || raw === "na" ? raw : null;
-                                                setBehaviorReviewDraft((prev) => {
-                                                  const rid = r.eval_result_id;
-                                                  const cur = getBehaviorReviewDraft(r, ver.version_id, prev);
-                                                  const updated: VersionBehaviorReview = { ...cur, [dim.key]: nextRating };
-                                                  return {
-                                                    ...prev,
-                                                    [rid]: {
-                                                      ...(prev[rid] ?? {}),
-                                                      [ver.version_id]: updated,
-                                                    },
-                                                  };
-                                                });
-                                              }}
-                                              className="w-full min-w-0 rounded-md border border-stone-200 bg-white px-2 py-1 text-sm text-stone-900 focus:border-stone-400 focus:outline-none focus:ring-1 focus:ring-stone-400"
-                                            >
-                                              <option value="">—</option>
-                                              <option value="pass">Pass</option>
-                                              <option value="fail">Fail</option>
-                                              <option value="na">N/A</option>
-                                            </select>
+                                            <div className="flex items-center gap-1">
+                                              <select
+                                                value={selectVal}
+                                                onClick={(e) => e.stopPropagation()}
+                                                onChange={(e) => {
+                                                  const raw = e.target.value;
+                                                  const nextRating: BehaviorReviewRating | null =
+                                                    raw === "pass" || raw === "fail" || raw === "na" ? raw : null;
+                                                  setBehaviorReviewDraft((prev) => {
+                                                    const rid = r.eval_result_id;
+                                                    const cur = getBehaviorReviewDraft(r, ver.version_id, prev);
+                                                    const updated: VersionBehaviorReview = { ...cur, [dim.key]: nextRating };
+                                                    return {
+                                                      ...prev,
+                                                      [rid]: {
+                                                        ...(prev[rid] ?? {}),
+                                                        [ver.version_id]: updated,
+                                                      },
+                                                    };
+                                                  });
+                                                }}
+                                                className="w-full min-w-0 rounded-md border border-stone-200 bg-white px-2 py-1 text-sm text-stone-900 focus:border-stone-400 focus:outline-none focus:ring-1 focus:ring-stone-400"
+                                              >
+                                                <option value="">—</option>
+                                                <option value="pass">Pass</option>
+                                                <option value="fail">Fail</option>
+                                                <option value="na">N/A</option>
+                                              </select>
+                                              {confColor && (
+                                                <span
+                                                  title={`AI confidence: ${conf}`}
+                                                  className={`inline-block h-2 w-2 flex-shrink-0 rounded-full ${confColor}`}
+                                                />
+                                              )}
+                                            </div>
                                           </td>
                                         );
                                       })}
