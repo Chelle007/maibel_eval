@@ -3,6 +3,7 @@ import { getMaxConcurrentTestCases, runWithConcurrency } from "@/lib/evren-concu
 import { callEvrenApi } from "@/lib/evren";
 import { compareOverall } from "@/lib/comparator";
 import { loadComparatorOverallSystemPrompt } from "@/lib/prompts";
+import { loadContextPack } from "@/lib/context-pack";
 import type { TestCase } from "@/lib/types";
 import type { DefaultSettingsRow, EvalResultsRow, RunEntry, TestCasesRow, VersionEntry } from "@/lib/db.types";
 
@@ -63,7 +64,12 @@ export async function POST(
 ) {
   const { id } = await params;
 
-  let body: { version_name?: string; run_count?: number; run_comparison?: boolean } = {};
+  let body: {
+    version_name?: string;
+    run_count?: number;
+    run_comparison?: boolean;
+    include_extended_context?: boolean;
+  } = {};
   try {
     body = await request.json();
   } catch {
@@ -71,6 +77,7 @@ export async function POST(
   }
   const runComparison = body.run_comparison ?? false;
   const runCount = Number.isFinite(body.run_count) ? Math.max(1, Math.floor(body.run_count as number)) : 1;
+  const includeExtendedContext = body.include_extended_context === true;
 
   const supabase = await createClient();
 
@@ -84,7 +91,7 @@ export async function POST(
 
   const { data: session, error: sessionError } = await supabase
     .from("test_sessions")
-    .select("session_id")
+    .select("session_id, context_bundle_id, context_extended_enabled")
     .eq("test_session_id", id)
     .maybeSingle();
   if (sessionError || !session) {
@@ -95,6 +102,8 @@ export async function POST(
   }
 
   const sessionId = (session as { session_id: string }).session_id;
+  const sessionCtx = session as { context_bundle_id?: string | null; context_extended_enabled?: boolean | null };
+  const useExtended = includeExtendedContext || sessionCtx.context_extended_enabled === true;
 
   const { data: settingsRow } = await supabase
     .from("default_settings")
@@ -245,6 +254,11 @@ export async function POST(
                   };
 
                   try {
+                    const contextPack = loadContextPack({
+                      includeExtended: useExtended,
+                      purpose: "comparator",
+                      query: `${testCase.test_case_id}\n${testCase.expected_state}\n${testCase.expected_behavior}\n${testCase.forbidden ?? ""}\n${testCase.notes ?? ""}`,
+                    });
                     const compResult = await compareOverall(
                       testCase,
                       versions,
@@ -253,7 +267,8 @@ export async function POST(
                         : ([versionIds[0], versionIds[1], versionIds[2]] as [string, string, string]),
                       apiKey,
                       comparatorModel,
-                      comparatorPrompt
+                      comparatorPrompt,
+                      { text: contextPack.text, bundleId: contextPack.bundleId }
                     );
 
                     await supabase

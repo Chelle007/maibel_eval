@@ -77,6 +77,19 @@ export async function GET(
   if (sessionError || !session) {
     return NextResponse.json({ error: sessionError?.message ?? "Not found" }, { status: 404 });
   }
+
+  const { data: defaultSettings } = await supabase
+    .from("default_settings")
+    .select("evaluator_model, summarizer_model")
+    .limit(1)
+    .maybeSingle();
+  const models = defaultSettings
+    ? {
+        evaluator_model: (defaultSettings as { evaluator_model?: string | null }).evaluator_model ?? null,
+        summarizer_model: (defaultSettings as { summarizer_model?: string | null }).summarizer_model ?? null,
+      }
+    : { evaluator_model: null, summarizer_model: null };
+
   const sessionId = (session as { session_id: string }).session_id;
   const { data: results, error: resultsError } = await supabase
     .from("eval_results")
@@ -92,7 +105,7 @@ export async function GET(
     return { ...r, test_case_id: tid, test_cases: tc };
   });
 
-  return NextResponse.json({ session, results: resultsWithTestCaseId });
+  return NextResponse.json({ session, models, results: resultsWithTestCaseId });
 }
 
 export async function DELETE(

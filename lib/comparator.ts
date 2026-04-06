@@ -103,7 +103,8 @@ export async function compareOverall(
   versionIds: [string, string] | [string, string, string],
   apiKey: string,
   modelName: string = DEFAULT_MODEL,
-  systemPrompt?: string
+  systemPrompt?: string,
+  contextPack?: { text: string; bundleId: string }
 ): Promise<ComparisonData> {
   const genAI = new GoogleGenerativeAI(apiKey);
   const systemInstruction = systemPrompt ?? loadComparatorOverallSystemPrompt();
@@ -117,7 +118,11 @@ export async function compareOverall(
     versions,
     versionIds
   );
-  const result = await model.generateContent(message);
+  const finalMessage =
+    contextPack?.text?.trim()
+      ? `${message}\n\n=== ORGANIZATION CONTEXT (bundle: ${contextPack.bundleId}) ===\n${contextPack.text.trim()}\n`
+      : message;
+  const result = await model.generateContent(finalMessage);
   const response = result.response;
   const text = response.text();
 

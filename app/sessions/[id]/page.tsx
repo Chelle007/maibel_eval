@@ -1,11 +1,12 @@
 "use client";
 
 import Link from "next/link";
-import { Pencil, RefreshCw, Save, X, Trash2, Check, Plus } from "lucide-react";
+import { Pencil, RefreshCw, Save, X, Trash2, Check, Plus, Eye, EyeOff } from "lucide-react";
 import { useParams, useRouter } from "next/navigation";
 import { useEffect, useMemo, useRef, useState } from "react";
 import ReactMarkdown from "react-markdown";
 import { SummaryEditor } from "@/app/components/SummaryEditor";
+import { computeTokenCostParts } from "@/lib/token-cost";
 import {
   BEHAVIOR_REVIEW_DIMENSIONS,
   emptyVersionBehaviorReview,
@@ -42,6 +43,11 @@ type Session = {
   users?: { full_name: string | null; email: string } | null;
 };
 
+type SessionModels = {
+  evaluator_model: string | null;
+  summarizer_model: string | null;
+};
+
 function formatSessionDate(iso: string | null | undefined): string {
   if (!iso) return "";
   const d = new Date(iso);
@@ -53,6 +59,11 @@ function formatEvalTime(seconds: number): string {
   const m = Math.floor(seconds / 60);
   const s = Math.round(seconds % 60);
   return s > 0 ? `${m}m ${s}s` : `${m}m`;
+}
+
+function formatUsd(value: number | null | undefined, decimals: number = 6): string {
+  const n = typeof value === "number" && Number.isFinite(value) ? value : 0;
+  return `$${n.toFixed(decimals)} USD`;
 }
 
 function playCompletionSound() {
@@ -122,6 +133,12 @@ type ComparisonData = {
   tiers: string[][];
   overall_reason: string;
   overall_hard_failures: Record<string, string[]>;
+  token_usage?: {
+    prompt_tokens: number;
+    completion_tokens: number;
+    total_tokens: number;
+    cost_usd: number;
+  };
 } | null;
 
 type EvalResult = {
@@ -164,6 +181,17 @@ function isResultEvaluated(r: EvalResult): boolean {
   if (r.prompt_tokens != null || r.completion_tokens != null || r.total_tokens != null) return true;
   if (typeof r.reason === "string" && r.reason.trim() !== "") return true;
   return false;
+}
+
+function getComparisonTokenUsage(r: EvalResult): { prompt: number; completion: number; total: number; costUsd: number } | null {
+  const usage = r.comparison?.token_usage;
+  if (!usage) return null;
+  const prompt = typeof usage.prompt_tokens === "number" ? usage.prompt_tokens : null;
+  const completion = typeof usage.completion_tokens === "number" ? usage.completion_tokens : null;
+  const total = typeof usage.total_tokens === "number" ? usage.total_tokens : null;
+  const costUsd = typeof usage.cost_usd === "number" ? usage.cost_usd : null;
+  if (prompt == null || completion == null || costUsd == null) return null;
+  return { prompt, completion, total: total ?? prompt + completion, costUsd };
 }
 
 function getVersionEntries(results: EvalResult[]): VersionEntry[] {
@@ -242,6 +270,7 @@ export default function SessionDetailPage() {
   const params = useParams();
   const id = params.id as string;
   const [session, setSession] = useState<Session | null>(null);
+  const [models, setModels] = useState<SessionModels>({ evaluator_model: null, summarizer_model: null });
   const [results, setResults] = useState<EvalResult[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -290,6 +319,7 @@ export default function SessionDetailPage() {
   const [draftVersions, setDraftVersions] = useState<{ version_id: string; version_name: string }[]>([]);
   const [newVersionLabel, setNewVersionLabel] = useState("Version 2");
   const [runComparison, setRunComparison] = useState(true);
+  const [addVersionIncludeExtendedContext, setAddVersionIncludeExtendedContext] = useState(false);
   const [addVersionRunCount, setAddVersionRunCount] = useState(1);
   const [editingVersionId, setEditingVersionId] = useState<string | null>(null);
   const [deletingVersionId, setDeletingVersionId] = useState<string | null>(null);
@@ -307,6 +337,7 @@ export default function SessionDetailPage() {
   const [passFailFilter, setPassFailFilter] = useState<"" | "pass" | "fail">("");
   const [typeFilter, setTypeFilter] = useState<"" | "single_turn" | "multi_turn">("");
   const [sortBy, setSortBy] = useState<"id" | "score">("id");
+  const [showComparatorMetrics, setShowComparatorMetrics] = useState(false);
   const router = useRouter();
   const versionEntries = useMemo(() => getVersionEntries(results), [results]);
   const versionCount = versionEntries.length;
@@ -393,8 +424,10 @@ export default function SessionDetailPage() {
       .then((data) => {
         if (data.error) throw new Error(data.error);
         const nextSession = data.session as Session | null;
+        const nextModels = (data.models ?? null) as SessionModels | null;
         const nextResults = (Array.isArray(data.results) ? data.results : []) as EvalResult[];
         setSession(nextSession);
+        if (nextModels && typeof nextModels === "object") setModels(nextModels);
         setResults(nextResults);
         setSummary(summaryForDisplay(nextSession?.summary ?? ""));
 
@@ -609,6 +642,7 @@ export default function SessionDetailPage() {
     setNewVersionLabel(`Version ${nextNum}`);
     setAddVersionRunCount(1);
     setEditingVersionId(null);
+    setAddVersionIncludeExtendedContext(false);
     setShowAddVersionModal(true);
   }
 
@@ -659,6 +693,7 @@ export default function SessionDetailPage() {
           version_name: cleanedNewVersionLabel,
           run_count: effectiveRunCount,
           run_comparison: runComparison,
+          include_extended_context: addVersionIncludeExtendedContext,
         }),
       });
       if (!res.ok) {
@@ -954,6 +989,79 @@ export default function SessionDetailPage() {
       .finally(() => setResummarizing(false));
   }
 
+  const evaluatedResults = results.filter(isResultEvaluated);
+  const hasEvaluationResults = evaluatedResults.length > 0;
+  const evaluatorModelName = models.evaluator_model ?? "gemini-3-flash-preview";
+  const evaluatorTokensSummary = useMemo(() => {
+    let prompt = 0;
+    let completion = 0;
+    let total = 0;
+    let any = false;
+    for (const r of evaluatedResults) {
+      if (typeof r.prompt_tokens === "number") {
+        prompt += r.prompt_tokens;
+        any = true;
+      }
+      if (typeof r.completion_tokens === "number") {
+        completion += r.completion_tokens;
+        any = true;
+      }
+      if (typeof r.total_tokens === "number") {
+        total += r.total_tokens;
+        any = true;
+      }
+    }
+    return { any, prompt, completion, total };
+  }, [evaluatedResults]);
+  const evalCostSummary = useMemo(() => {
+    if (!evaluatorTokensSummary.any) return null;
+    return computeTokenCostParts(evaluatorTokensSummary.prompt, evaluatorTokensSummary.completion, evaluatorModelName);
+  }, [evaluatorTokensSummary, evaluatorModelName]);
+
+  const comparisonTokensSummary = useMemo(() => {
+    let prompt = 0;
+    let completion = 0;
+    let total = 0;
+    let any = false;
+    let costUsd = 0;
+    for (const r of results) {
+      const u = getComparisonTokenUsage(r);
+      if (!u) continue;
+      any = true;
+      prompt += u.prompt;
+      completion += u.completion;
+      total += u.total;
+      costUsd += u.costUsd;
+    }
+    return { any, prompt, completion, total, costUsd };
+  }, [results]);
+  const comparisonCostSummary = useMemo(() => {
+    if (!comparisonTokensSummary.any) return null;
+    return computeTokenCostParts(comparisonTokensSummary.prompt, comparisonTokensSummary.completion, evaluatorModelName);
+  }, [comparisonTokensSummary, evaluatorModelName]);
+
+  useEffect(() => {
+    try {
+      const raw = localStorage.getItem("maibel_eval_show_comparator_metrics");
+      if (raw === "1") setShowComparatorMetrics(true);
+      if (raw === "0") setShowComparatorMetrics(false);
+    } catch {
+      /* ignore */
+    }
+  }, []);
+
+  function toggleComparatorMetrics() {
+    setShowComparatorMetrics((prev) => {
+      const next = !prev;
+      try {
+        localStorage.setItem("maibel_eval_show_comparator_metrics", next ? "1" : "0");
+      } catch {
+        /* ignore */
+      }
+      return next;
+    });
+  }
+
   if (loading) return <div className="mx-auto max-w-5xl px-4 py-8 text-stone-500">Loading…</div>;
   if (error || !session) {
     return (
@@ -963,9 +1071,6 @@ export default function SessionDetailPage() {
       </div>
     );
   }
-
-  const evaluatedResults = results.filter(isResultEvaluated);
-  const hasEvaluationResults = evaluatedResults.length > 0;
   const repeatedRunsDisplay = getRepeatedRunsDisplay(session.repeated_runs_mode, results);
   const anyMultiRunInSession = evalResultsHaveAnyMultiRun(results);
   const repeatedRunsSelectValue =
@@ -977,18 +1082,36 @@ export default function SessionDetailPage() {
         <Link href="/sessions" className="text-sm text-stone-500 hover:text-stone-700">← Sessions</Link>
         <div className="flex items-center gap-2">
           {session.mode !== "single" && (
-            <button
-              type="button"
-              onClick={addVersion}
-              disabled={addingVersion || deleting}
-              className="inline-flex items-center gap-2 rounded-lg border border-emerald-300 bg-emerald-50 px-3 py-1.5 text-sm font-medium text-emerald-700 hover:bg-emerald-100 disabled:opacity-50"
-              title="Manage versions"
-            >
-              <svg className="h-4 w-4 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden>
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
-              </svg>
-              {addingVersion ? "Working…" : "Manage versions"}
-            </button>
+            <>
+              <button
+                type="button"
+                onClick={toggleComparatorMetrics}
+                disabled={addingVersion || deleting}
+                className="inline-flex items-center gap-2 rounded-lg border border-stone-200 bg-white px-3 py-1.5 text-sm font-medium text-stone-700 hover:bg-stone-50 disabled:opacity-50"
+                title={showComparatorMetrics ? "Hide comparator tokens/cost" : "Show comparator tokens/cost"}
+                aria-pressed={showComparatorMetrics}
+              >
+                {showComparatorMetrics ? (
+                  <EyeOff className="h-4 w-4 text-stone-600" aria-hidden />
+                ) : (
+                  <Eye className="h-4 w-4 text-stone-600" aria-hidden />
+                )}
+                <span className="text-stone-600">Token cost</span>
+                <span className="sr-only">{showComparatorMetrics ? "Hide comparator metrics" : "Show comparator metrics"}</span>
+              </button>
+              <button
+                type="button"
+                onClick={addVersion}
+                disabled={addingVersion || deleting}
+                className="inline-flex items-center gap-2 rounded-lg border border-emerald-300 bg-emerald-50 px-3 py-1.5 text-sm font-medium text-emerald-700 hover:bg-emerald-100 disabled:opacity-50"
+                title="Manage versions"
+              >
+                <svg className="h-4 w-4 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden>
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
+                </svg>
+                {addingVersion ? "Working…" : "Manage versions"}
+              </button>
+            </>
           )}
           <button
             type="button"
@@ -1102,8 +1225,72 @@ export default function SessionDetailPage() {
             <svg className="h-4 w-4 shrink-0 text-stone-400" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden>
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8c-1.657 0-3 .895-3 2s1.343 2 3 2 3 .895 3 2-1.343 2-3 2m0-8c1.11 0 2.08.402 2.599 1M12 8V7m0 1v8m0 0v1m0-1c-1.11 0-2.08-.402-2.599-1M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
             </svg>
-            <span><strong className="font-medium text-stone-800">Total cost:</strong> ${(session.total_cost_usd ?? 0).toFixed(6)} USD</span>
+            <span><strong className="font-medium text-stone-800">Total cost:</strong> {formatUsd(session.total_cost_usd, 6)}</span>
           </div>
+          {evaluatorTokensSummary.any && (
+            <div className="flex items-center gap-2 text-sm text-stone-700">
+              <svg className="h-4 w-4 shrink-0 text-stone-400" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden>
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 7h16M4 12h16M4 17h16" />
+              </svg>
+              <span className="inline-flex flex-wrap items-baseline gap-x-2 gap-y-0.5">
+                <strong className="font-medium text-stone-800">Evaluator tokens:</strong>
+                <span className="tabular-nums text-stone-800">in {evaluatorTokensSummary.prompt}</span>
+                <span className="text-stone-300" aria-hidden>·</span>
+                <span className="tabular-nums text-stone-800">out {evaluatorTokensSummary.completion}</span>
+                <span className="text-stone-300" aria-hidden>·</span>
+                <span className="tabular-nums text-stone-800">total {evaluatorTokensSummary.total || (evaluatorTokensSummary.prompt + evaluatorTokensSummary.completion)}</span>
+              </span>
+            </div>
+          )}
+          {evalCostSummary && (
+            <div className="flex items-center gap-2 text-sm text-stone-700">
+              <svg className="h-4 w-4 shrink-0 text-stone-400" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden>
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8c-1.657 0-3 .895-3 2s1.343 2 3 2 3 .895 3 2-1.343 2-3 2m0-8c1.11 0 2.08.402 2.599 1M12 8V7m0 1v8m0 0v1m0-1c-1.11 0-2.08-.402-2.599-1M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+              </svg>
+              <span className="inline-flex flex-wrap items-baseline gap-x-2 gap-y-0.5">
+                <strong className="font-medium text-stone-800">Evaluator cost:</strong>
+                <span className="tabular-nums text-stone-800">{formatUsd(evalCostSummary.total_cost_usd, 6)}</span>
+                <span className="text-stone-300" aria-hidden>·</span>
+                <span className="tabular-nums text-stone-600">in {formatUsd(evalCostSummary.input_cost_usd, 6)}</span>
+                <span className="text-stone-300" aria-hidden>·</span>
+                <span className="tabular-nums text-stone-600">out {formatUsd(evalCostSummary.output_cost_usd, 6)}</span>
+                <span className="text-stone-300" aria-hidden>·</span>
+                <span className="text-stone-500">model {evaluatorModelName}</span>
+              </span>
+            </div>
+          )}
+          {showComparatorMetrics && session.mode === "comparison" && comparisonTokensSummary.any && (
+            <div className="flex items-center gap-2 text-sm text-stone-700">
+              <svg className="h-4 w-4 shrink-0 text-stone-400" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden>
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 7h16M4 12h16M4 17h16" />
+              </svg>
+              <span className="inline-flex flex-wrap items-baseline gap-x-2 gap-y-0.5">
+                <strong className="font-medium text-stone-800">Comparator tokens:</strong>
+                <span className="tabular-nums text-stone-800">in {comparisonTokensSummary.prompt}</span>
+                <span className="text-stone-300" aria-hidden>·</span>
+                <span className="tabular-nums text-stone-800">out {comparisonTokensSummary.completion}</span>
+                <span className="text-stone-300" aria-hidden>·</span>
+                <span className="tabular-nums text-stone-800">total {comparisonTokensSummary.total || (comparisonTokensSummary.prompt + comparisonTokensSummary.completion)}</span>
+              </span>
+            </div>
+          )}
+          {showComparatorMetrics && session.mode === "comparison" && comparisonCostSummary && (
+            <div className="flex items-center gap-2 text-sm text-stone-700">
+              <svg className="h-4 w-4 shrink-0 text-stone-400" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden>
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8c-1.657 0-3 .895-3 2s1.343 2 3 2 3 .895 3 2-1.343 2-3 2m0-8c1.11 0 2.08.402 2.599 1M12 8V7m0 1v8m0 0v1m0-1c-1.11 0-2.08-.402-2.599-1M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+              </svg>
+              <span className="inline-flex flex-wrap items-baseline gap-x-2 gap-y-0.5">
+                <strong className="font-medium text-stone-800">Comparator cost:</strong>
+                <span className="tabular-nums text-stone-800">{formatUsd(comparisonTokensSummary.costUsd, 6)}</span>
+                <span className="text-stone-300" aria-hidden>·</span>
+                <span className="tabular-nums text-stone-600">in {formatUsd(comparisonCostSummary.input_cost_usd, 6)}</span>
+                <span className="text-stone-300" aria-hidden>·</span>
+                <span className="tabular-nums text-stone-600">out {formatUsd(comparisonCostSummary.output_cost_usd, 6)}</span>
+                <span className="text-stone-300" aria-hidden>·</span>
+                <span className="text-stone-500">model {evaluatorModelName}</span>
+              </span>
+            </div>
+          )}
           <div className="flex items-center gap-2 text-sm text-stone-700">
             <svg className="h-4 w-4 shrink-0 text-stone-400" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden>
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
@@ -1570,6 +1757,28 @@ export default function SessionDetailPage() {
                   />
                 </button>
               </div>
+              <div className="flex items-center justify-between pt-1">
+                <div>
+                  <p className="text-sm font-medium text-stone-700">Include extended org context</p>
+                  <p className="text-xs text-stone-500">Higher cost; uses manifest extended allowlist</p>
+                </div>
+                <button
+                  type="button"
+                  role="switch"
+                  aria-checked={addVersionIncludeExtendedContext}
+                  onClick={() => setAddVersionIncludeExtendedContext((prev) => !prev)}
+                  className={`relative inline-flex h-6 w-11 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors focus:outline-none ${
+                    addVersionIncludeExtendedContext ? "bg-stone-900" : "bg-stone-300"
+                  }`}
+                >
+                  <span
+                    className={`pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow ring-0 transition ${
+                      addVersionIncludeExtendedContext ? "translate-x-5" : "translate-x-0.5"
+                    }`}
+                    aria-hidden
+                  />
+                </button>
+              </div>
             </div>
 
             {addingVersion && addVersionProgress && (
@@ -1692,6 +1901,13 @@ export default function SessionDetailPage() {
         filteredResults.map((r) => {
           const isExpanded = expandedResultId === r.eval_result_id;
           const isEvaluated = isResultEvaluated(r);
+          const usage = isEvaluated && typeof r.prompt_tokens === "number" && typeof r.completion_tokens === "number"
+            ? computeTokenCostParts(r.prompt_tokens, r.completion_tokens, evaluatorModelName)
+            : null;
+          const compUsageRaw = getComparisonTokenUsage(r);
+          const compUsage = compUsageRaw
+            ? computeTokenCostParts(compUsageRaw.prompt, compUsageRaw.completion, evaluatorModelName)
+            : null;
           return (
           <li key={r.eval_result_id} className="rounded-xl border border-stone-200 bg-white shadow-sm">
             <div
@@ -1839,6 +2055,44 @@ export default function SessionDetailPage() {
             </div>
             {isExpanded && (
             <div className="border-t border-stone-100 p-4 space-y-4">
+              {(session.mode !== "comparison" || showComparatorMetrics) && isEvaluated && (
+                <div className="rounded-lg border border-stone-200 bg-stone-50/40 p-3">
+                  <p className="text-xs font-medium uppercase tracking-wide text-stone-400">Tokens & cost</p>
+                  <div className="mt-1 flex flex-wrap items-baseline gap-x-3 gap-y-1 text-sm text-stone-700">
+                    <span className="tabular-nums"><strong className="font-medium text-stone-800">In:</strong> {r.prompt_tokens ?? "—"}</span>
+                    <span className="tabular-nums"><strong className="font-medium text-stone-800">Out:</strong> {r.completion_tokens ?? "—"}</span>
+                    <span className="tabular-nums"><strong className="font-medium text-stone-800">Total:</strong> {r.total_tokens ?? (typeof r.prompt_tokens === "number" && typeof r.completion_tokens === "number" ? r.prompt_tokens + r.completion_tokens : "—")}</span>
+                    <span className="text-stone-300" aria-hidden>|</span>
+                    <span className="tabular-nums"><strong className="font-medium text-stone-800">Cost:</strong> {formatUsd(r.cost_usd, 6)}</span>
+                    {usage && (
+                      <>
+                        <span className="tabular-nums text-stone-600">in {formatUsd(usage.input_cost_usd, 6)}</span>
+                        <span className="tabular-nums text-stone-600">out {formatUsd(usage.output_cost_usd, 6)}</span>
+                        <span className="text-stone-500">model {evaluatorModelName}</span>
+                      </>
+                    )}
+                  </div>
+                </div>
+              )}
+              {(session.mode !== "comparison" || showComparatorMetrics) && !isEvaluated && compUsageRaw && (
+                <div className="rounded-lg border border-stone-200 bg-stone-50/40 p-3">
+                  <p className="text-xs font-medium uppercase tracking-wide text-stone-400">Tokens & cost</p>
+                  <div className="mt-1 flex flex-wrap items-baseline gap-x-3 gap-y-1 text-sm text-stone-700">
+                    <span className="tabular-nums"><strong className="font-medium text-stone-800">In:</strong> {compUsageRaw.prompt}</span>
+                    <span className="tabular-nums"><strong className="font-medium text-stone-800">Out:</strong> {compUsageRaw.completion}</span>
+                    <span className="tabular-nums"><strong className="font-medium text-stone-800">Total:</strong> {compUsageRaw.total}</span>
+                    <span className="text-stone-300" aria-hidden>|</span>
+                    <span className="tabular-nums"><strong className="font-medium text-stone-800">Cost:</strong> {formatUsd(compUsageRaw.costUsd, 6)}</span>
+                    {compUsage && (
+                      <>
+                        <span className="tabular-nums text-stone-600">in {formatUsd(compUsage.input_cost_usd, 6)}</span>
+                        <span className="tabular-nums text-stone-600">out {formatUsd(compUsage.output_cost_usd, 6)}</span>
+                        <span className="text-stone-500">model {evaluatorModelName}</span>
+                      </>
+                    )}
+                  </div>
+                </div>
+              )}
               {r.test_cases && (
                 <>
                   {/* Conversation: input / evren pairs */}

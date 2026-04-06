@@ -10,7 +10,7 @@ function readPrompt(filename: string): string {
   return readFileSync(path.join(PROMPTS_DIR, filename), "utf-8").trim();
 }
 
-/** Load base system prompt (Evren persona + flag logic). */
+/** Load base system prompt (org-context precedence + fallback persona). */
 export function loadBaseSystemPrompt(): string {
   return readPrompt("base_system_prompt.txt");
 }

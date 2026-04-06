@@ -53,6 +53,10 @@ Open [http://localhost:3000](http://localhost:3000). You can run evaluations fro
 
 The app calls your Evren service at a configurable base URL, using the path **`/evren-evals`** (appended if the base URL has no path). Full request/response format and multi-turn behavior are in **[docs/evren-api-spec.md](docs/evren-api-spec.md)**.
 
+## Environments (staging vs production)
+
+By default, this eval app should be pointed at **staging** for Evren integration and testing. Do not assume staging behavior is identical to production; treat this repo as **eval-only** and validate production changes separately.
+
 ## Scripts
 
 | Command | Description |

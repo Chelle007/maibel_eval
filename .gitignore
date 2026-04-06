@@ -40,3 +40,15 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+.cursor
+
+# Keep most local context out of git, but commit the curated md context pack.
+/context/*
+!/context/md-files/
+!/context/md-files/*.md
+!/context/md-files/CONTEXT_PACK_MANIFEST.md
+
+# Cursor outputs are generally local, but plans/specs may be committed selectively.
+/cursor-output/*
+!/cursor-output/*.md

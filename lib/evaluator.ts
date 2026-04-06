@@ -100,7 +100,8 @@ export async function evaluateOne(
   evrenOutputOrOutputs: EvrenOutput | EvrenOutput[],
   apiKey: string,
   modelName: string = DEFAULT_MODEL,
-  systemPrompt?: string
+  systemPrompt?: string,
+  contextPack?: { text: string; bundleId: string }
 ): Promise<EvaluationResult> {
   const genAI = new GoogleGenerativeAI(apiKey);
   const systemInstruction = systemPrompt ?? loadEvaluatorSystemPrompt();
@@ -109,7 +110,11 @@ export async function evaluateOne(
     systemInstruction,
   });
 
-  const userMessage = buildEvaluatorUserMessage(testCase, evrenOutputOrOutputs);
+  const baseUserMessage = buildEvaluatorUserMessage(testCase, evrenOutputOrOutputs);
+  const userMessage =
+    contextPack?.text?.trim()
+      ? `${baseUserMessage}\n\n=== ORGANIZATION CONTEXT (bundle: ${contextPack.bundleId}) ===\n${contextPack.text.trim()}\n`
+      : baseUserMessage;
   const result = await model.generateContent(userMessage);
   const response = result.response;
   const text = response.text();

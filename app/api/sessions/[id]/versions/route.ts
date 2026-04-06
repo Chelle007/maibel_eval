@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import { compareOverall } from "@/lib/comparator";
 import { loadComparatorOverallSystemPrompt } from "@/lib/prompts";
+import { loadContextPack } from "@/lib/context-pack";
 import type { TestCase, ComparisonData } from "@/lib/types";
 import { pruneBehaviorReviewForVersions } from "@/lib/behavior-review";
 import type { EvalResultsRow, VersionEntry, TestCasesRow, DefaultSettingsRow } from "@/lib/db.types";
@@ -25,13 +26,15 @@ export async function DELETE(
   const supabase = await createClient();
   const { data: session, error: sessionError } = await supabase
     .from("test_sessions")
-    .select("session_id")
+    .select("session_id, context_extended_enabled")
     .eq("test_session_id", id)
     .maybeSingle();
   if (sessionError || !session) {
     return NextResponse.json({ error: sessionError?.message ?? "Session not found" }, { status: 404 });
   }
   const sessionId = (session as { session_id: string }).session_id;
+  const sessionCtx = session as { context_extended_enabled?: boolean | null };
+  const includeExtended = sessionCtx.context_extended_enabled === true;
 
   const apiKey = process.env.GEMINI_API_KEY;
 
@@ -85,6 +88,11 @@ export async function DELETE(
           notes: tc.notes ?? undefined,
         };
         try {
+          const contextPack = loadContextPack({
+            includeExtended,
+            purpose: "comparator",
+            query: `${testCase.test_case_id}\n${testCase.expected_state}\n${testCase.expected_behavior}\n${testCase.forbidden ?? ""}\n${testCase.notes ?? ""}`,
+          });
           adjustedComparison = await compareOverall(
             testCase,
             updated,
@@ -93,7 +101,8 @@ export async function DELETE(
               : ([updatedIds[0], updatedIds[1], updatedIds[2]] as [string, string, string]),
             apiKey,
             comparatorModel,
-            comparatorPrompt
+            comparatorPrompt,
+            { text: contextPack.text, bundleId: contextPack.bundleId }
           );
         } catch (err) {
           console.error("[versions/delete] compareOverall failed for", tc.test_case_id, err);

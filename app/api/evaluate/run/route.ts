@@ -5,6 +5,7 @@ import { callEvrenApi } from "@/lib/evren";
 import { evaluateOne } from "@/lib/evaluator";
 import { buildRichReport, runSummarizer } from "@/lib/summarizer";
 import { loadEvaluatorSystemPrompt, loadSummarizerSystemPrompt } from "@/lib/prompts";
+import { loadContextPack } from "@/lib/context-pack";
 import type { TestCase, EvrenOutput, EvaluationResult } from "@/lib/types";
 import type { Database, RunEntry, TestCasesRow, VersionEntry } from "@/lib/db.types";
 
@@ -31,6 +32,7 @@ export async function POST(request: Request) {
     evren_model_api_url: string;
     mode?: "single" | "comparison";
     run_count?: number;
+    include_extended_context?: boolean;
     model_name?: string;
     summarizer_model?: string;
     system_prompt?: string;
@@ -44,6 +46,7 @@ export async function POST(request: Request) {
   if (!evrenModelApiUrl?.trim()) return NextResponse.json({ error: "evren_model_api_url required" }, { status: 400 });
   const sessionMode = body.mode === "comparison" ? "comparison" : "single";
   const runCount = Number.isFinite(body.run_count) ? Math.max(1, Math.floor(body.run_count as number)) : 1;
+  const includeExtendedContext = body.include_extended_context === true;
   const useEvaluator = sessionMode === "single";
   const useSummarizer = sessionMode === "single";
   const apiKey = process.env.GEMINI_API_KEY;
@@ -59,12 +62,27 @@ export async function POST(request: Request) {
   if (fetchError) return NextResponse.json({ error: fetchError.message }, { status: 500 });
   if (!testCasesRows?.length) return NextResponse.json({ error: "No enabled test cases in database" }, { status: 400 });
 
+  let contextBundleId: string | null = null;
+  let contextExtendedEnabled: boolean = includeExtendedContext;
+  try {
+    contextBundleId = loadContextPack({ includeExtended: includeExtendedContext }).bundleId;
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    console.error("[evaluate/run] context pack load failed:", msg);
+    return NextResponse.json(
+      { error: `Context pack load failed: ${msg}` },
+      { status: 500 }
+    );
+  }
+
   const sessionInsert = {
     user_id: userId,
     total_cost_usd: 0,
     summary: null,
     mode: sessionMode,
     manually_edited: false,
+    context_bundle_id: contextBundleId,
+    context_extended_enabled: contextExtendedEnabled,
   } as Database["public"]["Tables"]["test_sessions"]["Insert"];
   const { data: sessionRow, error: sessionError } = await supabase
     .from("test_sessions")
@@ -146,7 +164,20 @@ export async function POST(request: Request) {
     if (useEvaluator) {
       const evalInput =
         testCase.type === "multi_turn" && run1Outputs.length > 1 ? run1Outputs : lastOutput;
-      const result = await evaluateOne(testCase, evalInput, apiKey as string, modelName, systemPrompt);
+      const contextPack = loadContextPack({
+        includeExtended: includeExtendedContext,
+        purpose: "evaluator",
+        query: `${testCase.test_case_id}\n${testCase.expected_state}\n${testCase.expected_behavior}\n${testCase.forbidden ?? ""}\n${testCase.notes ?? ""}`,
+      });
+
+      const result = await evaluateOne(
+        testCase,
+        evalInput,
+        apiKey as string,
+        modelName,
+        systemPrompt,
+        { text: contextPack.text, bundleId: contextPack.bundleId }
+      );
       const costUsd = result.token_usage?.cost_usd ?? 0;
       totalCostUsd += costUsd;
 
