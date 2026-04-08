@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import type { Database } from "@/lib/db.types";
+import { validateRunMetadata } from "@/lib/db.types";
 
 export async function PATCH(
   request: Request,
@@ -11,6 +12,7 @@ export async function PATCH(
     title?: string;
     test_session_id?: string;
     repeated_runs_mode?: string;
+    run_metadata?: unknown;
   };
   const supabase = await createClient();
 
@@ -42,9 +44,12 @@ export async function PATCH(
   if (body.repeated_runs_mode === "auto" || body.repeated_runs_mode === "manual") {
     payload.repeated_runs_mode = body.repeated_runs_mode;
   }
+  if (body.run_metadata !== undefined) {
+    (payload as Record<string, unknown>).run_metadata = validateRunMetadata(body.run_metadata);
+  }
   if (Object.keys(payload).length === 0) {
     return NextResponse.json(
-      { error: "Provide title, test_session_id, and/or repeated_runs_mode" },
+      { error: "Provide title, test_session_id, repeated_runs_mode, and/or run_metadata" },
       { status: 400 }
     );
   }

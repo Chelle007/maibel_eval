@@ -10,6 +10,7 @@ import { loadEvaluatorSystemPrompt, loadSummarizerSystemPrompt } from "@/lib/pro
 import { loadContextPack } from "@/lib/context-pack";
 import type { TestCase, EvrenOutput, EvaluationResult } from "@/lib/types";
 import type { Database, DefaultSettingsRow, RunEntry, TestCasesRow, VersionEntry } from "@/lib/db.types";
+import { buildAutofillRunMetadata } from "@/lib/run-metadata-autofill";
 
 export const maxDuration = 300;
 
@@ -133,6 +134,9 @@ export async function POST(request: Request) {
     });
   }
 
+  const modelName = body.model_name ?? "gemini-3-flash-preview";
+  const summarizerModel = body.summarizer_model ?? modelName;
+  const runMetadata = await buildAutofillRunMetadata(supabase, evrenModelApiUrl, testCasesRows);
   const sessionInsert = {
     user_id: userId,
     total_cost_usd: 0,
@@ -140,6 +144,7 @@ export async function POST(request: Request) {
     mode: sessionMode,
     manually_edited: false,
     context_bundle_id: contextBundleId,
+    run_metadata: runMetadata,
   } as Database["public"]["Tables"]["test_sessions"]["Insert"];
   const { data: sessionRow, error: sessionError } = await supabase
     .from("test_sessions")
@@ -157,8 +162,6 @@ export async function POST(request: Request) {
   const sessionId = session.session_id;
   const testSessionId = session.test_session_id;
   const total = testCasesRows.length;
-  const modelName = body.model_name ?? "gemini-3-flash-preview";
-  const summarizerModel = body.summarizer_model ?? modelName;
 
   const { data: defaultSettings } = await supabase
     .from("default_settings")

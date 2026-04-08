@@ -15,6 +15,37 @@ export interface UsersRow {
   is_owner: boolean;
 }
 
+/**
+ * Structured run provenance stored on test_sessions (TASK-022 / Phase 6).
+ * All fields optional — auto-populated at run creation, editable by reviewer.
+ */
+export interface RunMetadata {
+  environment?: string | null;
+  code_source?: string | null;
+  test_category?: string | null;
+}
+
+export const RUN_METADATA_KEYS: (keyof RunMetadata)[] = [
+  "environment",
+  "code_source",
+  "test_category",
+];
+
+export function validateRunMetadata(raw: unknown): RunMetadata {
+  if (raw === null || raw === undefined || typeof raw !== "object" || Array.isArray(raw)) return {};
+  const obj = raw as Record<string, unknown>;
+  const out: RunMetadata = {};
+  const str = (k: string): string | null => {
+    const v = obj[k];
+    if (typeof v === "string") return v.trim().slice(0, 1000) || null;
+    return null;
+  };
+  out.environment = str("environment");
+  out.code_source = str("code_source");
+  out.test_category = str("test_category");
+  return out;
+}
+
 export interface TestSessionsRow {
   session_id: string;
   test_session_id: string;
@@ -31,6 +62,8 @@ export interface TestSessionsRow {
   manually_edited: boolean;
   /** auto: show None or Automated from eval data; manual: user can edit run counts for new versions. */
   repeated_runs_mode: "auto" | "manual";
+  /** Structured run provenance (TASK-022). */
+  run_metadata?: RunMetadata | Json;
 }
 
 /** One turn of Evren output within a version. */

@@ -65,6 +65,8 @@ CREATE TABLE test_sessions (
   mode               TEXT NOT NULL DEFAULT 'single' CHECK (mode IN ('single', 'comparison')),
   manually_edited    BOOLEAN NOT NULL DEFAULT FALSE,
   repeated_runs_mode TEXT NOT NULL DEFAULT 'auto' CHECK (repeated_runs_mode IN ('auto', 'manual')),
+  -- Structured run provenance: environment, code source, models, sample size (TASK-022).
+  run_metadata       JSONB NOT NULL DEFAULT '{}'::jsonb,
   created_at         TIMESTAMPTZ NOT NULL DEFAULT now(),
   updated_at         TIMESTAMPTZ NOT NULL DEFAULT now()
 );
