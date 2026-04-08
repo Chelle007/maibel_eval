@@ -17,8 +17,8 @@ import {
   type BehaviorReviewRating,
   type VersionBehaviorReview,
 } from "@/lib/behavior-review";
-import { normalizeVersionEntry } from "@/lib/db.types";
-import type { AnyVersionEntry, VersionEntry } from "@/lib/db.types";
+import { normalizeVersionEntry, validateRunMetadata } from "@/lib/db.types";
+import type { AnyVersionEntry, RunMetadata, VersionEntry } from "@/lib/db.types";
 import {
   SESSION_REVIEW_FAILURE_TAXONOMY,
   emptySessionReviewSummaryV0,
@@ -41,6 +41,7 @@ type Session = {
   mode?: "single" | "comparison";
   manually_edited: boolean;
   repeated_runs_mode?: "auto" | "manual";
+  run_metadata?: RunMetadata | null;
   created_at?: string | null;
   users?: { full_name: string | null; email: string } | null;
 };
@@ -66,6 +67,18 @@ function formatEvalTime(seconds: number): string {
 function formatUsd(value: number | null | undefined, decimals: number = 6): string {
   const n = typeof value === "number" && Number.isFinite(value) ? value : 0;
   return `$${n.toFixed(decimals)} USD`;
+}
+
+/** Primary Save buttons on session detail — match Clear control size (px-2.5 py-1.5 text-xs). */
+const SESSION_SAVE_BTN_BASE =
+  "inline-flex shrink-0 items-center justify-center gap-1 rounded-lg px-2.5 py-1.5 text-xs font-medium text-white transition-colors disabled:opacity-50";
+const SESSION_SAVE_BTN_IDLE = "bg-stone-900 hover:bg-stone-800";
+const SESSION_SAVE_BTN_WORKING = "bg-stone-700";
+const SESSION_SAVE_BTN_SAVED = "bg-emerald-600 hover:bg-emerald-600";
+
+function sessionSaveButtonClass(opts: { working?: boolean; saved?: boolean }): string {
+  const variant = opts.working ? SESSION_SAVE_BTN_WORKING : opts.saved ? SESSION_SAVE_BTN_SAVED : SESSION_SAVE_BTN_IDLE;
+  return `${SESSION_SAVE_BTN_BASE} ${variant}`;
 }
 
 function playCompletionSound() {
@@ -205,6 +218,70 @@ function getVersionEntries(results: EvalResult[]): VersionEntry[] {
     if (normalized.length > best.length) best = normalized;
   }
   return best;
+}
+
+/** Same canonicalization as the version comparison table (merge duplicate ids by version name). */
+function buildCanonicalVersionIdMap(results: EvalResult[]): { canonicalId: (vid: string) => string } {
+  const idToName = new Map<string, string>();
+  const nameToCanonicalId = new Map<string, string>();
+  for (const r of results) {
+    for (const v of r.evren_responses ?? []) {
+      if (!idToName.has(v.version_id)) idToName.set(v.version_id, v.version_name);
+      if (!nameToCanonicalId.has(v.version_name)) nameToCanonicalId.set(v.version_name, v.version_id);
+    }
+  }
+  const canonicalId = (vid: string): string => {
+    const name = idToName.get(vid) ?? vid;
+    return nameToCanonicalId.get(name) ?? vid;
+  };
+  return { canonicalId };
+}
+
+function versionBehaviorReviewIsPass(review: VersionBehaviorReview | undefined): boolean | null {
+  if (!review) return null;
+  for (const d of BEHAVIOR_REVIEW_DIMENSIONS) {
+    const v = review[d.key];
+    if (v === "fail") return false;
+  }
+  for (const d of BEHAVIOR_REVIEW_DIMENSIONS) {
+    const v = review[d.key];
+    if (v === "pass" || v === "na") return true;
+  }
+  return null;
+}
+
+/**
+ * Comparison mode: pass/fail for the session champion on one eval row.
+ * Uses per-case comparison tiers when present; otherwise behavior review or (single version) completed Evren runs.
+ */
+function championPassForComparisonRow(
+  r: EvalResult,
+  championCanonical: string,
+  canonicalId: (id: string) => string,
+  versionCount: number
+): boolean | null {
+  const champEntry = (r.evren_responses ?? []).find((v) => canonicalId(v.version_id) === championCanonical);
+  if (!champEntry) return null;
+
+  const tiers = r.comparison?.tiers;
+  const top = Array.isArray(tiers?.[0]) ? tiers![0].map((x) => canonicalId(String(x))) : [];
+  if (top.length > 0) return top.includes(championCanonical);
+
+  const nv = normalizeVersionEntry(champEntry);
+  const brRaw =
+    r.behavior_review?.[nv.version_id] ??
+    (Object.entries(r.behavior_review ?? {}).find(([k]) => canonicalId(k) === championCanonical)?.[1] as
+      | VersionBehaviorReview
+      | undefined);
+  const brPass = versionBehaviorReviewIsPass(brRaw);
+  if (brPass !== null) return brPass;
+
+  if (versionCount <= 1) {
+    const runs = nv.runs ?? [];
+    return runs.length > 0 ? true : null;
+  }
+
+  return false;
 }
 
 /** DB/session_review_summary merged with client-side fallbacks for cases / pass-fail lines. */
@@ -369,6 +446,9 @@ export default function SessionDetailPage() {
   const [savingHeader, setSavingHeader] = useState(false);
   const [headerError, setHeaderError] = useState<string | null>(null);
   const [savingRepeatedRunsMode, setSavingRepeatedRunsMode] = useState(false);
+  const [runMetadataDraft, setRunMetadataDraft] = useState<RunMetadata>({});
+  const [savingRunMetadata, setSavingRunMetadata] = useState(false);
+  const [savedRunMetadata, setSavedRunMetadata] = useState(false);
   const [expandedResultId, setExpandedResultId] = useState<string | null>(null);
   const [expandedFlagsKeys, setExpandedFlagsKeys] = useState<Set<string>>(new Set());
   const [expandedRunsKeys, setExpandedRunsKeys] = useState<Set<string>>(new Set());
@@ -469,7 +549,7 @@ export default function SessionDetailPage() {
         if (nextModels && typeof nextModels === "object") setModels(nextModels);
         setResults(nextResults);
         setSummary(summaryForDisplay(nextSession?.summary ?? ""));
-
+        setRunMetadataDraft(validateRunMetadata((nextSession as Record<string, unknown> | null)?.run_metadata));
         setSessionReviewSummary(mergeSessionReviewSummaryFromSession(nextSession, nextResults));
       })
       .catch((e) => setError(e.message))
@@ -816,6 +896,7 @@ export default function SessionDetailPage() {
                   if (payload.error) return;
                   const nextSession = payload.session as Session | null;
                   setSession(nextSession);
+                  setRunMetadataDraft(validateRunMetadata((nextSession as Record<string, unknown> | null)?.run_metadata));
                   setSessionReviewSummary(mergeSessionReviewSummaryFromSession(nextSession, nextResults));
                 })
                 .catch(() => {
@@ -958,6 +1039,29 @@ export default function SessionDetailPage() {
       .finally(() => setSavingRepeatedRunsMode(false));
   }
 
+  async function saveRunMetadata() {
+    if (!session) return;
+    setSavingRunMetadata(true);
+    setSavedRunMetadata(false);
+    setError(null);
+    try {
+      const res = await fetch(`/api/sessions/${id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ run_metadata: runMetadataDraft }),
+      });
+      const data = await res.json().catch(() => ({})) as { error?: string };
+      if (!res.ok || data.error) throw new Error(data.error ?? `Request failed (${res.status})`);
+      setSession((s) => (s ? { ...s, run_metadata: runMetadataDraft } : null));
+      setSavedRunMetadata(true);
+      setTimeout(() => setSavedRunMetadata(false), 2000);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Failed to save run metadata");
+    } finally {
+      setSavingRunMetadata(false);
+    }
+  }
+
   function saveHeader() {
     const sessionIdTrimmed = editSessionId.trim();
     if (!sessionIdTrimmed) {
@@ -1032,6 +1136,37 @@ export default function SessionDetailPage() {
 
   const evaluatedResults = results.filter(isResultEvaluated);
   const hasEvaluationResults = evaluatedResults.length > 0;
+
+  const passedTestCasesDisplay = useMemo(() => {
+    if (session?.mode === "comparison") {
+      const { canonicalId } = buildCanonicalVersionIdMap(results);
+      const championId =
+        comparisonStats.length > 0 ? comparisonStats[0].version_id : versionEntries[0]?.version_id ?? null;
+      if (!championId) return { text: "—" as const, title: undefined as string | undefined };
+      const canonicalChampion = canonicalId(championId);
+      const championName = comparisonStats[0]?.version_name ?? versionEntries[0]?.version_name ?? null;
+      let passed = 0;
+      let total = 0;
+      for (const r of results) {
+        const v = championPassForComparisonRow(r, canonicalChampion, canonicalId, versionCount);
+        if (v === null) continue;
+        total++;
+        if (v) passed++;
+      }
+      if (total === 0) return { text: "—" as const, title: undefined as string | undefined };
+      const title = championName
+        ? `Best version: ${championName}. Count uses per-case comparison tiers when present; otherwise behavior review, or completed Evren runs for a single version.`
+        : undefined;
+      return { text: `${passed} / ${total}` as const, title };
+    }
+    const evaluated = results.filter(isResultEvaluated);
+    if (evaluated.length === 0) return { text: "—" as const, title: undefined as string | undefined };
+    return {
+      text: `${evaluated.filter((r) => r.success).length} / ${evaluated.length}` as const,
+      title: undefined as string | undefined,
+    };
+  }, [session?.mode, results, comparisonStats, versionEntries, versionCount]);
+
   const evaluatorModelName = models.evaluator_model ?? "gemini-3-flash-preview";
   const evaluatorTokensSummary = useMemo(() => {
     let prompt = 0;
@@ -1222,8 +1357,9 @@ export default function SessionDetailPage() {
                 type="button"
                 onClick={saveHeader}
                 disabled={savingHeader}
-                className="rounded-lg bg-stone-900 px-4 py-2 text-sm font-medium text-white hover:bg-stone-800 disabled:opacity-50"
+                className={sessionSaveButtonClass({ working: savingHeader })}
               >
+                <Save className="h-3 w-3 shrink-0" aria-hidden />
                 {savingHeader ? "Saving…" : "Save"}
               </button>
               <button
@@ -1244,7 +1380,19 @@ export default function SessionDetailPage() {
       </header>
 
       <div className="mt-6 rounded-xl border border-stone-200 bg-white p-5 shadow-sm">
-        <h2 className="text-xl font-semibold tracking-tight text-stone-900">Session details</h2>
+        <div className="flex items-center justify-between">
+          <h2 className="text-xl font-semibold tracking-tight text-stone-900">Run metadata</h2>
+          <button
+            type="button"
+            onClick={() => void saveRunMetadata()}
+            disabled={savingRunMetadata}
+            className={sessionSaveButtonClass({ working: savingRunMetadata, saved: savedRunMetadata })}
+            title="Save run metadata"
+          >
+            <Save className="h-3 w-3 shrink-0" aria-hidden />
+            {savingRunMetadata ? "Saving…" : savedRunMetadata ? "Saved" : "Save"}
+          </button>
+        </div>
         <dl className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
           {session.created_at && (
             <div className="flex items-center gap-2 text-sm text-stone-700">
@@ -1336,9 +1484,11 @@ export default function SessionDetailPage() {
             <svg className="h-4 w-4 shrink-0 text-stone-400" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden>
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
             </svg>
-            <span>
-              <strong className="font-medium text-stone-800">Passed test cases:</strong>{" "}
-              {hasEvaluationResults ? `${evaluatedResults.filter((r) => r.success).length} / ${evaluatedResults.length}` : "—"}
+            <span title={passedTestCasesDisplay.title}>
+              <strong className="font-medium text-stone-800">
+                {session.mode === "comparison" ? "Passed test cases (best ver):" : "Passed test cases:"}
+              </strong>{" "}
+              {passedTestCasesDisplay.text}
             </span>
           </div>
           {session.mode === "comparison" ? (
@@ -1388,6 +1538,45 @@ export default function SessionDetailPage() {
               <span><strong className="font-medium text-stone-800">Time taken:</strong> {formatEvalTime(session.total_eval_time_seconds)}</span>
             </div>
           )}
+          <div className="flex items-center gap-2 text-sm text-stone-700">
+            <svg className="h-4 w-4 shrink-0 text-stone-400" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden>
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3.055 11H5a2 2 0 012 2v1a2 2 0 002 2 2 2 0 012 2v2.945M8 3.935V5.5A2.5 2.5 0 0010.5 8h.5a2 2 0 012 2 2 2 0 104 0 2 2 0 012-2h1.064M15 20.488V18a2 2 0 012-2h3.064M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+            </svg>
+            <strong className="shrink-0 font-medium text-stone-800">Environment:</strong>
+            <input
+              type="text"
+              value={(runMetadataDraft.environment as string) ?? ""}
+              onChange={(e) => setRunMetadataDraft((prev) => ({ ...prev, environment: e.target.value }))}
+              placeholder="local / staging / production"
+              className="min-w-0 flex-1 rounded-sm border border-transparent bg-transparent px-1 py-0 text-sm text-stone-900 placeholder:text-stone-400 hover:border-stone-200 focus:border-stone-400 focus:outline-none focus:ring-1 focus:ring-stone-400"
+            />
+          </div>
+          <div className="flex items-center gap-2 text-sm text-stone-700">
+            <svg className="h-4 w-4 shrink-0 text-stone-400" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden>
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 20l4-16m4 4l4 4-4 4M6 16l-4-4 4-4" />
+            </svg>
+            <strong className="shrink-0 font-medium text-stone-800">Code source:</strong>
+            <input
+              type="text"
+              value={(runMetadataDraft.code_source as string) ?? ""}
+              onChange={(e) => setRunMetadataDraft((prev) => ({ ...prev, code_source: e.target.value }))}
+              placeholder="git commit, branch, deploy URL"
+              className="min-w-0 flex-1 rounded-sm border border-transparent bg-transparent px-1 py-0 text-sm text-stone-900 placeholder:text-stone-400 hover:border-stone-200 focus:border-stone-400 focus:outline-none focus:ring-1 focus:ring-stone-400"
+            />
+          </div>
+          <div className="flex items-center gap-2 text-sm text-stone-700">
+            <svg className="h-4 w-4 shrink-0 text-stone-400" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden>
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 7h.01M7 3h5c.512 0 1.024.195 1.414.586l7 7a2 2 0 010 2.828l-7 7a2 2 0 01-2.828 0l-7-7A2 2 0 013 12V7a4 4 0 014-4z" />
+            </svg>
+            <strong className="shrink-0 font-medium text-stone-800">Test category:</strong>
+            <input
+              type="text"
+              value={(runMetadataDraft.test_category as string) ?? ""}
+              onChange={(e) => setRunMetadataDraft((prev) => ({ ...prev, test_category: e.target.value }))}
+              placeholder="e.g. P0_Safety, P1_Distress"
+              className="min-w-0 flex-1 rounded-sm border border-transparent bg-transparent px-1 py-0 text-sm text-stone-900 placeholder:text-stone-400 hover:border-stone-200 focus:border-stone-400 focus:outline-none focus:ring-1 focus:ring-stone-400"
+            />
+          </div>
         </dl>
       </div>
 
@@ -1485,9 +1674,9 @@ export default function SessionDetailPage() {
                   type="button"
                   onClick={saveSummary}
                   disabled={savingSummary}
-                  className="inline-flex items-center gap-1.5 rounded-lg bg-stone-900 px-4 py-2 text-sm font-medium text-white hover:bg-stone-800 disabled:opacity-50"
+                  className={sessionSaveButtonClass({ working: savingSummary })}
                 >
-                  <Save className="h-4 w-4 shrink-0" aria-hidden />
+                  <Save className="h-3 w-3 shrink-0" aria-hidden />
                   {savingSummary ? "Saving…" : "Save summary"}
                 </button>
                 <button
@@ -1546,15 +1735,12 @@ export default function SessionDetailPage() {
             type="button"
             onClick={() => { void saveSessionReviewSummary(); }}
             disabled={savingSessionReviewSummary}
-            className={`inline-flex items-center gap-1.5 rounded-lg px-4 py-2 text-sm font-medium text-white disabled:opacity-50 ${
-              savingSessionReviewSummary
-                ? "bg-stone-700"
-                : savedSessionReviewSummary
-                  ? "bg-emerald-600"
-                  : "bg-stone-900 hover:bg-stone-800"
-            }`}
+            className={sessionSaveButtonClass({
+              working: savingSessionReviewSummary,
+              saved: savedSessionReviewSummary,
+            })}
           >
-            <Save className="h-4 w-4 shrink-0" aria-hidden />
+            <Save className="h-3 w-3 shrink-0" aria-hidden />
             {savingSessionReviewSummary ? "Saving…" : savedSessionReviewSummary ? "Saved" : "Save"}
           </button>
         </div>
@@ -1856,9 +2042,9 @@ export default function SessionDetailPage() {
                 type="button"
                 onClick={saveVersionNamesOnly}
                 disabled={addingVersion || savingNames}
-                className="inline-flex items-center gap-1.5 rounded-lg bg-stone-900 px-4 py-2 text-sm font-medium text-white hover:bg-stone-800 disabled:opacity-50"
+                className={sessionSaveButtonClass({ working: savingNames })}
               >
-                <Save className="h-4 w-4 shrink-0" aria-hidden />
+                <Save className="h-3 w-3 shrink-0" aria-hidden />
                 {savingNames ? "Saving…" : "Save"}
               </button>
               <button
@@ -2052,9 +2238,10 @@ export default function SessionDetailPage() {
                       type="button"
                       onClick={() => saveResultEdits(r)}
                       disabled={savingReason}
-                      className="rounded-lg bg-stone-900 px-4 py-2 text-sm font-medium text-white hover:bg-stone-800 disabled:opacity-50"
+                      className={sessionSaveButtonClass({ working: savingReason })}
                     >
-                      Save
+                      <Save className="h-3 w-3 shrink-0" aria-hidden />
+                      {savingReason ? "Saving…" : "Save"}
                     </button>
                     <button
                       type="button"
@@ -2421,19 +2608,17 @@ export default function SessionDetailPage() {
                                   savingBehaviorReviewId === r.eval_result_id ||
                                   savedBehaviorReviewId === r.eval_result_id
                                 }
-                                className={`rounded-lg px-3 py-1.5 text-xs font-medium text-white transition-colors disabled:opacity-60 ${
-                                  savingBehaviorReviewId === r.eval_result_id
-                                    ? "bg-stone-700"
-                                    : savedBehaviorReviewId === r.eval_result_id
-                                      ? "bg-emerald-600"
-                                      : "bg-stone-900 hover:bg-stone-800"
-                                }`}
+                                className={sessionSaveButtonClass({
+                                  working: savingBehaviorReviewId === r.eval_result_id,
+                                  saved: savedBehaviorReviewId === r.eval_result_id,
+                                })}
                               >
+                                <Save className="h-3 w-3 shrink-0" aria-hidden />
                                 {savingBehaviorReviewId === r.eval_result_id
                                   ? "Saving…"
                                   : savedBehaviorReviewId === r.eval_result_id
                                     ? "Saved"
-                                    : "Save review"}
+                                    : "Save"}
                               </button>
                             </div>
                           </div>
