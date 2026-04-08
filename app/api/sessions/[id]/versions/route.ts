@@ -2,13 +2,15 @@ import { NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import { compareOverall } from "@/lib/comparator";
 import { loadComparatorOverallSystemPrompt } from "@/lib/prompts";
+import { loadContextPack } from "@/lib/context-pack";
 import type { TestCase, ComparisonData } from "@/lib/types";
-import { pruneBehaviorReviewForVersions } from "@/lib/behavior-review";
+import { mergeBehaviorReviewMap, pruneBehaviorReviewForVersions, type BehaviorReviewByVersion } from "@/lib/behavior-review";
+import { draftBehaviorReviewForVersionEntries } from "@/lib/behavior-review-drafter";
 import type { EvalResultsRow, VersionEntry, TestCasesRow, DefaultSettingsRow } from "@/lib/db.types";
 
 type EvalResultLite = Pick<
   EvalResultsRow,
-  "eval_result_id" | "test_case_uuid" | "evren_responses" | "comparison" | "behavior_review"
+  "eval_result_id" | "test_case_uuid" | "evren_responses" | "comparison" | "behavior_review" | "reason"
 >;
 
 export async function DELETE(
@@ -46,7 +48,7 @@ export async function DELETE(
 
   const { data: evalRows, error: evalError } = await supabase
     .from("eval_results")
-    .select("eval_result_id, test_case_uuid, evren_responses, comparison, behavior_review")
+    .select("eval_result_id, test_case_uuid, evren_responses, comparison, behavior_review, reason")
     .eq("session_id", sessionId)
     .order("eval_result_id");
   if (evalError) return NextResponse.json({ error: evalError.message }, { status: 500 });
@@ -70,10 +72,11 @@ export async function DELETE(
 
     let adjustedComparison: ComparisonData | null = null;
     const updatedIds = updated.map((v) => v.version_id).slice(0, 3);
+    let testCaseForDraft: TestCase | null = null;
     if (updatedIds.length >= 2 && apiKey && comparatorPrompt) {
       const tc = testCaseById.get(row.test_case_uuid);
       if (tc) {
-        const testCase: TestCase = {
+        testCaseForDraft = {
           test_case_id: tc.test_case_id,
           type: tc.type ?? "single_turn",
           input_message: tc.input_message,
@@ -85,19 +88,48 @@ export async function DELETE(
           notes: tc.notes ?? undefined,
         };
         try {
+          const contextPack = loadContextPack({
+            purpose: "comparator",
+            query: `${testCaseForDraft.test_case_id}\n${testCaseForDraft.expected_state}\n${testCaseForDraft.expected_behavior}\n${testCaseForDraft.forbidden ?? ""}\n${testCaseForDraft.notes ?? ""}`,
+          });
           adjustedComparison = await compareOverall(
-            testCase,
+            testCaseForDraft,
             updated,
             updatedIds.length === 2
               ? ([updatedIds[0], updatedIds[1]] as [string, string])
               : ([updatedIds[0], updatedIds[1], updatedIds[2]] as [string, string, string]),
             apiKey,
             comparatorModel,
-            comparatorPrompt
+            comparatorPrompt,
+            { text: contextPack.text, bundleId: contextPack.bundleId }
           );
         } catch (err) {
           console.error("[versions/delete] compareOverall failed for", tc.test_case_id, err);
         }
+      }
+    }
+
+    let behaviorReviewOut: BehaviorReviewByVersion = prunedReview;
+    if (adjustedComparison && testCaseForDraft && apiKey) {
+      const reasonText =
+        (typeof row.reason === "string" && row.reason.trim() ? row.reason : null) ??
+        adjustedComparison.overall_reason ??
+        null;
+      try {
+        const draftResult = await draftBehaviorReviewForVersionEntries({
+          testCase: testCaseForDraft,
+          versions: updated,
+          evaluatorReason: reasonText,
+          apiKey,
+          modelName: comparatorModel,
+        });
+        if (Object.keys(draftResult.reviews).length > 0) {
+          const allowed = new Set(updated.map((v) => v.version_id));
+          const merged = mergeBehaviorReviewMap({}, draftResult.reviews, allowed);
+          if (merged) behaviorReviewOut = merged;
+        }
+      } catch (brErr) {
+        console.error("[versions/delete] behavior review draft failed for", row.eval_result_id, brErr);
       }
     }
 
@@ -106,7 +138,7 @@ export async function DELETE(
       .update({
         evren_responses: updated,
         comparison: adjustedComparison,
-        behavior_review: prunedReview,
+        behavior_review: behaviorReviewOut,
       } as never)
       .eq("eval_result_id", row.eval_result_id);
   }

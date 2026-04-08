@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { evaluateOne } from "@/lib/evaluator";
+import { loadContextPack } from "@/lib/context-pack";
 import type { EvaluateInput } from "@/lib/types";
 
 export async function POST(request: Request) {
@@ -37,12 +38,17 @@ export async function POST(request: Request) {
 
     const modelName = body.model_name ?? "gemini-3-flash-preview";
     const systemPrompt = body.system_prompt;
+    const contextPack = loadContextPack({
+      purpose: "evaluator",
+      query: `${testCase.test_case_id}\n${testCase.expected_state ?? ""}\n${testCase.expected_behavior ?? ""}\n${testCase.forbidden ?? ""}`,
+    });
     const result = await evaluateOne(
       testCase,
       hasOutputs ? evrenOutputs : evrenOutput!,
       apiKey,
       modelName,
-      systemPrompt
+      systemPrompt,
+      { text: contextPack.text, bundleId: contextPack.bundleId }
     );
     return NextResponse.json(result);
   } catch (err) {

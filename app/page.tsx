@@ -99,6 +99,12 @@ export default function Home() {
               </button>
             ))}
           </div>
+          {mode === "single" && (
+            <p className="mt-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs leading-relaxed text-amber-950">
+              Note: Single evaluation mode is no longer used. Prefer{" "}
+              <span className="font-medium">Version Comparison</span> for new runs.
+            </p>
+          )}
         </fieldset>
         <div className="mt-4">
           <label className="block text-sm font-medium text-stone-700">Runs per case</label>

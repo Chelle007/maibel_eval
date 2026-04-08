@@ -2,14 +2,21 @@ import { NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import { getMaxConcurrentTestCases, runWithConcurrency } from "@/lib/evren-concurrency";
 import { callEvrenApi } from "@/lib/evren";
+import { mergeBehaviorReviewMap } from "@/lib/behavior-review";
+import { draftBehaviorReviewForVersionEntries } from "@/lib/behavior-review-drafter";
 import { compareOverall } from "@/lib/comparator";
 import { loadComparatorOverallSystemPrompt } from "@/lib/prompts";
+import { loadContextPack } from "@/lib/context-pack";
+import { persistSessionReviewSummaryForSession } from "@/lib/session-review-summary-refresh";
 import type { TestCase } from "@/lib/types";
 import type { DefaultSettingsRow, EvalResultsRow, RunEntry, TestCasesRow, VersionEntry } from "@/lib/db.types";
 
 const FALLBACK_EVREN_URL = process.env.NEXT_PUBLIC_EVREN_API_URL || "http://localhost:8000";
 
-type EvalResultLite = Pick<EvalResultsRow, "eval_result_id" | "test_case_uuid" | "evren_responses" | "comparison">;
+type EvalResultLite = Pick<
+  EvalResultsRow,
+  "eval_result_id" | "test_case_uuid" | "evren_responses" | "comparison" | "reason"
+>;
 
 export async function POST(
   request: Request,
@@ -17,7 +24,11 @@ export async function POST(
 ) {
   const { id } = await params;
 
-  let body: { version_name?: string; run_count?: number; run_comparison?: boolean } = {};
+  let body: {
+    version_name?: string;
+    run_count?: number;
+    run_comparison?: boolean;
+  } = {};
   try {
     body = await request.json();
   } catch {
@@ -35,7 +46,7 @@ export async function POST(
 
   const { data: session, error: sessionError } = await supabase
     .from("test_sessions")
-    .select("session_id")
+    .select("session_id, mode, title, summary")
     .eq("test_session_id", id)
     .maybeSingle();
   if (sessionError || !session) {
@@ -43,6 +54,10 @@ export async function POST(
   }
 
   const sessionId = (session as { session_id: string }).session_id;
+  const sessionMode =
+    (session as { mode?: string }).mode === "comparison" ? "comparison" : "single";
+  const sessionTitle = (session as { title?: string | null }).title ?? null;
+  const sessionSummary = (session as { summary?: string | null }).summary ?? null;
 
   const { data: settingsRow } = await supabase
     .from("default_settings")
@@ -55,10 +70,10 @@ export async function POST(
 
   const { data: evalRows, error: evalError } = await supabase
     .from("eval_results")
-    .select("eval_result_id, test_case_uuid, evren_responses, comparison")
+    .select("eval_result_id, test_case_uuid, evren_responses, comparison, reason")
     .eq("session_id", sessionId)
     .order("eval_result_id");
-  if (evalError) {
+    if (evalError) {
     return NextResponse.json({ error: evalError.message }, { status: 500 });
   }
 
@@ -145,7 +160,7 @@ export async function POST(
   if (runComparison && apiKey) {
     const { data: freshRows } = await supabase
       .from("eval_results")
-      .select("eval_result_id, test_case_uuid, evren_responses, comparison")
+      .select("eval_result_id, test_case_uuid, evren_responses, comparison, reason")
       .eq("session_id", sessionId)
       .order("eval_result_id");
     const compRows = (freshRows ?? []) as EvalResultLite[];
@@ -173,6 +188,10 @@ export async function POST(
       };
 
       try {
+        const contextPack = loadContextPack({
+          purpose: "comparator",
+          query: `${testCase.test_case_id}\n${testCase.expected_state}\n${testCase.expected_behavior}\n${testCase.forbidden ?? ""}\n${testCase.notes ?? ""}`,
+        });
         const compResult = await compareOverall(
           testCase,
           versions,
@@ -181,12 +200,39 @@ export async function POST(
             : ([versionIds[0], versionIds[1], versionIds[2]] as [string, string, string]),
           apiKey,
           comparatorModel,
-          comparatorPrompt
+          comparatorPrompt,
+          { text: contextPack.text, bundleId: contextPack.bundleId }
         );
         await supabase
           .from("eval_results")
           .update({ comparison: compResult } as never)
           .eq("eval_result_id", compRow.eval_result_id);
+
+        const reasonText =
+          (typeof compRow.reason === "string" && compRow.reason.trim() ? compRow.reason : null) ??
+          compResult.overall_reason ??
+          null;
+        try {
+          const draftResult = await draftBehaviorReviewForVersionEntries({
+            testCase,
+            versions,
+            evaluatorReason: reasonText,
+            apiKey,
+            modelName: comparatorModel,
+          });
+          if (Object.keys(draftResult.reviews).length > 0) {
+            const allowed = new Set(versionIds);
+            const merged = mergeBehaviorReviewMap({}, draftResult.reviews, allowed);
+            if (merged) {
+              await supabase
+                .from("eval_results")
+                .update({ behavior_review: merged } as never)
+                .eq("eval_result_id", compRow.eval_result_id);
+            }
+          }
+        } catch (brErr) {
+          console.error("[sessions/add-version] Behavior review draft error for", tc.test_case_id, brErr);
+        }
       } catch (compErr) {
         console.error("[sessions/add-version] Comparison error for", tc.test_case_id, compErr);
       }
@@ -206,6 +252,18 @@ export async function POST(
     const tc = r.test_cases != null ? { ...r.test_cases } : undefined;
     return { ...r, test_case_id: tc?.test_case_id, test_cases: tc };
   });
+
+  if (apiKey && sessionMode === "comparison") {
+    await persistSessionReviewSummaryForSession(supabase, {
+      sessionId,
+      sessionMode: "comparison",
+      sessionTitle,
+      sessionSummary,
+      apiKey,
+      modelName: comparatorModel,
+      logPrefix: "[sessions/add-version]",
+    });
+  }
 
   return NextResponse.json({ results: resultsWithTestCaseId });
 }

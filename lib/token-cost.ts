@@ -11,19 +11,37 @@ const PRICING: Record<string, { input: number; output: number }> = {
 
 const DEFAULT_PRICE = { input: 1.25, output: 5.0 };
 
+export type TokenPrice = { input: number; output: number };
+
+export function getTokenPricing(modelName: string): TokenPrice {
+  return PRICING[modelName] ?? DEFAULT_PRICE;
+}
+
+export function computeTokenCostParts(
+  promptTokenCount: number,
+  candidatesTokenCount: number,
+  modelName: string
+): { input_cost_usd: number; output_cost_usd: number; total_cost_usd: number } {
+  const price = getTokenPricing(modelName);
+  const inputCostUsd = (promptTokenCount / 1_000_000) * price.input;
+  const outputCostUsd = (candidatesTokenCount / 1_000_000) * price.output;
+  return {
+    input_cost_usd: inputCostUsd,
+    output_cost_usd: outputCostUsd,
+    total_cost_usd: inputCostUsd + outputCostUsd,
+  };
+}
+
 export function computeTokenCost(
   promptTokenCount: number,
   candidatesTokenCount: number,
   modelName: string
 ): TokenUsage {
-  const price = PRICING[modelName] ?? DEFAULT_PRICE;
-  const costUsd =
-    (promptTokenCount / 1_000_000) * price.input +
-    (candidatesTokenCount / 1_000_000) * price.output;
+  const { total_cost_usd } = computeTokenCostParts(promptTokenCount, candidatesTokenCount, modelName);
   return {
     prompt_tokens: promptTokenCount,
     completion_tokens: candidatesTokenCount,
     total_tokens: promptTokenCount + candidatesTokenCount,
-    cost_usd: Math.round(costUsd * 1_000_000) / 1_000_000,
+    cost_usd: Math.round(total_cost_usd * 1_000_000) / 1_000_000,
   };
 }

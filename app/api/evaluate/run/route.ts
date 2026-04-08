@@ -3,8 +3,12 @@ import { createClient } from "@/lib/supabase/server";
 import { getMaxConcurrentTestCases, runWithConcurrency } from "@/lib/evren-concurrency";
 import { callEvrenApi } from "@/lib/evren";
 import { evaluateOne } from "@/lib/evaluator";
+import { draftBehaviorReview, draftBehaviorReviewForVersionEntries } from "@/lib/behavior-review-drafter";
+import { draftSessionReviewSummaryForSessionData } from "@/lib/session-review-summary-refresh";
+import { toSessionReviewSummaryJson } from "@/lib/session-review-summary";
 import { buildRichReport, runSummarizer } from "@/lib/summarizer";
 import { loadEvaluatorSystemPrompt, loadSummarizerSystemPrompt } from "@/lib/prompts";
+import { loadContextPack } from "@/lib/context-pack";
 import type { TestCase, EvrenOutput, EvaluationResult } from "@/lib/types";
 import type { Database, RunEntry, TestCasesRow, VersionEntry } from "@/lib/db.types";
 
@@ -59,12 +63,25 @@ export async function POST(request: Request) {
   if (fetchError) return NextResponse.json({ error: fetchError.message }, { status: 500 });
   if (!testCasesRows?.length) return NextResponse.json({ error: "No enabled test cases in database" }, { status: 400 });
 
+  let contextBundleId: string | null = null;
+  try {
+    contextBundleId = loadContextPack().bundleId;
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    console.error("[evaluate/run] context pack load failed:", msg);
+    return NextResponse.json(
+      { error: `Context pack load failed: ${msg}` },
+      { status: 500 }
+    );
+  }
+
   const sessionInsert = {
     user_id: userId,
     total_cost_usd: 0,
     summary: null,
     mode: sessionMode,
     manually_edited: false,
+    context_bundle_id: contextBundleId,
   } as Database["public"]["Tables"]["test_sessions"]["Insert"];
   const { data: sessionRow, error: sessionError } = await supabase
     .from("test_sessions")
@@ -146,11 +163,48 @@ export async function POST(request: Request) {
     if (useEvaluator) {
       const evalInput =
         testCase.type === "multi_turn" && run1Outputs.length > 1 ? run1Outputs : lastOutput;
-      const result = await evaluateOne(testCase, evalInput, apiKey as string, modelName, systemPrompt);
+      const contextPack = loadContextPack({
+        purpose: "evaluator",
+        query: `${testCase.test_case_id}\n${testCase.expected_state}\n${testCase.expected_behavior}\n${testCase.forbidden ?? ""}\n${testCase.notes ?? ""}`,
+      });
+
+      const result = await evaluateOne(
+        testCase,
+        evalInput,
+        apiKey as string,
+        modelName,
+        systemPrompt,
+        { text: contextPack.text, bundleId: contextPack.bundleId }
+      );
       const costUsd = result.token_usage?.cost_usd ?? 0;
       totalCostUsd += costUsd;
 
       richSlots[index] = { testCase, evrenOutput: lastOutput, result };
+
+      let behaviorReview: Record<string, unknown> = {};
+      try {
+        const run1 = versionEntry.runs.find((r) => r.run_index === 1) ?? versionEntry.runs[0];
+        const draftResult = await draftBehaviorReview({
+          testCase,
+          versions: [{
+            version_id: versionId,
+            version_name: "Version 1",
+            turns: (run1?.turns ?? []).map((t) => ({ response: t.response, detected_flags: t.detected_flags })),
+          }],
+          evaluatorReason: result.reason,
+          apiKey: apiKey as string,
+          modelName,
+          contextPack: contextPack ? { text: contextPack.text, bundleId: contextPack.bundleId } : undefined,
+        });
+        if (Object.keys(draftResult.reviews).length > 0) {
+          behaviorReview = draftResult.reviews;
+        }
+        if (draftResult.token_usage) {
+          totalCostUsd += draftResult.token_usage.cost_usd;
+        }
+      } catch (brErr) {
+        console.error("[evaluate/run] behavior review draft failed:", brErr instanceof Error ? brErr.message : brErr);
+      }
 
       const evalPayload = {
         session_id: sessionId,
@@ -164,10 +218,33 @@ export async function POST(request: Request) {
         total_tokens: result.token_usage?.total_tokens ?? null,
         cost_usd: costUsd || null,
         manually_edited: false,
-        behavior_review: {},
+        behavior_review: behaviorReview,
       } as Database["public"]["Tables"]["eval_results"]["Insert"];
       await supabase.from("eval_results").insert(evalPayload as any);
     } else {
+      let behaviorReview: Record<string, unknown> = {};
+      if (apiKey) {
+        try {
+          const draftResult = await draftBehaviorReviewForVersionEntries({
+            testCase,
+            versions: [versionEntry],
+            evaluatorReason: null,
+            apiKey: apiKey as string,
+            modelName,
+          });
+          if (Object.keys(draftResult.reviews).length > 0) {
+            behaviorReview = draftResult.reviews;
+          }
+          if (draftResult.token_usage) {
+            totalCostUsd += draftResult.token_usage.cost_usd;
+          }
+        } catch (brErr) {
+          console.error(
+            "[evaluate/run] behavior review draft failed (comparison mode):",
+            brErr instanceof Error ? brErr.message : brErr
+          );
+        }
+      }
       const evalPayload = {
         session_id: sessionId,
         test_case_uuid: row.id,
@@ -181,7 +258,7 @@ export async function POST(request: Request) {
         total_tokens: null,
         cost_usd: null,
         manually_edited: false,
-        behavior_review: {},
+        behavior_review: behaviorReview,
       } as Database["public"]["Tables"]["eval_results"]["Insert"];
       await supabase.from("eval_results").insert(evalPayload as any);
     }
@@ -207,11 +284,47 @@ export async function POST(request: Request) {
   }
 
   const totalEvalTimeSeconds = (Date.now() - evalStartMs) / 1000;
-  const sessionUpdate = { total_cost_usd: totalCostUsd, total_eval_time_seconds: totalEvalTimeSeconds, title, summary } as Database["public"]["Tables"]["test_sessions"]["Update"];
-  await supabase
+  const sessionUpdate: Database["public"]["Tables"]["test_sessions"]["Update"] = {
+    total_cost_usd: totalCostUsd,
+    total_eval_time_seconds: totalEvalTimeSeconds,
+    title,
+    summary,
+  };
+
+  if (apiKey) {
+    try {
+      const draftSummary = await draftSessionReviewSummaryForSessionData(supabase, {
+        sessionId,
+        sessionMode: sessionMode,
+        sessionTitle: title,
+        sessionSummary: summary,
+        apiKey,
+        modelName,
+        logPrefix: "[evaluate/run]",
+      });
+      if (draftSummary?.summary) {
+        sessionUpdate.total_cost_usd =
+          (sessionUpdate.total_cost_usd ?? 0) + (draftSummary.token_usage?.cost_usd ?? 0);
+        sessionUpdate.session_review_summary = toSessionReviewSummaryJson(draftSummary.summary);
+        console.log("[evaluate/run] session review summary drafted successfully");
+      } else {
+        console.warn("[evaluate/run] session review summary drafter returned null/empty");
+      }
+    } catch (srErr) {
+      console.error(
+        "[evaluate/run] session review summary draft failed:",
+        srErr instanceof Error ? srErr.message : srErr
+      );
+    }
+  }
+
+  const { error: updateErr } = await supabase
     .from("test_sessions")
     .update(sessionUpdate as unknown as never)
     .eq("session_id", sessionId);
+  if (updateErr) {
+    console.error("[evaluate/run] session update failed:", updateErr.message);
+  }
 
   return NextResponse.json({
     test_session_id: testSessionId,
