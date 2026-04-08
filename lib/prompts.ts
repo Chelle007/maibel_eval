@@ -64,6 +64,13 @@ export function loadBehaviorReviewDrafterSystemPrompt(): string {
   return content.replace(/\{base_system_prompt\}/g, base);
 }
 
+/** Load session review summary drafter system prompt and inject base prompt. */
+export function loadSessionReviewSummaryDrafterSystemPrompt(): string {
+  const content = readPrompt("session_review_summary_drafter_system_prompt.txt");
+  const base = loadBaseSystemPrompt();
+  return content.replace(/\{base_system_prompt\}/g, base);
+}
+
 export function buildComparatorOverallEditUserMessage(args: {
   feedback: string;
   version_entries: { version_id: string; version_name: string }[];
@@ -389,6 +396,131 @@ export function buildBehaviorReviewDrafterUserMessage(args: {
     sections.push("");
     sections.push("=== EVALUATOR ANALYSIS ===");
     sections.push(evaluatorReason.trim());
+  }
+
+  return sections.join("\n");
+}
+
+function truncateForPrompt(s: string, max: number): string {
+  const t = s.trim();
+  if (t.length <= max) return t;
+  return `${t.slice(0, max)}\n…(truncated)`;
+}
+
+/** Build the user message for the session-level review summary drafter. */
+export function buildSessionReviewSummaryDrafterUserMessage(args: {
+  sessionMode: "single" | "comparison";
+  sessionTitle: string | null;
+  sessionSummary: string | null;
+  evalRows: Array<{
+    test_case_id: string;
+    title: string | null;
+    success: boolean;
+    score: number;
+    reason: string | null;
+    comparison: unknown;
+    behavior_review: unknown;
+  }>;
+  /** Baseline = first; remaining = newer builds to judge vs baseline. */
+  versionEntries?: Array<{ version_id: string; version_name: string }>;
+}): string {
+  const sections: string[] = [];
+  sections.push("=== SESSION ===");
+  sections.push(`mode: ${args.sessionMode}`);
+  if (args.sessionTitle?.trim()) {
+    sections.push(`validation_report_title: ${truncateForPrompt(args.sessionTitle, 500)}`);
+  }
+  if (args.sessionSummary?.trim()) {
+    sections.push("");
+    sections.push("=== VALIDATION REPORT (markdown, excerpt) ===");
+    sections.push(truncateForPrompt(args.sessionSummary, 12000));
+  }
+
+  const vers = args.versionEntries?.filter((v) => v.version_id) ?? [];
+  if (args.sessionMode === "comparison" && vers.length === 1) {
+    const only = vers[0]!;
+    sections.push("");
+    sections.push("=== VERSION ROLES (comparison) ===");
+    sections.push(
+      `Only **one** version is captured so far: ${only.version_name} (version_id=${only.version_id}).`
+    );
+    sections.push(
+      "Treat this as a single-version session and make a tentative ship/hold/investigate **as if this version is the candidate to ship**. Do not mention baseline/challenger or future versions; just summarize what was exercised, what failed (themes), and what still needs confirmation before shipping."
+    );
+  } else if (args.sessionMode === "comparison" && vers.length >= 2) {
+    const baseline = vers[0]!;
+    const challengers = vers.slice(1);
+    sections.push("");
+    sections.push("=== VERSION ROLES (comparison) ===");
+    sections.push(
+      "Order is chronological in this session: the FIRST version is the baseline (e.g. production / old). Later versions are newer builds under evaluation."
+    );
+    sections.push(
+      `Baseline: ${baseline.version_name} (version_id=${baseline.version_id})`
+    );
+    sections.push(
+      `Challenger(s): ${challengers.map((c) => `${c.version_name} (${c.version_id})`).join("; ")}`
+    );
+    sections.push(
+      "When populating cases_versions_tested, use version **names** (e.g. \"Version 1, Version 2\") — do not include raw UUID version_id values."
+    );
+    if (challengers.length >= 2) {
+      sections.push(
+        "Summarization task: (1) Using each row's comparison.tiers (tier 1 = best) and behavior_review, decide which CHALLENGER is strongest per case when they differ; aggregate across cases to name the **best new candidate** among challengers (or state a tie). (2) Frame the whole session summary around: is that **best new candidate** clearly better than the **baseline** enough to ship, or should we hold/investigate? Do not collapse v2 and v3 into one undifferentiated 'new' verdict without picking a best challenger when the data supports it."
+      );
+    } else {
+      sections.push(
+        "Summarization task: Frame goal, overall_finding, recommendation, and needs_confirmation around whether the **challenger** beats the **baseline** enough to ship, or hold/investigate — using comparison.tiers, behavior_review, and reasons."
+      );
+    }
+  }
+
+  sections.push("");
+  sections.push("=== EVAL RESULTS (one object per test case) ===");
+  const payload = args.evalRows.map((r) => {
+    let comparisonSnippet: string | null = null;
+    try {
+      const raw = JSON.stringify(r.comparison ?? null);
+      comparisonSnippet = raw.length > 6000 ? `${raw.slice(0, 6000)}…` : raw;
+    } catch {
+      comparisonSnippet = String(r.comparison ?? "null");
+    }
+    let behaviorSnippet: string | null = null;
+    try {
+      const raw = JSON.stringify(r.behavior_review ?? null);
+      behaviorSnippet = raw.length > 8000 ? `${raw.slice(0, 8000)}…` : raw;
+    } catch {
+      behaviorSnippet = String(r.behavior_review ?? "null");
+    }
+    return {
+      test_case_id: r.test_case_id,
+      title: r.title,
+      success: r.success,
+      score: r.score,
+      reason: r.reason ? truncateForPrompt(r.reason, 2500) : null,
+      comparison: comparisonSnippet,
+      behavior_review: behaviorSnippet,
+    };
+  });
+  sections.push(JSON.stringify(payload, null, 2));
+
+  sections.push("");
+  sections.push("=== OUTPUT REQUIREMENT ===");
+  if (args.sessionMode === "comparison") {
+    sections.push(
+      "Respond with one JSON object only. You MUST set overall_finding, trust_severity, and recommendation to non-null strings. Base them on comparison JSON, behavior_review, and reasons in each row — do not rely on the success boolean alone (it may be a placeholder in comparison mode)."
+    );
+    if (vers.length >= 2) {
+      sections.push(
+        "In **goal** and **needs_confirmation**, explicitly name baseline vs best challenger (or challenger tie) when multiple challengers exist. **recommendation** is tentative ship/hold/investigate for adopting the best new build vs keeping baseline."
+      );
+    }
+  } else {
+    const passed = args.evalRows.filter((r) => r.success).length;
+    const total = args.evalRows.length;
+    sections.push(
+      `Respond with one JSON object only. You MUST set overall_finding, trust_severity, and recommendation to non-null strings. Evaluator outcomes: ${passed} / ${total} cases marked success.`
+    );
   }
 
   return sections.join("\n");

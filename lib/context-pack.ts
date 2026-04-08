@@ -5,7 +5,6 @@ import crypto from "crypto";
 export type ContextPack = {
   text: string;
   bundleId: string;
-  extendedEnabled: boolean;
 };
 
 const MD_DIR = path.join(process.cwd(), "context", "md-files");
@@ -105,7 +104,6 @@ function scoreChunk(chunk: Chunk, keywords: string[]): number {
   for (const k of keywords) {
     if (hay.includes(k)) score += 1;
   }
-  // Prefer smaller / denser chunks a bit.
   const len = Math.max(1, chunk.text.length);
   return score + Math.min(1, score) * (2000 / len);
 }
@@ -137,7 +135,6 @@ function buildRetrievedText(args: {
     out.push("");
     out.push(formatted);
     used += addLen;
-    // Stop once we have something non-trivial.
     if (out.length > 8 && used > maxChars * 0.9) break;
   }
 
@@ -145,20 +142,14 @@ function buildRetrievedText(args: {
 }
 
 /**
- * Load organization context pack from allowlisted markdown files.
- *
- * Rules:
- * - Core allowlist must be non-empty.
- * - If includeExtended = false, only core is injected.
- * - bundleId reflects the allowlisted SOURCE bundle (stable across per-test-case retrieval).
+ * Load organization context pack from the core allowlist in CONTEXT_PACK_MANIFEST.md.
+ * bundleId is a stable fingerprint of the core allowlisted source files (not the retrieved subset).
  */
 export function loadContextPack(args?: {
-  includeExtended?: boolean;
   purpose?: "evaluator" | "comparator";
   query?: string;
   maxContextTokens?: number;
 }): ContextPack {
-  const includeExtended = args?.includeExtended === true;
   const purpose = args?.purpose ?? "evaluator";
   const query = String(args?.query ?? "").trim();
   const maxTokens = Number.isFinite(args?.maxContextTokens)
@@ -168,31 +159,21 @@ export function loadContextPack(args?: {
 
   const manifestRaw = readFileSync(MANIFEST_PATH, "utf8");
   const coreFiles = parseAllowlistSection(manifestRaw, "## Core allowlist");
-  const extendedFiles = parseAllowlistSection(manifestRaw, "## Extended allowlist");
 
   if (coreFiles.length === 0) {
     throw new Error("CONTEXT_PACK_MANIFEST.md missing '## Core allowlist' entries");
   }
 
-  // Stable bundle id: hash the full allowlisted contents (core + optional extended), not the retrieved subset.
   const sourceParts: string[] = [];
   for (const f of coreFiles) sourceParts.push(`--- ${f} ---\n${readMarkdownFile(f)}`);
-  if (includeExtended) for (const f of extendedFiles) sourceParts.push(`--- ${f} ---\n${readMarkdownFile(f)}`);
   const sourceBundleId = sha12(sourceParts.join("\n\n").trim());
 
   const keywords = keywordsFromQuery(query);
   const coreChunks: Chunk[] = coreFiles.flatMap((f) => splitIntoChunks(f, readMarkdownFile(f)));
-  const extChunks: Chunk[] =
-    includeExtended && extendedFiles.length > 0
-      ? extendedFiles.flatMap((f) => splitIntoChunks(f, readMarkdownFile(f)))
-      : [];
 
   const provenanceLines = [
     `Source: context/md-files/CONTEXT_PACK_MANIFEST.md`,
     `Core files: ${coreFiles.join(", ")}`,
-    ...(includeExtended && extendedFiles.length > 0
-      ? [`Extended files: ${extendedFiles.join(", ")}`]
-      : []),
     `bundle: ${sourceBundleId}`,
     ``,
   ];
@@ -206,17 +187,7 @@ export function loadContextPack(args?: {
     maxChars: maxChars - provenanceLen,
   });
 
-  let injected = `${provenanceHeader}${retrievedCore}`;
-  if (includeExtended && extChunks.length > 0) {
-    const remaining = Math.max(800, maxChars - injected.length - 100);
-    const retrievedExt = buildRetrievedText({
-      title: "ORGANIZATION CONTEXT (extended)",
-      chunks: extChunks,
-      keywords,
-      maxChars: remaining,
-    });
-    if (isTruthyLine(retrievedExt)) injected = `${injected}\n\n${retrievedExt}`.trim();
-  }
+  const injected = `${provenanceHeader}${retrievedCore}`.trim();
 
   if (!isTruthyLine(injected)) {
     throw new Error("Context pack resolved to empty text");
@@ -225,7 +196,5 @@ export function loadContextPack(args?: {
   return {
     text: injected,
     bundleId: sourceBundleId,
-    extendedEnabled: includeExtended,
   };
 }
-

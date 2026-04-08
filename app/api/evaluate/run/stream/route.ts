@@ -3,6 +3,8 @@ import { getMaxConcurrentTestCases, runWithConcurrency } from "@/lib/evren-concu
 import { callEvrenApi } from "@/lib/evren";
 import { evaluateOne } from "@/lib/evaluator";
 import { draftBehaviorReview, draftBehaviorReviewForVersionEntries } from "@/lib/behavior-review-drafter";
+import { draftSessionReviewSummaryForSessionData } from "@/lib/session-review-summary-refresh";
+import { toSessionReviewSummaryJson } from "@/lib/session-review-summary";
 import { buildRichReport, runSummarizer } from "@/lib/summarizer";
 import { loadEvaluatorSystemPrompt, loadSummarizerSystemPrompt } from "@/lib/prompts";
 import { loadContextPack } from "@/lib/context-pack";
@@ -50,7 +52,6 @@ export async function POST(request: Request) {
     evren_model_api_url: string;
     mode?: "single" | "comparison";
     run_count?: number;
-    include_extended_context?: boolean;
     model_name?: string;
     summarizer_model?: string;
     system_prompt?: string;
@@ -73,7 +74,6 @@ export async function POST(request: Request) {
 
   const sessionMode = body.mode === "comparison" ? "comparison" : "single";
   const runCount = Number.isFinite(body.run_count) ? Math.max(1, Math.floor(body.run_count as number)) : 1;
-  const includeExtendedContext = body.include_extended_context === true;
   const useEvaluator = sessionMode === "single";
   const useSummarizer = sessionMode === "single";
   const apiKey = process.env.GEMINI_API_KEY;
@@ -123,7 +123,7 @@ export async function POST(request: Request) {
 
   let contextBundleId: string | null = null;
   try {
-    contextBundleId = loadContextPack({ includeExtended: includeExtendedContext }).bundleId;
+    contextBundleId = loadContextPack().bundleId;
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
     console.error("[evaluate/run/stream] context pack load failed:", msg);
@@ -140,7 +140,6 @@ export async function POST(request: Request) {
     mode: sessionMode,
     manually_edited: false,
     context_bundle_id: contextBundleId,
-    context_extended_enabled: includeExtendedContext,
   } as Database["public"]["Tables"]["test_sessions"]["Insert"];
   const { data: sessionRow, error: sessionError } = await supabase
     .from("test_sessions")
@@ -267,7 +266,6 @@ export async function POST(request: Request) {
             });
 
             const contextPack = loadContextPack({
-              includeExtended: includeExtendedContext,
               purpose: "evaluator",
               query: `${testCase.test_case_id}\n${testCase.expected_state}\n${testCase.expected_behavior}\n${testCase.forbidden ?? ""}\n${testCase.notes ?? ""}`,
             });
@@ -335,7 +333,6 @@ export async function POST(request: Request) {
                   evaluatorReason: null,
                   apiKey: apiKey as string,
                   modelName,
-                  includeExtended: includeExtendedContext,
                 });
                 if (Object.keys(draftResult.reviews).length > 0) {
                   behaviorReview = draftResult.reviews;
@@ -403,11 +400,52 @@ export async function POST(request: Request) {
         }
 
         const totalEvalTimeSeconds = (Date.now() - evalStartMs) / 1000;
-        const sessionUpdate = { total_cost_usd: totalCostUsd, total_eval_time_seconds: totalEvalTimeSeconds, title, summary } as Database["public"]["Tables"]["test_sessions"]["Update"];
-        await supabase
+        const sessionUpdate: Database["public"]["Tables"]["test_sessions"]["Update"] = {
+          total_cost_usd: totalCostUsd,
+          total_eval_time_seconds: totalEvalTimeSeconds,
+          title,
+          summary,
+        };
+
+        if (apiKey) {
+          try {
+            sendEvent(controller, "progress", {
+              stage: "session_review_summary",
+              total,
+              message: "Drafting session review summary…",
+            });
+            const draftSummary = await draftSessionReviewSummaryForSessionData(supabase, {
+              sessionId,
+              sessionMode: sessionMode,
+              sessionTitle: title,
+              sessionSummary: summary,
+              apiKey,
+              modelName,
+              logPrefix: "[evaluate/run/stream]",
+            });
+            if (draftSummary?.summary) {
+              sessionUpdate.total_cost_usd =
+                (sessionUpdate.total_cost_usd ?? 0) + (draftSummary.token_usage?.cost_usd ?? 0);
+              sessionUpdate.session_review_summary = toSessionReviewSummaryJson(draftSummary.summary);
+              console.log("[evaluate/run/stream] session review summary drafted successfully");
+            } else {
+              console.warn("[evaluate/run/stream] session review summary drafter returned null/empty");
+            }
+          } catch (srErr) {
+            console.error(
+              "[evaluate/run/stream] session review summary draft failed:",
+              srErr instanceof Error ? srErr.message : srErr
+            );
+          }
+        }
+
+        const { error: updateErr } = await supabase
           .from("test_sessions")
           .update(sessionUpdate as unknown as never)
           .eq("session_id", sessionId);
+        if (updateErr) {
+          console.error("[evaluate/run/stream] session update failed:", updateErr.message);
+        }
 
         sendEvent(controller, "complete", {
           test_session_id: testSessionId,

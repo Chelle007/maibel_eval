@@ -76,13 +76,6 @@ export async function POST(
     (settingsRow as Pick<DefaultSettingsRow, "evaluator_model"> | null)?.evaluator_model?.trim() ||
     "gemini-3-flash-preview";
 
-  const { data: sessionRow } = await supabase
-    .from("test_sessions")
-    .select("context_extended_enabled")
-    .eq("session_id", evalRow.session_id)
-    .single();
-  const includeExtended = (sessionRow as any)?.context_extended_enabled === true;
-
   try {
     const { reviews, token_usage } = await draftBehaviorReviewForVersionEntries({
       testCase,
@@ -90,7 +83,6 @@ export async function POST(
       evaluatorReason: evalRow.reason as string | null,
       apiKey,
       modelName,
-      includeExtended,
     });
 
     if (Object.keys(reviews).length === 0) {

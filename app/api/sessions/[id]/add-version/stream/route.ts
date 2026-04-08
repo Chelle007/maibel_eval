@@ -6,6 +6,7 @@ import { draftBehaviorReviewForVersionEntries } from "@/lib/behavior-review-draf
 import { compareOverall } from "@/lib/comparator";
 import { loadComparatorOverallSystemPrompt } from "@/lib/prompts";
 import { loadContextPack } from "@/lib/context-pack";
+import { persistSessionReviewSummaryForSession } from "@/lib/session-review-summary-refresh";
 import type { TestCase } from "@/lib/types";
 import type { DefaultSettingsRow, EvalResultsRow, RunEntry, TestCasesRow, VersionEntry } from "@/lib/db.types";
 
@@ -73,7 +74,6 @@ export async function POST(
     version_name?: string;
     run_count?: number;
     run_comparison?: boolean;
-    include_extended_context?: boolean;
   } = {};
   try {
     body = await request.json();
@@ -82,7 +82,6 @@ export async function POST(
   }
   const runComparison = body.run_comparison ?? false;
   const runCount = Number.isFinite(body.run_count) ? Math.max(1, Math.floor(body.run_count as number)) : 1;
-  const includeExtendedContext = body.include_extended_context === true;
 
   const supabase = await createClient();
 
@@ -96,7 +95,7 @@ export async function POST(
 
   const { data: session, error: sessionError } = await supabase
     .from("test_sessions")
-    .select("session_id, context_bundle_id, context_extended_enabled")
+    .select("session_id, mode, title, summary")
     .eq("test_session_id", id)
     .maybeSingle();
   if (sessionError || !session) {
@@ -107,8 +106,10 @@ export async function POST(
   }
 
   const sessionId = (session as { session_id: string }).session_id;
-  const sessionCtx = session as { context_bundle_id?: string | null; context_extended_enabled?: boolean | null };
-  const useExtended = includeExtendedContext || sessionCtx.context_extended_enabled === true;
+  const sessionMode =
+    (session as { mode?: string }).mode === "comparison" ? "comparison" : "single";
+  const sessionTitle = (session as { title?: string | null }).title ?? null;
+  const sessionSummary = (session as { summary?: string | null }).summary ?? null;
 
   const { data: settingsRow } = await supabase
     .from("default_settings")
@@ -260,7 +261,6 @@ export async function POST(
 
                   try {
                     const contextPack = loadContextPack({
-                      includeExtended: useExtended,
                       purpose: "comparator",
                       query: `${testCase.test_case_id}\n${testCase.expected_state}\n${testCase.expected_behavior}\n${testCase.forbidden ?? ""}\n${testCase.notes ?? ""}`,
                     });
@@ -292,7 +292,6 @@ export async function POST(
                         evaluatorReason: reasonText,
                         apiKey,
                         modelName: comparatorModel,
-                        includeExtended: useExtended,
                       });
                       if (Object.keys(draftResult.reviews).length > 0) {
                         const allowed = new Set(versionIds);
@@ -366,6 +365,23 @@ export async function POST(
           const tc = r.test_cases != null ? { ...r.test_cases } : undefined;
           return { ...r, test_case_id: tc?.test_case_id, test_cases: tc };
         });
+
+        if (apiKey && sessionMode === "comparison") {
+          sendEvent(controller, "progress", {
+            stage: "session_review_summary",
+            total: rows.length,
+            message: "Updating session review summary…",
+          });
+          await persistSessionReviewSummaryForSession(supabase, {
+            sessionId,
+            sessionMode: "comparison",
+            sessionTitle: sessionTitle,
+            sessionSummary: sessionSummary,
+            apiKey,
+            modelName: comparatorModel,
+            logPrefix: "[sessions/add-version/stream]",
+          });
+        }
 
         sendEvent(controller, "complete", { results: resultsWithTestCaseId });
       } catch (err) {

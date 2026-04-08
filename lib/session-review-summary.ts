@@ -59,9 +59,14 @@ function normalizeText(val: unknown): string | null | "invalid" {
 function normalizeEnum<T extends string>(val: unknown, allowed: readonly T[]): T | null | "invalid" {
   if (val === null || val === undefined || val === "") return null;
   if (typeof val !== "string") return "invalid";
-  const v = val.trim();
-  if (!v) return null;
-  return (allowed as readonly string[]).includes(v) ? (v as T) : "invalid";
+  const raw = val.trim();
+  if (!raw) return null;
+  const lower = raw.toLowerCase();
+  const allowedArr = allowed as readonly string[];
+  if (allowedArr.includes(lower)) return lower as T;
+  const slug = lower.replace(/[\s/-]+/g, "_").replace(/[^a-z0-9_]/g, "");
+  if (allowedArr.includes(slug)) return slug as T;
+  return "invalid";
 }
 
 export function parseSessionReviewSummaryV0(raw: unknown): SessionReviewSummaryV0 {
@@ -95,8 +100,14 @@ export function parseSessionReviewSummaryV0(raw: unknown): SessionReviewSummaryV
     const themes: SessionReviewFailureThemeKey[] = [];
     for (const entry of themesRaw) {
       if (typeof entry !== "string") continue;
-      const k = entry.trim();
-      if (!allowedThemes.has(k)) continue;
+      const trimmed = entry.trim();
+      const lowerUnderscore = trimmed
+        .toLowerCase()
+        .replace(/\s+/g, "_")
+        .replace(/[^a-z0-9_]/g, "");
+      const k =
+        allowedThemes.has(trimmed) ? trimmed : allowedThemes.has(lowerUnderscore) ? lowerUnderscore : null;
+      if (!k) continue;
       themes.push(k as SessionReviewFailureThemeKey);
       if (themes.length >= 8) break;
     }
@@ -115,5 +126,43 @@ export function validateSessionReviewSummaryV0Payload(raw: unknown): SessionRevi
 
 export function toSessionReviewSummaryJson(v: SessionReviewSummaryV0): Json {
   return v as unknown as Json;
+}
+
+/**
+ * When the model omits enum fields, fill so the UI always has overall_finding, trust_severity,
+ * and recommendation. Comparison-mode DB rows often use success placeholders, so we use neutral
+ * defaults there; single-mode uses per-case success when available.
+ */
+export function fillMissingSessionReviewEnumsFromEvalRows(
+  summary: SessionReviewSummaryV0,
+  evalRows: { success: boolean }[],
+  sessionMode: "single" | "comparison"
+): SessionReviewSummaryV0 {
+  if (evalRows.length === 0) return summary;
+  const out: SessionReviewSummaryV0 = { ...summary };
+
+  if (sessionMode === "comparison") {
+    if (out.overall_finding == null) out.overall_finding = "unclear";
+    if (out.trust_severity == null) out.trust_severity = "medium";
+    if (out.recommendation == null) out.recommendation = "hold";
+    return out;
+  }
+
+  const passed = evalRows.filter((r) => r.success).length;
+  const total = evalRows.length;
+  if (out.overall_finding == null) {
+    if (passed === total) out.overall_finding = "deterministic";
+    else if (passed === 0) out.overall_finding = "likely_variable";
+    else out.overall_finding = "unclear";
+  }
+  if (out.trust_severity == null) {
+    out.trust_severity = passed < total ? "medium" : "low";
+  }
+  if (out.recommendation == null) {
+    if (passed === total) out.recommendation = "ship";
+    else if (passed === 0) out.recommendation = "investigate";
+    else out.recommendation = "hold";
+  }
+  return out;
 }
 

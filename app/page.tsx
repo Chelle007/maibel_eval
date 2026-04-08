@@ -25,7 +25,6 @@ export default function Home() {
   const [runCount, setRunCount] = useState(1);
   const [evaluatorModel, setEvaluatorModel] = useState(FALLBACK_EVALUATOR_MODEL);
   const [summarizerModel, setSummarizerModel] = useState(FALLBACK_SUMMARIZER_MODEL);
-  const [includeExtendedContext, setIncludeExtendedContext] = useState(false);
 
   useEffect(() => {
     fetch("/api/default-settings")
@@ -54,7 +53,6 @@ export default function Home() {
       evren_model_api_url: evrenUrl.trim(),
       mode,
       run_count: Math.max(1, Math.floor(runCount || 1)),
-      include_extended_context: includeExtendedContext,
       model_name: mode === "single" ? (evaluatorModel || undefined) : undefined,
       summarizer_model: mode === "single" ? (summarizerModel || undefined) : undefined,
     });
@@ -101,6 +99,12 @@ export default function Home() {
               </button>
             ))}
           </div>
+          {mode === "single" && (
+            <p className="mt-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs leading-relaxed text-amber-950">
+              Note: Single evaluation mode is no longer used. Prefer{" "}
+              <span className="font-medium">Version Comparison</span> for new runs.
+            </p>
+          )}
         </fieldset>
         <div className="mt-4">
           <label className="block text-sm font-medium text-stone-700">Runs per case</label>
@@ -112,22 +116,6 @@ export default function Home() {
             onChange={(e) => setRunCount(Math.max(1, Math.floor(Number(e.target.value) || 1)))}
             className="mt-1.5 block w-full rounded-lg border border-stone-200 bg-white px-3 py-2.5 text-stone-900 focus:border-stone-400 focus:outline-none focus:ring-1 focus:ring-stone-400"
           />
-        </div>
-        <div className="mt-4">
-          <label className="flex cursor-pointer items-center gap-2 text-sm text-stone-700">
-            <input
-              type="checkbox"
-              checked={includeExtendedContext}
-              onChange={(e) => setIncludeExtendedContext(e.target.checked)}
-              className="h-4 w-4 rounded border-stone-300 text-stone-900 focus:ring-stone-400"
-            />
-            <span>
-              Include extended organization context (higher cost)
-            </span>
-          </label>
-          <div className="mt-1 text-xs text-stone-500">
-            Uses the allowlist in <code className="rounded bg-stone-100 px-1">context/md-files/CONTEXT_PACK_MANIFEST.md</code>.
-          </div>
         </div>
         {mode === "single" && (
           <>

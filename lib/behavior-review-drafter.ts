@@ -121,13 +121,11 @@ export async function draftBehaviorReviewForVersionEntries(args: {
   evaluatorReason?: string | null;
   apiKey: string;
   modelName?: string;
-  includeExtended?: boolean;
 }): Promise<DraftBehaviorReviewResult> {
   const versionInputs = versionEntriesToDraftInputs(args.versions);
   let contextPack: { text: string; bundleId: string } | undefined;
   try {
     const cp = loadContextPack({
-      includeExtended: args.includeExtended === true,
       purpose: "evaluator",
       query: `${args.testCase.test_case_id}\n${args.testCase.expected_state}\n${args.testCase.expected_behavior}\n${args.testCase.forbidden ?? ""}\n${args.testCase.notes ?? ""}`,
     });

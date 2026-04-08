@@ -78,7 +78,6 @@ type EvalRunContextValue = {
     evren_model_api_url: string;
     mode: "single" | "comparison";
     run_count: number;
-    include_extended_context?: boolean;
     model_name?: string;
     summarizer_model?: string;
   }) => Promise<void>;
@@ -106,7 +105,6 @@ export function EvalRunProvider({ children }: { children: ReactNode }) {
       evren_model_api_url: string;
       mode: "single" | "comparison";
       run_count: number;
-      include_extended_context?: boolean;
       model_name?: string;
       summarizer_model?: string;
     }) => {
@@ -126,7 +124,6 @@ export function EvalRunProvider({ children }: { children: ReactNode }) {
             evren_model_api_url: params.evren_model_api_url.trim(),
             mode: params.mode,
             run_count: params.run_count,
-            include_extended_context: params.include_extended_context === true,
             model_name: params.model_name || undefined,
             summarizer_model: params.summarizer_model || undefined,
           }),

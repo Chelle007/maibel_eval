@@ -27,15 +27,13 @@ export async function DELETE(
   const supabase = await createClient();
   const { data: session, error: sessionError } = await supabase
     .from("test_sessions")
-    .select("session_id, context_extended_enabled")
+    .select("session_id")
     .eq("test_session_id", id)
     .maybeSingle();
   if (sessionError || !session) {
     return NextResponse.json({ error: sessionError?.message ?? "Session not found" }, { status: 404 });
   }
   const sessionId = (session as { session_id: string }).session_id;
-  const sessionCtx = session as { context_extended_enabled?: boolean | null };
-  const includeExtended = sessionCtx.context_extended_enabled === true;
 
   const apiKey = process.env.GEMINI_API_KEY;
 
@@ -91,7 +89,6 @@ export async function DELETE(
         };
         try {
           const contextPack = loadContextPack({
-            includeExtended,
             purpose: "comparator",
             query: `${testCaseForDraft.test_case_id}\n${testCaseForDraft.expected_state}\n${testCaseForDraft.expected_behavior}\n${testCaseForDraft.forbidden ?? ""}\n${testCaseForDraft.notes ?? ""}`,
           });
@@ -125,7 +122,6 @@ export async function DELETE(
           evaluatorReason: reasonText,
           apiKey,
           modelName: comparatorModel,
-          includeExtended,
         });
         if (Object.keys(draftResult.reviews).length > 0) {
           const allowed = new Set(updated.map((v) => v.version_id));
