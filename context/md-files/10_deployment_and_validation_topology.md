@@ -1,4 +1,4 @@
-> Derived from `v2_technical_command_centre(20.03).md`. The consolidated file remains canonical for now.
+> Derived from `v2_technical_command_centre(20.03).md`. The split docs in `context/` are the current operating source of truth. The consolidated file is kept as a reference snapshot.
 
 # 10_deployment_and_validation_topology
 
@@ -105,12 +105,24 @@ When diagnosing behavior or deployment issues:
 - confirm whether the issue exists in `staging` before considering production impact
 - do not treat a green deploy as proof that staging is trustworthy for promotion decisions
 
+## Post-Merge Runtime-Truth Check
+After every merge to `main`, confirm:
+- the production deploy workflow completed
+- the latest intended Cloud Run revision exists
+- the deployed revision matches the intended commit
+- live traffic is routed to that revision
+
+Only then interpret production canary results.
+
+If canary behavior fails before revision and traffic truth are confirmed, first treat it as a runtime-routing truth issue, not an immediate application-logic regression.
+
 ### Production
 - deploys only from `main`
 - uses production secrets only
 - uses production bot only
 - production scheduler jobs run only from production configuration
 - production must not depend on eval-only infrastructure
+- production truth is not established until intended revision and live traffic routing are confirmed
 
 ### Staging
 - deploys only from `staging`

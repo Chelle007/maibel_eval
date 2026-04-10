@@ -1,4 +1,4 @@
-> Derived from `v2_technical_command_centre(20.03).md`. The consolidated file remains canonical for now.
+> Derived from `v2_technical_command_centre(20.03).md`. The split docs in `context/` are the current operating source of truth. The consolidated file is kept as a reference snapshot.
 
 # 07_metrics_and_evidence
 

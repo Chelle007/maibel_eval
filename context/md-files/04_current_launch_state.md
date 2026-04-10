@@ -1,4 +1,4 @@
-> Derived from `v2_technical_command_centre(20.03).md`. The consolidated file remains canonical for now.
+> Derived from `v2_technical_command_centre(20.03).md`. The split docs in `context/` are the current operating source of truth. The consolidated file is kept as a reference snapshot.
 
 # 04_current_launch_state
 
@@ -50,6 +50,14 @@ Detailed environment rules live in `10_deployment_and_validation_*.md`.
 - runtime and schema truth still need to be validated before staging results can carry full decision weight
 - returning-user state integrity and re-entry quality remain active trust risks
 - latency and conversation-quality failures are active user-facing concerns, not watchlist polish
+
+## Temporary CI/CD Note
+- keep `deploy.yml` manual-only until the next `main` merge/push
+- after the next successful `main` merge/push:
+  - confirm only the canonical production path runs
+  - confirm no duplicate deploy occurs
+  - then delete `deploy.yml`
+  - then mark CI/CD cleanup done
 
 ## Dependency Chain
 1. confirm runtime truth first: environment, deploy path, schema state, and validated code source

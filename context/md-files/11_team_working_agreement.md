@@ -1,9 +1,9 @@
-> Derived from `v2_technical_command_centre(20.03).md`. The consolidated file remains canonical for now.
+> Derived from `v2_technical_command_centre(20.03).md`. The split docs in `context/` are the current operating source of truth. The consolidated file is kept as a reference snapshot.
 
 # 11_team_working_agreement
 
 ## Purpose
-Define how Mabel, Chloe, and Michelle work together during launch stabilization so ownership, handoffs, and release decisions are clear.
+Define how Mabel and Michelle work together during launch stabilization so ownership, handoffs, and release decisions are clear.
 
 This document exists to reduce duplicate effort, ambiguous ownership, unclear signoff, over-scoped changes, and launch-day confusion.
 
@@ -15,40 +15,28 @@ Role:
 - launch decision-maker
 - product and trust owner
 - release approval owner
+- system-truth owner
+- implementation direction owner
+- deployment and release safety owner
 - lane and prioritization owner
 - manual canary / proactive judgment owner for now
 
 Responsible for:
 - deciding priorities
 - defining intended behavior
+- determining whether an issue is primarily system-truth or experience-truth
 - final go / no-go calls
 - approving risky release decisions
 - deciding whether eval isolation requires a dedicated `auto-eval` lane
 - escalating user trust concerns to top priority
 - final behavior direction
+- owning runtime correctness, deployment judgment, and technical risk acceptance
 - sequencing work across lanes while the system is still being stabilized
-
-### Chloe
-Role:
-- implementation owner for backend, orchestration, deployment, and scheduler work
-- primary operator for code changes and infrastructure fixes
-- owner of system truth and implementation safety
-
-Responsible for:
-- investigating implementation issues
-- proposing the smallest safe fixes
-- shipping narrow diffs
-- documenting risks
-- validating behavior after technical changes
-- defining rollback shape before release
-- clarifying whether eval code can safely stay outside production runtime paths
-- identifying the safest implementation surface once the failure class is clear
-- defining blast radius and regression risk before risky changes
-- confirming what must be validated before merge or promotion
 
 ### Michelle
 Role:
 - experience-truth owner for AI behavior quality
+- evaluation system owner
 - owner of behavior investigation, clustering, and rule definition
 
 Responsible for:
@@ -61,6 +49,7 @@ Responsible for:
 - highlighting trust-impacting behavior
 - assessing evidence strength from an evaluation perspective
 - stating whether the eval harness requires isolation or can safely live in shared repo structure
+- can implement scoped behavior-layer fixes when explicitly assigned
 
 ## Decision Ownership
 
@@ -73,16 +62,9 @@ Responsible for:
 - when user trust concerns override speed
 - final behavior direction when multiple fix paths are possible
 - when manual canary or proactive judgment remains human-owned
-
-### Chloe decides
-- implementation shape at the code level, within approved scope
-- smallest safe fix proposal
-- likely subsystem affected
-- practical rollback shape
-- whether deploy/runtime paths safely exclude eval-only code
-- where the change should live once the behavior rule is clear
-- how to contain blast radius before merge
-- what technical validation is required before rollout
+- implementation direction
+- deployment and rollback decisions
+- final technical risk judgment
 
 ### Michelle decides
 - whether evaluation evidence is strong, weak, or insufficient
@@ -106,15 +88,11 @@ Escalate to Mabel immediately if:
 - the team is split on whether eval isolation needs a separate lane
 - lane ownership is unclear or multiple lanes are being mixed into one patch
 - a behavior tradeoff affects launch risk or proactive outreach judgment
-
-Escalate to Chloe immediately if:
 - implementation behavior does not match intended system behavior
 - deployment or scheduler config appears wrong
 - there is uncertainty about where the logic lives
 - rollback is unclear
 - eval code may be entering production runtime or deploy paths
-- a behavior issue appears to have a concrete implementation surface
-- the smallest safe implementation point is unclear
 - latency, schema, deploy-path, or state-integrity issues are affecting live trust
 
 Escalate to Michelle immediately if:
@@ -213,7 +191,7 @@ Escalate to Michelle immediately if:
 
 ## Signoff Rules
 A risky change is not ready for release until:
-- implementation owner says what changed
+- system owner says what changed
 - evaluation owner says what evidence exists
 - rollback path is known
 - Mabel makes an explicit ship decision

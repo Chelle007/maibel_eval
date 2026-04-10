@@ -1,4 +1,4 @@
-> Derived from `v2_technical_command_centre(20.03).md`. The consolidated file remains canonical for now.
+> Derived from `v2_technical_command_centre(20.03).md`. The split docs in `context/` are the current operating source of truth. The consolidated file is kept as a reference snapshot.
 
 # 12_prompt_templates_for_team
 
@@ -132,7 +132,7 @@ Ask for:
 
 ## 8. Implementation Handoff Prompt
 Use when:
-- handing implementation work to Chloe, Codex, or another engineer
+- handing implementation work to Codex or another engineer
 
 Template:
 - Problem
@@ -192,7 +192,22 @@ Ask for:
 - recommendation: ship / hold
 - exact environment and version validated
 
-## 12. Behavior Failure Analysis Prompt
+## 12. Full Engineering Flow Prompt
+Use when:
+- you want the full contributor workflow spelled out before changes or release work
+- you want commit / push / PR / validation / rollout steps checked explicitly
+
+Template:
+Ask:
+- Walk me through the full engineering flow including commit, push, PR, validation, and rollout.
+- confirm the intended branch flow before changing anything
+- confirm `base = ?` and `compare = ?` before opening or updating a PR
+- confirm `git branch --show-current` and `git log --oneline -1` before push
+- then use `git push -u origin HEAD`
+- confirm staging validation before considering `main`
+- do not proceed if any step is unclear or unverified
+
+## 13. Behavior Failure Analysis Prompt
 Use when:
 - a specific conversation or response failed
 - you want root cause across system layers
