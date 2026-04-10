@@ -1,6 +1,6 @@
 import { createClient } from "@/lib/supabase/server";
 import { getMaxConcurrentTestCases, runWithConcurrency } from "@/lib/evren-concurrency";
-import { callEvrenApi } from "@/lib/evren";
+import { callEvrenApiWithMeta } from "@/lib/evren";
 import { mergeBehaviorReviewMap } from "@/lib/behavior-review";
 import { draftBehaviorReviewForVersionEntries } from "@/lib/behavior-review-drafter";
 import { compareOverall } from "@/lib/comparator";
@@ -95,7 +95,7 @@ export async function POST(
 
   const { data: session, error: sessionError } = await supabase
     .from("test_sessions")
-    .select("session_id, mode, title, summary")
+    .select("session_id, mode, title, summary, run_metadata")
     .eq("test_session_id", id)
     .maybeSingle();
   if (sessionError || !session) {
@@ -166,6 +166,8 @@ export async function POST(
   const stream = new ReadableStream<Uint8Array>({
     async start(controller) {
       try {
+        let evrenCodeSourceText: string | null =
+          typeof (session as any)?.run_metadata?.code_source === "string" ? (session as any).run_metadata.code_source : null;
         sendEvent(controller, "progress", {
           stage: "start",
           total: rows.length,
@@ -198,7 +200,7 @@ export async function POST(
             forbidden: tc.forbidden ?? undefined,
           };
 
-          const runPromises = Array.from({ length: runCount }, async () => callEvrenApi(evrenModelApiUrl, testCase));
+          const runPromises = Array.from({ length: runCount }, async () => callEvrenApiWithMeta(evrenModelApiUrl, testCase));
           const runResults = await Promise.allSettled(runPromises);
           const runs: RunEntry[] = [];
 
@@ -210,7 +212,25 @@ export async function POST(
               console.error("[add-version/stream] Evren error for", tc.test_case_id, msg);
               continue;
             }
-            const runOutputs = settled.value;
+            const runOutputs = settled.value.outputs;
+            if (!evrenCodeSourceText && settled.value.codeSource?.text) {
+              evrenCodeSourceText = settled.value.codeSource.text;
+              try {
+                await supabase
+                  .from("test_sessions")
+                  .update(
+                    {
+                      run_metadata: {
+                        ...((session as any)?.run_metadata ?? {}),
+                        code_source: evrenCodeSourceText,
+                      },
+                    } as never
+                  )
+                  .eq("session_id", sessionId);
+              } catch {
+                /* best-effort */
+              }
+            }
             runs.push({
               run_id: crypto.randomUUID(),
               run_index: runIndex + 1,

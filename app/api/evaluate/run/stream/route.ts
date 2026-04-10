@@ -1,6 +1,6 @@
 import { createClient } from "@/lib/supabase/server";
 import { getMaxConcurrentTestCases, runWithConcurrency } from "@/lib/evren-concurrency";
-import { callEvrenApi } from "@/lib/evren";
+import { callEvrenApiWithMeta } from "@/lib/evren";
 import { evaluateOne } from "@/lib/evaluator";
 import { draftBehaviorReview, draftBehaviorReviewForVersionEntries } from "@/lib/behavior-review-drafter";
 import { draftSessionReviewSummaryForSessionData } from "@/lib/session-review-summary-refresh";
@@ -136,7 +136,12 @@ export async function POST(request: Request) {
 
   const modelName = body.model_name ?? "gemini-3-flash-preview";
   const summarizerModel = body.summarizer_model ?? modelName;
-  const runMetadata = await buildAutofillRunMetadata(supabase, evrenModelApiUrl, testCasesRows);
+  const runMetadata = await buildAutofillRunMetadata(supabase, evrenModelApiUrl, testCasesRows, {
+    sessionMode,
+    runCount,
+    evaluatorModel: modelName,
+    summarizerModel,
+  });
   const sessionInsert = {
     user_id: userId,
     total_cost_usd: 0,
@@ -178,6 +183,7 @@ export async function POST(request: Request) {
     async start(controller) {
       const evalStartMs = Date.now();
       let totalCostUsd = 0;
+      let evrenCodeSourceText: string | null = null;
       type RichSlot = { testCase: TestCase; evrenOutput: EvrenOutput; result: EvaluationResult };
       const richSlots: (RichSlot | null)[] = [];
       try {
@@ -207,7 +213,7 @@ export async function POST(request: Request) {
             forbidden: row.forbidden ?? undefined,
           };
 
-          const runPromises = Array.from({ length: runCount }, async () => callEvrenApi(evrenModelApiUrl, testCase));
+          const runPromises = Array.from({ length: runCount }, async () => callEvrenApiWithMeta(evrenModelApiUrl, testCase));
           const runResults = await Promise.allSettled(runPromises);
           const runs: RunEntry[] = [];
 
@@ -219,7 +225,18 @@ export async function POST(request: Request) {
               console.error("[evaluate/run/stream] Evren error for", testCase.test_case_id, msg);
               continue;
             }
-            const runOutputs = settled.value;
+            const runOutputs = settled.value.outputs;
+            if (!evrenCodeSourceText && settled.value.codeSource?.text) {
+              evrenCodeSourceText = settled.value.codeSource.text;
+              try {
+                await supabase
+                  .from("test_sessions")
+                  .update({ run_metadata: { ...(runMetadata as any), code_source: evrenCodeSourceText } } as never)
+                  .eq("session_id", sessionId);
+              } catch {
+                /* best-effort */
+              }
+            }
             runs.push({
               run_id: crypto.randomUUID(),
               run_index: runIndex + 1,
