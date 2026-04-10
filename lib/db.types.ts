@@ -22,13 +22,27 @@ export interface UsersRow {
 export interface RunMetadata {
   environment?: string | null;
   code_source?: string | null;
+  deploy_url?: string | null;
   test_category?: string | null;
+  evaluator_model?: string | null;
+  summarizer_model?: string | null;
+  comparator_model?: string | null;
+  run_mode?: string | null;
+  sample_size?: string | null;
+  repeated_runs_evidence?: string | null;
 }
 
 export const RUN_METADATA_KEYS: (keyof RunMetadata)[] = [
   "environment",
   "code_source",
+  "deploy_url",
   "test_category",
+  "evaluator_model",
+  "summarizer_model",
+  "comparator_model",
+  "run_mode",
+  "sample_size",
+  "repeated_runs_evidence",
 ];
 
 export function validateRunMetadata(raw: unknown): RunMetadata {
@@ -42,7 +56,14 @@ export function validateRunMetadata(raw: unknown): RunMetadata {
   };
   out.environment = str("environment");
   out.code_source = str("code_source");
+  out.deploy_url = str("deploy_url");
   out.test_category = str("test_category");
+  out.evaluator_model = str("evaluator_model");
+  out.summarizer_model = str("summarizer_model");
+  out.comparator_model = str("comparator_model");
+  out.run_mode = str("run_mode");
+  out.sample_size = str("sample_size");
+  out.repeated_runs_evidence = str("repeated_runs_evidence");
   return out;
 }
 

@@ -40,7 +40,6 @@ type Session = {
   session_review_summary?: unknown;
   mode?: "single" | "comparison";
   manually_edited: boolean;
-  repeated_runs_mode?: "auto" | "manual";
   run_metadata?: RunMetadata | null;
   created_at?: string | null;
   users?: { full_name: string | null; email: string } | null;
@@ -342,15 +341,11 @@ function evalResultsHaveAnyMultiRun(results: EvalResult[]): boolean {
   return false;
 }
 
-type RepeatedRunsDisplay = "None" | "Manual" | "Automated";
-
-function getRepeatedRunsDisplay(
-  repeatedRunsMode: "auto" | "manual" | undefined,
-  results: EvalResult[]
-): RepeatedRunsDisplay {
-  if (repeatedRunsMode === "manual") return "Manual";
-  if (evalResultsHaveAnyMultiRun(results)) return "Automated";
-  return "None";
+function evalResultsHaveAnyMultiTurn(results: EvalResult[]): boolean {
+  for (const r of results) {
+    if (r.test_cases?.type === "multi_turn") return true;
+  }
+  return false;
 }
 
 /** Shared style for secondary “Edit” actions (header, summary, result rows). */
@@ -445,7 +440,6 @@ export default function SessionDetailPage() {
   const [editTitle, setEditTitle] = useState("");
   const [savingHeader, setSavingHeader] = useState(false);
   const [headerError, setHeaderError] = useState<string | null>(null);
-  const [savingRepeatedRunsMode, setSavingRepeatedRunsMode] = useState(false);
   const [runMetadataDraft, setRunMetadataDraft] = useState<RunMetadata>({});
   const [savingRunMetadata, setSavingRunMetadata] = useState(false);
   const [savedRunMetadata, setSavedRunMetadata] = useState(false);
@@ -1018,27 +1012,6 @@ export default function SessionDetailPage() {
       .finally(() => setSavingSummary(false));
   }
 
-  function saveRepeatedRunsMode(next: "auto" | "manual") {
-    if (!session || session.mode !== "comparison") return;
-    const current = session.repeated_runs_mode === "manual" ? "manual" : "auto";
-    if (next === current) return;
-    setSavingRepeatedRunsMode(true);
-    setError(null);
-    fetch(`/api/sessions/${id}`, {
-      method: "PATCH",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ repeated_runs_mode: next }),
-    })
-      .then((res) => res.json())
-      .then((data) => {
-        if (data.error) throw new Error(data.error);
-        setSession((s) => (s ? { ...s, repeated_runs_mode: next } : null));
-        if (next === "auto") setAddVersionRunCount(1);
-      })
-      .catch((e) => setError(e.message))
-      .finally(() => setSavingRepeatedRunsMode(false));
-  }
-
   async function saveRunMetadata() {
     if (!session) return;
     setSavingRunMetadata(true);
@@ -1238,6 +1211,28 @@ export default function SessionDetailPage() {
     });
   }
 
+  const anyMultiRunInSession = evalResultsHaveAnyMultiRun(results);
+  const anyMultiTurnInSession = evalResultsHaveAnyMultiTurn(results);
+
+  const autoRunMode =
+    `${anyMultiRunInSession ? "repeated-run" : "single-run"}, ${anyMultiTurnInSession ? "multi-turn" : "single-turn"}`;
+
+  const autoComparisonModel = session?.mode === "comparison" ? evaluatorModelName : null;
+  const autoEvaluatorModel = evaluatorModelName;
+  const autoSummarizerModel = models.summarizer_model ?? null;
+  const autoComparatorModel = autoComparisonModel;
+
+  // Keep non-editable fields in run_metadata aligned to session truth.
+  useEffect(() => {
+    setRunMetadataDraft((prev) => ({
+      ...prev,
+      run_mode: autoRunMode,
+      comparator_model: autoComparatorModel ?? null,
+      evaluator_model: autoEvaluatorModel ?? null,
+      summarizer_model: autoSummarizerModel ?? null,
+    }));
+  }, [autoRunMode, autoComparatorModel, autoEvaluatorModel, autoSummarizerModel]);
+
   if (loading) return <div className="mx-auto max-w-5xl px-4 py-8 text-stone-500">Loading…</div>;
   if (error || !session) {
     return (
@@ -1247,10 +1242,6 @@ export default function SessionDetailPage() {
       </div>
     );
   }
-  const repeatedRunsDisplay = getRepeatedRunsDisplay(session.repeated_runs_mode, results);
-  const anyMultiRunInSession = evalResultsHaveAnyMultiRun(results);
-  const repeatedRunsSelectValue =
-    repeatedRunsDisplay === "None" ? "none" : repeatedRunsDisplay === "Automated" ? "automated" : "manual";
 
   return (
     <div className="mx-auto max-w-5xl px-4 py-8 sm:px-6 lg:px-8">
@@ -1491,35 +1482,7 @@ export default function SessionDetailPage() {
               {passedTestCasesDisplay.text}
             </span>
           </div>
-          {session.mode === "comparison" ? (
-            <div className="flex flex-wrap items-center gap-2 text-sm text-stone-700 min-w-0">
-              <svg className="h-4 w-4 shrink-0 self-center text-stone-400" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden>
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
-              </svg>
-              <span className="inline-flex flex-wrap items-baseline gap-x-1.5 gap-y-0.5">
-                <strong className="font-medium text-stone-800">Repeated runs:</strong>
-                <select
-                  value={repeatedRunsSelectValue}
-                  onChange={(e) => {
-                    const v = e.target.value;
-                    saveRepeatedRunsMode(v === "manual" ? "manual" : "auto");
-                  }}
-                  disabled={savingRepeatedRunsMode}
-                  className="max-w-[11rem] cursor-pointer rounded-sm border border-stone-300 bg-white py-0 pl-0 pr-6 text-sm font-normal text-stone-900 hover:bg-stone-50 focus:border-stone-400 focus:outline-none focus:ring-1 focus:ring-inset focus:ring-stone-400 disabled:opacity-50"
-                  aria-label="Repeated runs"
-                  title="None: one run per version. Automated: any version has multiple runs. Manual: you choose run count when adding a version."
-                >
-                  <option value="none" disabled={anyMultiRunInSession}>
-                    None
-                  </option>
-                  <option value="automated" disabled={!anyMultiRunInSession}>
-                    Automated
-                  </option>
-                  <option value="manual">Manual</option>
-                </select>
-              </span>
-            </div>
-          ) : (
+          {session.mode === "comparison" ? null : (
             <div className="flex items-center gap-2 text-sm text-stone-700">
               <svg className="h-4 w-4 shrink-0 text-stone-400" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden>
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" />
@@ -1538,19 +1501,6 @@ export default function SessionDetailPage() {
               <span><strong className="font-medium text-stone-800">Time taken:</strong> {formatEvalTime(session.total_eval_time_seconds)}</span>
             </div>
           )}
-          <div className="flex items-center gap-2 text-sm text-stone-700">
-            <svg className="h-4 w-4 shrink-0 text-stone-400" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden>
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3.055 11H5a2 2 0 012 2v1a2 2 0 002 2 2 2 0 012 2v2.945M8 3.935V5.5A2.5 2.5 0 0010.5 8h.5a2 2 0 012 2 2 2 0 104 0 2 2 0 012-2h1.064M15 20.488V18a2 2 0 012-2h3.064M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-            </svg>
-            <strong className="shrink-0 font-medium text-stone-800">Environment:</strong>
-            <input
-              type="text"
-              value={(runMetadataDraft.environment as string) ?? ""}
-              onChange={(e) => setRunMetadataDraft((prev) => ({ ...prev, environment: e.target.value }))}
-              placeholder="local / staging / production"
-              className="min-w-0 flex-1 rounded-sm border border-transparent bg-transparent px-1 py-0 text-sm text-stone-900 placeholder:text-stone-400 hover:border-stone-200 focus:border-stone-400 focus:outline-none focus:ring-1 focus:ring-stone-400"
-            />
-          </div>
           <div className="flex items-center gap-2 text-sm text-stone-700">
             <svg className="h-4 w-4 shrink-0 text-stone-400" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden>
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 20l4-16m4 4l4 4-4 4M6 16l-4-4 4-4" />
@@ -1576,6 +1526,128 @@ export default function SessionDetailPage() {
               placeholder="e.g. P0_Safety, P1_Distress"
               className="min-w-0 flex-1 rounded-sm border border-transparent bg-transparent px-1 py-0 text-sm text-stone-900 placeholder:text-stone-400 hover:border-stone-200 focus:border-stone-400 focus:outline-none focus:ring-1 focus:ring-stone-400"
             />
+          </div>
+          <div className="flex items-center gap-2 text-sm text-stone-700">
+            <svg className="h-4 w-4 shrink-0 text-stone-400" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden>
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3.055 11H5a2 2 0 012 2v1a2 2 0 002 2 2 2 0 012 2v2.945M8 3.935V5.5A2.5 2.5 0 0010.5 8h.5a2 2 0 012 2 2 2 0 104 0 2 2 0 012-2h1.064M15 20.488V18a2 2 0 012-2h3.064M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+            </svg>
+            <strong className="shrink-0 font-medium text-stone-800">Environment:</strong>
+            <input
+              type="text"
+              value={(runMetadataDraft.environment as string) ?? ""}
+              onChange={(e) => setRunMetadataDraft((prev) => ({ ...prev, environment: e.target.value }))}
+              placeholder="local / staging / main"
+              className="min-w-0 flex-1 rounded-sm border border-transparent bg-transparent px-1 py-0 text-sm text-stone-900 placeholder:text-stone-400 hover:border-stone-200 focus:border-stone-400 focus:outline-none focus:ring-1 focus:ring-stone-400"
+            />
+          </div>
+          <div className="flex items-center gap-2 text-sm text-stone-700">
+            <svg className="h-4 w-4 shrink-0 text-stone-400" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden>
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 12a9 9 0 01-9 9m9-9a9 9 0 00-9-9m9 9H3m9 9a9 9 0 01-9-9m9 9c1.657 0 3-4.03 3-9s-1.343-9-3-9m0 18c-1.657 0-3-4.03-3-9s1.343-9 3-9m-9 9a9 9 0 019-9" />
+            </svg>
+            <strong className="shrink-0 font-medium text-stone-800">Deploy URL:</strong>
+            <input
+              type="text"
+              value={(runMetadataDraft.deploy_url as string) ?? ""}
+              onChange={(e) => setRunMetadataDraft((prev) => ({ ...prev, deploy_url: e.target.value }))}
+              placeholder="N/A for local"
+              className="min-w-0 flex-1 rounded-sm border border-transparent bg-transparent px-1 py-0 text-sm text-stone-900 placeholder:text-stone-400 hover:border-stone-200 focus:border-stone-400 focus:outline-none focus:ring-1 focus:ring-stone-400"
+            />
+          </div>
+          {session.mode === "comparison" ? (
+            <div className="flex items-center gap-2 text-sm text-stone-700">
+              <svg className="h-4 w-4 shrink-0 text-stone-400" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden>
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 7h12M8 12h8m-8 5h12M4 7h.01M4 12h.01M4 17h.01" />
+              </svg>
+              <strong className="shrink-0 font-medium text-stone-800">Comparison model:</strong>
+              <span className="min-w-0 flex-1 truncate px-1 py-0 text-sm text-stone-900">
+                {autoComparisonModel ?? "—"}
+              </span>
+            </div>
+          ) : null}
+          <div className="flex items-center gap-2 text-sm text-stone-700">
+            <svg className="h-4 w-4 shrink-0 text-stone-400" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden>
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z" />
+            </svg>
+            <strong className="shrink-0 font-medium text-stone-800">
+              {session.mode === "comparison" ? "Dimension review model:" : "Evaluator model:"}
+            </strong>
+            <span className="min-w-0 flex-1 truncate px-1 py-0 text-sm text-stone-900">
+              {autoEvaluatorModel ?? "—"}
+            </span>
+          </div>
+          <div className="flex items-center gap-2 text-sm text-stone-700">
+            <svg className="h-4 w-4 shrink-0 text-stone-400" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden>
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 12h8m-8 6h16" />
+            </svg>
+            <strong className="shrink-0 font-medium text-stone-800">
+              {session.mode === "comparison" ? "Session summary model:" : "Summarizer model:"}
+            </strong>
+            <span className="min-w-0 flex-1 truncate px-1 py-0 text-sm text-stone-900">
+              {autoSummarizerModel ?? "—"}
+            </span>
+          </div>
+          {session.mode === "comparison" ? null : (
+            <div className="flex items-center gap-2 text-sm text-stone-700">
+              <svg className="h-4 w-4 shrink-0 text-stone-400" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden>
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 7h12M8 12h8m-8 5h12M4 7h.01M4 12h.01M4 17h.01" />
+              </svg>
+              <strong className="shrink-0 font-medium text-stone-800">Comparator model:</strong>
+              <span className="min-w-0 flex-1 truncate px-1 py-0 text-sm text-stone-900">
+                {autoComparatorModel ?? "—"}
+              </span>
+            </div>
+          )}
+          <div className="flex items-center gap-2 text-sm text-stone-700">
+            <svg className="h-4 w-4 shrink-0 text-stone-400" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden>
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 10V3L4 14h7v7l9-11h-7z" />
+            </svg>
+            <strong className="shrink-0 font-medium text-stone-800">Run mode:</strong>
+            <span className="min-w-0 flex-1 truncate px-1 py-0 text-sm text-stone-900">
+              {autoRunMode || "—"}
+            </span>
+          </div>
+          <div className="flex items-center gap-2 text-sm text-stone-700">
+            <svg className="h-4 w-4 shrink-0 text-stone-400" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden>
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 20l4-16m2 16l4-16M6 9h14M4 15h14" />
+            </svg>
+            <strong className="shrink-0 font-medium text-stone-800">Sample size (runs per case):</strong>
+            <input
+              type="text"
+              value={(runMetadataDraft.sample_size as string) ?? ""}
+              onChange={(e) => setRunMetadataDraft((prev) => ({ ...prev, sample_size: e.target.value }))}
+              placeholder="e.g. 1 or 3"
+              className="min-w-0 flex-1 rounded-sm border border-transparent bg-transparent px-1 py-0 text-sm text-stone-900 placeholder:text-stone-400 hover:border-stone-200 focus:border-stone-400 focus:outline-none focus:ring-1 focus:ring-stone-400"
+            />
+          </div>
+          <div className="flex items-center gap-2 text-sm text-stone-700">
+            <svg className="h-4 w-4 shrink-0 text-stone-400" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden>
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-6 9l2 2 4-4" />
+            </svg>
+            <strong className="shrink-0 font-medium text-stone-800">Repeated-run evidence:</strong>
+            <select
+              value={
+                (String(runMetadataDraft.repeated_runs_evidence ?? "").trim().toLowerCase() === "manual"
+                  ? "manual"
+                  : anyMultiRunInSession
+                    ? "automated"
+                    : "none")
+              }
+              onChange={(e) => {
+                const v = e.target.value;
+                setRunMetadataDraft((prev) => ({ ...prev, repeated_runs_evidence: v }));
+              }}
+              className="max-w-[12rem] cursor-pointer rounded-sm border border-stone-300 bg-white py-0 pl-0 pr-6 text-sm font-normal text-stone-900 hover:bg-stone-50 focus:border-stone-400 focus:outline-none focus:ring-1 focus:ring-inset focus:ring-stone-400"
+              aria-label="Repeated-run evidence"
+              title="Automated: at least one version has multiple runs. Manual: you compared runs yourself. None: single run per version."
+            >
+              <option value="automated" disabled={!anyMultiRunInSession}>
+                Automated
+              </option>
+              <option value="manual">Manual</option>
+              <option value="none" disabled={anyMultiRunInSession}>
+                None
+              </option>
+            </select>
           </div>
         </dl>
       </div>

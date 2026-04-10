@@ -7,12 +7,12 @@ This document describes the HTTP API that the **Evren** model service must expos
 ## Base URL
 
 - Configurable in the eval app (e.g. `http://localhost:8000` or your deployed Evren service URL).
-- The eval app calls **`POST /evren-evals`**. If the base URL has no path or path is `/`, the app appends **`/evren-evals`**.
-- **Example**: If base URL is `http://localhost:8000`, the app sends requests to `http://localhost:8000/evren-evals`.
+- The eval app calls **`POST /evren-eval`**. If the base URL has no path or path is `/`, the app appends **`/evren-eval`**.
+- **Example**: If base URL is `http://localhost:8000`, the app sends requests to `http://localhost:8000/evren-eval`.
 
 ---
 
-## Endpoint: `POST /evren-evals`
+## Endpoint: `POST /evren-eval`
 
 Processes a list of user messages (one turn or a full conversation) and returns one Evren response plus detected flags **per message**. This single endpoint is used for both single-turn and multi-turn test cases.
 
@@ -119,7 +119,7 @@ Each element of `evren_responses` must be an object with:
 
 ## Summary checklist for implementers
 
-1. Expose **`POST /evren-evals`** (or mount it so the full URL is `<base>/evren-evals`).
+1. Expose **`POST /evren-eval`** (or mount it so the full URL is `<base>/evren-eval`).
 2. Accept JSON body with **`messages`** (array of strings); optionally **`context`** (object or string).
 3. Return **200** with JSON body containing **`evren_responses`**: an array of objects, each with **`response`** (string) and **`detected_flags`** (string). Array length must equal `messages.length`.
 4. For multi-turn, generate each response with full conversation history so replies are distinct and contextually correct.

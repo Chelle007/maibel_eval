@@ -1,14 +1,41 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { RunMetadata } from "@/lib/db.types";
 
+export type AutofillSessionMode = "single" | "comparison";
+
 /**
- * Infer local vs staging vs production from Evren URL and host environment.
+ * Infer local vs staging vs main from Evren URL and host environment (TASK-022 labels).
  */
 export function inferEnvironment(evrenModelApiUrl: string): string {
   const u = evrenModelApiUrl.toLowerCase();
   if (u.includes("localhost") || u.includes("127.0.0.1")) return "local";
-  if (process.env.VERCEL_ENV === "production") return "production";
+  if (process.env.VERCEL_ENV === "production") return "main";
   return "staging";
+}
+
+/** Best-effort public URL for this eval app deployment (Vercel). */
+export function inferDeployUrlFromEnv(): string | null {
+  const raw = process.env.VERCEL_URL?.trim();
+  if (!raw) return null;
+  return raw.startsWith("http") ? raw : `https://${raw}`;
+}
+
+/**
+ * Human-readable run mode for metadata.
+ * Always includes both dimensions:
+ * - repeat: single-run vs repeated-run
+ * - turns: single-turn vs multi-turn
+ */
+export function inferRunMode(
+  sessionMode: AutofillSessionMode,
+  runCount: number,
+  hasMultiTurnCase: boolean
+): string {
+  const repeat = runCount > 1 ? "repeated-run" : "single-run";
+  const turns = hasMultiTurnCase ? "multi-turn" : "single-turn";
+  // Session mode (single vs comparison) is already captured elsewhere (session.mode + model fields),
+  // so keep run_mode focused on repeat/turn dimensions.
+  return `${repeat}, ${turns}`;
 }
 
 /**
@@ -54,17 +81,51 @@ export async function inferTestCategoryFromCases(
   return names.length ? names.join(", ") : null;
 }
 
+export interface BuildAutofillRunMetadataOpts {
+  sessionMode: AutofillSessionMode;
+  runCount: number;
+  evaluatorModel: string;
+  summarizerModel: string;
+}
+
 export async function buildAutofillRunMetadata(
   supabase: SupabaseClient,
   evrenModelApiUrl: string,
-  testCasesRows: { category_id: string | null }[]
+  testCasesRows: { category_id: string | null; type?: string | null }[],
+  opts: BuildAutofillRunMetadataOpts
 ): Promise<RunMetadata> {
   const environment = inferEnvironment(evrenModelApiUrl);
   const code_source = inferCodeSourceFromEnv();
+  const deploy_url = inferDeployUrlFromEnv();
   const test_category = await inferTestCategoryFromCases(supabase, testCasesRows);
-  return {
+  const hasMultiTurnCase = testCasesRows.some((r) => (r.type ?? "single_turn") === "multi_turn");
+  const run_mode = inferRunMode(opts.sessionMode, opts.runCount, hasMultiTurnCase);
+  const sample_size = String(opts.runCount);
+  const repeated_runs_evidence = opts.runCount > 1 ? "automated" : "none";
+
+  const base: RunMetadata = {
     environment,
+    run_mode,
+    sample_size,
     ...(code_source ? { code_source } : {}),
+    ...(deploy_url ? { deploy_url } : {}),
     ...(test_category ? { test_category } : {}),
+    ...(repeated_runs_evidence ? { repeated_runs_evidence } : {}),
+  };
+
+  if (opts.sessionMode === "comparison") {
+    return {
+      ...base,
+      // In comparison sessions, this model powers dimension review / comparisons.
+      evaluator_model: opts.evaluatorModel,
+      // Session summary model is optional; default to the same model unless overridden upstream.
+      summarizer_model: opts.summarizerModel,
+    };
+  }
+
+  return {
+    ...base,
+    evaluator_model: opts.evaluatorModel,
+    summarizer_model: opts.summarizerModel,
   };
 }

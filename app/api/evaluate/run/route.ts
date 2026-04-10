@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import { getMaxConcurrentTestCases, runWithConcurrency } from "@/lib/evren-concurrency";
-import { callEvrenApi } from "@/lib/evren";
+import { callEvrenApi, fetchEvrenCodeSource } from "@/lib/evren";
 import { evaluateOne } from "@/lib/evaluator";
 import { draftBehaviorReview, draftBehaviorReviewForVersionEntries } from "@/lib/behavior-review-drafter";
 import { draftSessionReviewSummaryForSessionData } from "@/lib/session-review-summary-refresh";
@@ -79,7 +79,19 @@ export async function POST(request: Request) {
   const modelName = body.model_name ?? "gemini-3-flash-preview";
   const summarizerModel = body.summarizer_model ?? modelName;
 
-  const runMetadata = await buildAutofillRunMetadata(supabase, evrenModelApiUrl, testCasesRows);
+  const [autofillMetadata, evrenCodeSource] = await Promise.all([
+    buildAutofillRunMetadata(supabase, evrenModelApiUrl, testCasesRows, {
+      sessionMode,
+      runCount,
+      evaluatorModel: modelName,
+      summarizerModel,
+    }),
+    fetchEvrenCodeSource(evrenModelApiUrl),
+  ]);
+  const runMetadata = {
+    ...autofillMetadata,
+    ...(evrenCodeSource ? { code_source: evrenCodeSource } : {}),
+  };
   const sessionInsert = {
     user_id: userId,
     total_cost_usd: 0,
