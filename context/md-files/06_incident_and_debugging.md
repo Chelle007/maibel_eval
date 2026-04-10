@@ -1,4 +1,4 @@
-> Derived from `v2_technical_command_centre(20.03).md`. The consolidated file remains canonical for now.
+> Derived from `v2_technical_command_centre(20.03).md`. The split docs in `context/` are the current operating source of truth. The consolidated file is kept as a reference snapshot.
 
 # 06_incident_and_debugging
 
@@ -70,6 +70,11 @@ Never:
 5. run the fastest validating checks
 6. recommend the smallest safe action
 7. define validation and rollback
+
+Owner rule:
+- system-truth issues default to Mabel
+- experience-truth issues default to Michelle
+- if both are present, Mabel owns the implementation path and Michelle supports behavior validation
 
 ## Common Failure Domains
 Start by deciding whether the issue is primarily about:

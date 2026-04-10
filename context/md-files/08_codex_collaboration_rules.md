@@ -1,4 +1,4 @@
-> Derived from `v2_technical_command_centre(20.03).md`. The consolidated file remains canonical for now.
+> Derived from `v2_technical_command_centre(20.03).md`. The split docs in `context/` are the current operating source of truth. The consolidated file is kept as a reference snapshot.
 
 # 08_codex_collaboration_rules
 
@@ -58,6 +58,13 @@ Before accepting AI-generated work, confirm:
 - blast radius is understood
 - rollback is possible
 - validation is specific and focused
+
+## Ownership Clarification
+Implementation decisions must be grounded in:
+- Mabel's system-level judgment
+- Michelle's behavior-level validation
+
+Codex must not assume a separate implementation owner exists.
 
 ## Behavior Validation Rule
 Do not assume a change is correct because the code looks correct.

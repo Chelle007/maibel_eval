@@ -1,4 +1,4 @@
-> Derived from `v2_technical_command_centre(20.03).md`. The consolidated file remains canonical for now.
+> Derived from `v2_technical_command_centre(20.03).md`. The split docs in `context/` are the current operating source of truth. The consolidated file is kept as a reference snapshot.
 
 # 09_merge_and_release_policy
 
@@ -105,6 +105,28 @@ During launch stabilization, ship the smallest safe fix and defer non-blocking i
 - `staging` is the pre-production integration lane
 - `auto-eval` is evaluation-only and never a source of truth
 - evaluation isolation must not create branch drift or alternate production logic
+
+### 7. Contributor Engineering Flow
+Default flow for contributor work:
+fix
+-> `git status`
+-> `git diff`
+-> commit
+-> push
+-> open or update PR
+-> validate in `staging`
+-> only then consider promotion to `main`
+
+Required verbal checks:
+
+Before every PR:
+- base = ?
+- compare = ?
+
+Before every push:
+- `git branch --show-current`
+- `git log --oneline -1`
+- then `git push -u origin HEAD`
 
 ## Release Flow For Tier 3 Changes
 

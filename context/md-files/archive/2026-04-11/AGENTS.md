@@ -8,7 +8,7 @@ The system is launch-stage and user trust is fragile. Work like a pragmatic seni
 \#\# Repository Shape  
 \- \`langgraph-agents/\`: backend, orchestration, agents, prompts, services, schedulers, API handlers  
 \- \`database-scripts/\`: SQL and database-related scripts  
-\- repo root: Dockerfiles, environment setup, deployment-adjacent files, workflows, and top-level docs
+\- repo root: Dockerfiles, environment setup, deployment-adjacent files, and top-level docs
 
 Before proposing changes, identify the smallest subsystem likely responsible.
 
@@ -32,43 +32,6 @@ Prioritize in this order:
 
 Do not recommend broad refactors during launch stabilization unless the current path is clearly unsafe.
 
-\#\# Context Files  
-If present, check \`context/index.md\` first for the current command-centre entry point.
-
-Use the split docs in \`context/\` as the current operating source of truth on:  
-\- launch decisions  
-\- incident handling  
-\- evaluation flow  
-\- release discipline  
-\- team handoff norms
-
-Use \`context/v2\_technical\_command\_centre(20.03).md\` as a reference snapshot when historical or consolidated context is needed.
-
-Treat these docs as current operating context, not permanent product spec.  
-If they conflict with older assumptions, prefer the current \`context/\` docs for the task at hand.
-
-Do not copy fast-changing launch state into this file.
-
-\#\# Project / Checkout Preflight  
-Before making changes on tasks that depend on local docs, branch context, or worktree-specific state, confirm:  
-\- current project root  
-\- current git branch  
-\- required context files are visible in the current checkout
-
-If expected context files are missing, stop and report that the thread may be attached to the wrong checkout or worktree.
-
-\#\# Lane Discipline  
-When diagnosing or proposing work, first determine whether the issue is primarily:  
-\- system truth / runtime truth  
-\- experience truth / behavior quality
-
-Default operating split:  
-\- Mabel: system truth, implementation direction, deployment and release safety, final technical risk judgment  
-\- Michelle: experience truth, eval operations, behavior investigation, rule definition, and scoped behavior-layer fixes when explicitly assigned
-
-Do not assume a separate implementation owner exists.  
-Do not blur behavior diagnosis and implementation ownership by default.
-
 \#\# Environment Discipline  
 Always identify the environment first before diagnosing or recommending action:  
 \- \`main\`: production  
@@ -77,16 +40,6 @@ Always identify the environment first before diagnosing or recommending action:
 
 Do not assume staging or eval behavior reflects production.  
 Do not recommend direct experimentation on production.
-
-After every merge to \`main\`, confirm:  
-\- the production deploy workflow completed  
-\- the latest intended Cloud Run revision exists  
-\- the deployed revision matches the intended commit  
-\- live traffic is routed to that revision
-
-Only then interpret production canary results.
-
-If canary behavior fails before revision and traffic truth are confirmed, treat it first as a runtime-routing truth issue, not an immediate application-logic regression.
 
 \#\# Change Discipline  
 For any non-trivial code change, include:  
@@ -99,24 +52,42 @@ For any non-trivial code change, include:
 
 If touching deployment, CI, scheduler behavior, webhook handling, environment config, or database-impacting logic, explicitly call out rollout risk.
 
-For contributor engineering flow, default to:  
-\- fix  
-\- \`git status\`  
-\- \`git diff\`  
-\- commit  
-\- push  
-\- open or update PR  
-\- validate in \`staging\`  
-\- only then consider promotion to \`main\`
+\#\# Context Files  
+If present, check \`context/index.md\` first for the current command-centre entry point.
 
-Before every PR, explicitly confirm:  
-\- base \= ?  
-\- compare \= ?
+Use the split docs in \`context/\` as current operating context on:  
+\- launch decisions  
+\- incident handling  
+\- evaluation flow  
+\- release discipline  
+\- team handoff norms
 
-Before every push, explicitly confirm:  
-\- \`git branch \--show-current\`  
-\- \`git log \--oneline \-1\`  
-\- then \`git push \-u origin HEAD\`
+Use \`context/v2\_technical\_command\_centre(20.03).md\` as the consolidated source when needed.
+
+Treat these docs as current operating context, not permanent product spec.  
+If they conflict with older assumptions, prefer the current \`context/\` docs for the task at hand.
+
+Do not copy fast-changing launch state into this file.
+
+\#\# Project / Checkout Preflight  
+Before making changes on tasks that depend on local docs, branch context, or worktree-specific state, confirm:  
+\- current project root  
+\- current git branch  
+\- required context files are visible in the current checkout
+
+If expected context files are missing, stop and report that the thread may be attached to the wrong checkout.
+
+\#\# Lane Discipline  
+When diagnosing or proposing work, first determine whether the issue is primarily:  
+\- system truth / runtime truth  
+\- experience truth / behavior quality
+
+Default operating split:  
+\- Mabel: prioritization, final behavior direction, release-risk judgment  
+\- Chloe: system truth, implementation safety, blast radius, rollback shape  
+\- Michelle: experience truth, behavior investigation, rule definition, eval interpretation
+
+Do not blur behavior diagnosis and implementation ownership by default.
 
 \#\# Communication  
 Be concise, direct, and operational.
@@ -136,9 +107,6 @@ For implementation proposals, favor:
 \- Validation  
 \- Rollback
 
-Reusable ask:  
-\- “Walk me through the full engineering flow including commit, push, PR, validation, and rollout.”
-
 \#\# When To Ask vs Assume  
 Make reasonable assumptions when risk is low and local context is sufficient.
 
@@ -155,3 +123,9 @@ Ask before proceeding if:
 \- Do not treat "probably" as "validated".  
 \- Do not hide uncertainty.
 
+\#\# Canary Brain rules  
+\- Keep Canary Brain work local-only unless explicitly told otherwise.  
+\- For Phase 2a, do not implement scheduler integration, send behavior, or DB writes.  
+\- Prefer contract-first planning before code.  
+\- Treat weak data as weak; do not present inferred state as confirmed truth.  
+\- Keep diffs small and isolated.  
