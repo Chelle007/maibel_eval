@@ -4,11 +4,20 @@ import type { RunMetadata } from "@/lib/db.types";
 export type AutofillSessionMode = "single" | "comparison";
 
 /**
- * Infer local vs staging vs main from Evren URL and host environment (TASK-022 labels).
+ * Infer environment from Evren URL, git ref, and host (TASK-022 labels).
+ * `auto-eval` when the deployed/ref branch is `auto-eval` (non-local Evren only).
  */
 export function inferEnvironment(evrenModelApiUrl: string): string {
   const u = evrenModelApiUrl.toLowerCase();
   if (u.includes("localhost") || u.includes("127.0.0.1")) return "local";
+  const ref = (
+    process.env.VERCEL_GIT_COMMIT_REF?.trim() ||
+    process.env.GITHUB_REF_NAME?.trim() ||
+    process.env.CI_COMMIT_REF_NAME?.trim() ||
+    process.env.COMMIT_REF?.trim() ||
+    ""
+  ).toLowerCase();
+  if (ref === "auto-eval") return "auto-eval";
   if (process.env.VERCEL_ENV === "production") return "main";
   return "staging";
 }

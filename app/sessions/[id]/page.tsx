@@ -17,7 +17,11 @@ import {
   type BehaviorReviewRating,
   type VersionBehaviorReview,
 } from "@/lib/behavior-review";
-import { normalizeVersionEntry, validateRunMetadata } from "@/lib/db.types";
+import {
+  normalizeVersionEntry,
+  RUN_METADATA_ENVIRONMENT_OPTIONS,
+  validateRunMetadata,
+} from "@/lib/db.types";
 import type { AnyVersionEntry, RunMetadata, VersionEntry } from "@/lib/db.types";
 import {
   SESSION_REVIEW_FAILURE_TAXONOMY,
@@ -1222,6 +1226,12 @@ export default function SessionDetailPage() {
   const autoSummarizerModel = models.summarizer_model ?? null;
   const autoComparatorModel = autoComparisonModel;
 
+  const runMetadataEnvRaw = String(runMetadataDraft.environment ?? "").trim();
+  const runMetadataEnvKnown = RUN_METADATA_ENVIRONMENT_OPTIONS as readonly string[];
+  const runMetadataEnvIsKnown = runMetadataEnvKnown.includes(runMetadataEnvRaw);
+  const runMetadataEnvSelectValue = runMetadataEnvIsKnown ? runMetadataEnvRaw : runMetadataEnvRaw || "local";
+  const runMetadataEnvShowLegacy = Boolean(runMetadataEnvRaw && !runMetadataEnvIsKnown);
+
   // Keep non-editable fields in run_metadata aligned to session truth.
   useEffect(() => {
     setRunMetadataDraft((prev) => ({
@@ -1532,13 +1542,25 @@ export default function SessionDetailPage() {
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3.055 11H5a2 2 0 012 2v1a2 2 0 002 2 2 2 0 012 2v2.945M8 3.935V5.5A2.5 2.5 0 0010.5 8h.5a2 2 0 012 2 2 2 0 104 0 2 2 0 012-2h1.064M15 20.488V18a2 2 0 012-2h3.064M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
             </svg>
             <strong className="shrink-0 font-medium text-stone-800">Environment:</strong>
-            <input
-              type="text"
-              value={(runMetadataDraft.environment as string) ?? ""}
-              onChange={(e) => setRunMetadataDraft((prev) => ({ ...prev, environment: e.target.value }))}
-              placeholder="local / staging / main"
-              className="min-w-0 flex-1 rounded-sm border border-transparent bg-transparent px-1 py-0 text-sm text-stone-900 placeholder:text-stone-400 hover:border-stone-200 focus:border-stone-400 focus:outline-none focus:ring-1 focus:ring-stone-400"
-            />
+            <select
+              value={runMetadataEnvSelectValue}
+              onChange={(e) =>
+                setRunMetadataDraft((prev) => ({ ...prev, environment: e.target.value }))
+              }
+              className="max-w-[12rem] cursor-pointer rounded-sm border border-stone-300 bg-white py-0 pl-1 pr-6 text-sm font-normal text-stone-900 hover:bg-stone-50 focus:border-stone-400 focus:outline-none focus:ring-1 focus:ring-inset focus:ring-stone-400"
+              aria-label="Environment"
+            >
+              {runMetadataEnvShowLegacy ? (
+                <option value={runMetadataEnvRaw}>
+                  {runMetadataEnvRaw} (legacy)
+                </option>
+              ) : null}
+              {RUN_METADATA_ENVIRONMENT_OPTIONS.map((opt) => (
+                <option key={opt} value={opt}>
+                  {opt}
+                </option>
+              ))}
+            </select>
           </div>
           <div className="flex items-center gap-2 text-sm text-stone-700">
             <svg className="h-4 w-4 shrink-0 text-stone-400" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden>

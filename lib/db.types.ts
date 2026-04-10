@@ -19,6 +19,9 @@ export interface UsersRow {
  * Structured run provenance stored on test_sessions (TASK-022 / Phase 6).
  * All fields optional — auto-populated at run creation, editable by reviewer.
  */
+/** TASK-022 environment labels (run metadata UI + autofill). */
+export const RUN_METADATA_ENVIRONMENT_OPTIONS = ["local", "staging", "main", "auto-eval"] as const;
+
 export interface RunMetadata {
   environment?: string | null;
   code_source?: string | null;
