@@ -2,7 +2,11 @@ import { createClient } from "@/lib/supabase/server";
 import { getMaxConcurrentTestCases, runWithConcurrency } from "@/lib/evren-concurrency";
 import { callEvrenApiWithMeta } from "@/lib/evren";
 import { evaluateOne } from "@/lib/evaluator";
-import { draftBehaviorReview, draftBehaviorReviewForVersionEntries } from "@/lib/behavior-review-drafter";
+import {
+  draftBehaviorReview,
+  draftBehaviorReviewForVersionEntries,
+  versionEntriesToDraftInputs,
+} from "@/lib/behavior-review-drafter";
 import { draftSessionReviewSummaryForSessionData } from "@/lib/session-review-summary-refresh";
 import { toSessionReviewSummaryJson } from "@/lib/session-review-summary";
 import { buildRichReport, runSummarizer } from "@/lib/summarizer";
@@ -305,14 +309,9 @@ export async function POST(request: Request) {
 
             let behaviorReview: Record<string, unknown> = {};
             try {
-              const run1 = versionEntry.runs.find((r) => r.run_index === 1) ?? versionEntry.runs[0];
               const draftResult = await draftBehaviorReview({
                 testCase,
-                versions: [{
-                  version_id: versionId,
-                  version_name: "Version 1",
-                  turns: (run1?.turns ?? []).map((t) => ({ response: t.response, detected_flags: t.detected_flags })),
-                }],
+                versions: versionEntriesToDraftInputs([versionEntry]),
                 evaluatorReason: result.reason,
                 apiKey: apiKey as string,
                 modelName,

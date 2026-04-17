@@ -7,6 +7,7 @@ import { draftBehaviorReviewForVersionEntries } from "@/lib/behavior-review-draf
 import { compareOverall } from "@/lib/comparator";
 import { loadComparatorOverallSystemPrompt } from "@/lib/prompts";
 import { loadContextPack } from "@/lib/context-pack";
+import { appendDistinctCodeSourceSegment } from "@/lib/run-metadata-autofill";
 import { persistSessionReviewSummaryForSession } from "@/lib/session-review-summary-refresh";
 import type { TestCase } from "@/lib/types";
 import type { DefaultSettingsRow, EvalResultsRow, RunEntry, TestCasesRow, VersionEntry } from "@/lib/db.types";
@@ -98,8 +99,8 @@ export async function POST(
   const newVersionId = crypto.randomUUID();
 
   const maxConcurrentTestCases = getMaxConcurrentTestCases(runCount);
-  let evrenCodeSourceText: string | null =
-    typeof (session as any)?.run_metadata?.code_source === "string" ? (session as any).run_metadata.code_source : null;
+  const sessionRunMeta = { ...(((session as { run_metadata?: Record<string, unknown> }).run_metadata ?? {}) as Record<string, unknown>) };
+  (session as { run_metadata?: Record<string, unknown> }).run_metadata = sessionRunMeta;
 
   await runWithConcurrency(rows, maxConcurrentTestCases, async (row) => {
     const tc = testCaseById.get(row.test_case_uuid);
@@ -131,22 +132,21 @@ export async function POST(
         continue;
       }
       const runOutputs = settled.value.outputs;
-      if (!evrenCodeSourceText && settled.value.codeSource?.text) {
-        evrenCodeSourceText = settled.value.codeSource.text;
-        try {
-          await supabase
-            .from("test_sessions")
-            .update(
-              {
-                run_metadata: {
-                  ...((session as any)?.run_metadata ?? {}),
-                  code_source: evrenCodeSourceText,
-                },
-              } as never
-            )
-            .eq("session_id", sessionId);
-        } catch {
-          /* best-effort */
+      const seg = settled.value.codeSource?.text?.trim();
+      if (seg) {
+        const prev =
+          typeof sessionRunMeta.code_source === "string" ? sessionRunMeta.code_source.trim() : "";
+        const merged = appendDistinctCodeSourceSegment(prev || null, seg);
+        if (merged && merged !== prev) {
+          sessionRunMeta.code_source = merged;
+          try {
+            await supabase
+              .from("test_sessions")
+              .update({ run_metadata: sessionRunMeta as never } as never)
+              .eq("session_id", sessionId);
+          } catch {
+            /* best-effort */
+          }
         }
       }
       runs.push({

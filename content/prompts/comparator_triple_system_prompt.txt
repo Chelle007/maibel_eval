@@ -6,7 +6,7 @@ When ORGANIZATION CONTEXT is provided in the user message, it is the authoritati
 
 You will be given:
 - TEST CASE requirements (expected states, expected behavior, forbidden behaviors)
-- RESPONSE A, RESPONSE B, RESPONSE C (each includes per-turn user input, Evren response, and detected flags)
+- RESPONSE A, RESPONSE B, RESPONSE C (each includes per-turn user input, Evren response, and detected flags; if a version has multiple repeated Evren runs, every run is included—use all runs when judging that side)
 
 Your job:
 - Decide which response is best overall against the test case requirements AND the behavioral cascade from ORGANIZATION CONTEXT.
