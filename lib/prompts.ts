@@ -109,27 +109,64 @@ export function buildComparatorOverallEditUserMessage(args: {
 
   return sections.join("\n");
 }
-/** Version data for one side of a pairwise comparison. */
-export interface VersionSnapshot {
+/** One repeated Evren run (same test case) for comparator prompts. */
+export interface VersionSnapshotRun {
+  run_index: number;
   /** Per-turn responses (array of bubble arrays). */
   responses: string[][];
   /** Per-turn detected flags. */
   flags: string[];
 }
 
-/** Extract a single version's data by version_id. */
-function extractVersionSnapshot(
-  versions: AnyVersionEntry[],
-  versionId: string
-): VersionSnapshot {
+/** Version data for one side of a pairwise comparison (all repeated runs included). */
+export interface VersionSnapshot {
+  runs: VersionSnapshotRun[];
+}
+
+function maxTurnsInSnapshot(snap: VersionSnapshot): number {
+  if (!snap.runs.length) return 0;
+  return Math.max(0, ...snap.runs.map((r) => r.responses.length));
+}
+
+/** Serialize one RESPONSE A/B/C block: every repeated run, then every turn. */
+function appendComparatorResponseBlock(
+  sections: string[],
+  header: string,
+  snap: VersionSnapshot,
+  userMessages: string[],
+  turnCount: number
+): void {
+  if (header) sections.push(header);
+  const runs = snap.runs.length > 0 ? snap.runs : [{ run_index: 1, responses: [], flags: [] }];
+  const showRunHeaders = runs.length > 1;
+  for (const runSlice of runs) {
+    if (showRunHeaders) {
+      sections.push(`--- Evren repeated run ${runSlice.run_index} ---`);
+    }
+    for (let i = 0; i < turnCount; i++) {
+      sections.push(`--- Turn ${i + 1} ---`);
+      sections.push(`User: ${userMessages[i] ?? "(no user message)"}`);
+      const bubbles = runSlice.responses[i] ?? [];
+      sections.push(`Evren response: ${bubbles.join("\n") || "(empty)"}`);
+      sections.push(`Detected flags: ${runSlice.flags[i] ?? ""}`);
+      sections.push("");
+    }
+  }
+}
+
+/** Extract a version's data by version_id (all `runs`, not only run 1). */
+function extractVersionSnapshot(versions: AnyVersionEntry[], versionId: string): VersionSnapshot {
   const entry = versions.find((v) => v.version_id === versionId);
-  if (!entry) return { responses: [], flags: [] };
+  if (!entry) return { runs: [] };
   const normalized = normalizeVersionEntry(entry);
-  const run1 = normalized.runs.find((run) => run.run_index === 1) ?? normalized.runs[0];
-  const turns = run1?.turns ?? [];
+  const sortedRuns = [...normalized.runs].sort((a, b) => a.run_index - b.run_index);
+  if (sortedRuns.length === 0) return { runs: [] };
   return {
-    responses: turns.map((t) => t.response),
-    flags: turns.map((t) => t.detected_flags),
+    runs: sortedRuns.map((run) => ({
+      run_index: run.run_index,
+      responses: (run.turns ?? []).map((t) => t.response),
+      flags: (run.turns ?? []).map((t) => t.detected_flags),
+    })),
   };
 }
 
@@ -162,28 +199,15 @@ export function buildComparatorUserMessage(
   if (testCase.forbidden) sections.push(`Forbidden: ${testCase.forbidden}`);
   if (testCase.notes) sections.push(`Notes: ${testCase.notes}`);
 
-  const turnCount = Math.max(userMessages.length, firstSnapshot.responses.length);
+  const turnCount = Math.max(
+    userMessages.length,
+    maxTurnsInSnapshot(firstSnapshot),
+    maxTurnsInSnapshot(secondSnapshot)
+  );
 
   sections.push("");
-  sections.push("=== RESPONSE A ===");
-  for (let i = 0; i < turnCount; i++) {
-    sections.push(`--- Turn ${i + 1} ---`);
-    sections.push(`User: ${userMessages[i] ?? "(no user message)"}`);
-    const bubbles = firstSnapshot.responses[i] ?? [];
-    sections.push(`Evren response: ${bubbles.join("\n") || "(empty)"}`);
-    sections.push(`Detected flags: ${firstSnapshot.flags[i] ?? ""}`);
-    sections.push("");
-  }
-
-  sections.push("=== RESPONSE B ===");
-  for (let i = 0; i < turnCount; i++) {
-    sections.push(`--- Turn ${i + 1} ---`);
-    sections.push(`User: ${userMessages[i] ?? "(no user message)"}`);
-    const bubbles = secondSnapshot.responses[i] ?? [];
-    sections.push(`Evren response: ${bubbles.join("\n") || "(empty)"}`);
-    sections.push(`Detected flags: ${secondSnapshot.flags[i] ?? ""}`);
-    sections.push("");
-  }
+  appendComparatorResponseBlock(sections, "=== RESPONSE A ===", firstSnapshot, userMessages, turnCount);
+  appendComparatorResponseBlock(sections, "=== RESPONSE B ===", secondSnapshot, userMessages, turnCount);
 
   return { message: sections.join("\n"), aIsFirst };
 }
@@ -217,9 +241,9 @@ export function buildComparatorTripleUserMessage(
 
   const turnCount = Math.max(
     userMessages.length,
-    snapshots.A.responses.length,
-    snapshots.B.responses.length,
-    snapshots.C.responses.length
+    maxTurnsInSnapshot(snapshots.A),
+    maxTurnsInSnapshot(snapshots.B),
+    maxTurnsInSnapshot(snapshots.C)
   );
 
   const sections: string[] = [];
@@ -233,15 +257,7 @@ export function buildComparatorTripleUserMessage(
   sections.push("");
 
   const pushResponse = (label: "A" | "B" | "C") => {
-    sections.push(`=== RESPONSE ${label} ===`);
-    for (let i = 0; i < turnCount; i++) {
-      sections.push(`--- Turn ${i + 1} ---`);
-      sections.push(`User: ${userMessages[i] ?? "(no user message)"}`);
-      const bubbles = snapshots[label].responses[i] ?? [];
-      sections.push(`Evren response: ${bubbles.join("\n") || "(empty)"}`);
-      sections.push(`Detected flags: ${snapshots[label].flags[i] ?? ""}`);
-      sections.push("");
-    }
+    appendComparatorResponseBlock(sections, `=== RESPONSE ${label} ===`, snapshots[label], userMessages, turnCount);
   };
 
   pushResponse("A");
@@ -283,9 +299,9 @@ export function buildComparatorOverallUserMessage(
 
   const turnCount = Math.max(
     userMessages.length,
-    snapshots.A?.responses?.length ?? 0,
-    snapshots.B?.responses?.length ?? 0,
-    snapshots.C?.responses?.length ?? 0
+    snapshots.A ? maxTurnsInSnapshot(snapshots.A) : 0,
+    snapshots.B ? maxTurnsInSnapshot(snapshots.B) : 0,
+    snapshots.C ? maxTurnsInSnapshot(snapshots.C) : 0
   );
 
   const sections: string[] = [];
@@ -301,15 +317,7 @@ export function buildComparatorOverallUserMessage(
   const pushResponse = (label: "A" | "B" | "C") => {
     const snap = snapshots[label];
     if (!snap) return;
-    sections.push(`=== RESPONSE ${label} ===`);
-    for (let i = 0; i < turnCount; i++) {
-      sections.push(`--- Turn ${i + 1} ---`);
-      sections.push(`User: ${userMessages[i] ?? "(no user message)"}`);
-      const bubbles = snap.responses[i] ?? [];
-      sections.push(`Evren response: ${bubbles.join("\n") || "(empty)"}`);
-      sections.push(`Detected flags: ${snap.flags[i] ?? ""}`);
-      sections.push("");
-    }
+    appendComparatorResponseBlock(sections, `=== RESPONSE ${label} ===`, snap, userMessages, turnCount);
   };
 
   pushResponse("A");
@@ -358,10 +366,18 @@ export function buildEvaluatorUserMessage(
   return sections.join("\n");
 }
 
+/** One version’s repeated Evren runs for the behavior-review drafter prompt. */
+export type BehaviorReviewDrafterVersionInput = {
+  version_id: string;
+  version_name: string;
+  /** Ascending by `run_index`; each run is the same test case conversation. */
+  runs: { run_index: number; turns: { response: string[]; detected_flags: string }[] }[];
+};
+
 /** Build the user message for the AI behavior review drafter. */
 export function buildBehaviorReviewDrafterUserMessage(args: {
   testCase: TestCase;
-  versions: { version_id: string; version_name: string; turns: { response: string[]; detected_flags: string }[] }[];
+  versions: BehaviorReviewDrafterVersionInput[];
   evaluatorReason?: string | null;
 }): string {
   const { testCase: tc, versions, evaluatorReason } = args;
@@ -383,12 +399,21 @@ export function buildBehaviorReviewDrafterUserMessage(args: {
   for (const ver of versions) {
     sections.push("");
     sections.push(`=== VERSION: ${ver.version_name} (id: ${ver.version_id}) ===`);
-    for (let i = 0; i < ver.turns.length; i++) {
-      const turn = ver.turns[i];
-      sections.push(`--- Turn ${i + 1} ---`);
-      sections.push(`User: ${userMessages[i] ?? "(no user message)"}`);
-      sections.push(`Evren response: ${turn.response.join("\n") || "(empty)"}`);
-      sections.push(`Detected flags: ${turn.detected_flags}`);
+    const runs = ver.runs?.length ? ver.runs : [{ run_index: 1, turns: [] }];
+    const showRunHeaders = runs.length > 1;
+    for (const run of runs) {
+      if (showRunHeaders) {
+        sections.push(`--- Evren repeated run ${run.run_index} ---`);
+      }
+      const turnList = run.turns ?? [];
+      const turnCount = Math.max(userMessages.length, turnList.length, 1);
+      for (let i = 0; i < turnCount; i++) {
+        const turn = turnList[i];
+        sections.push(`--- Turn ${i + 1} ---`);
+        sections.push(`User: ${userMessages[i] ?? "(no user message)"}`);
+        sections.push(`Evren response: ${(turn?.response ?? []).join("\n") || "(empty)"}`);
+        sections.push(`Detected flags: ${turn?.detected_flags ?? ""}`);
+      }
     }
   }
 

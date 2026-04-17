@@ -2,6 +2,7 @@ import { GoogleGenerativeAI } from "@google/generative-ai";
 import {
   loadBehaviorReviewDrafterSystemPrompt,
   buildBehaviorReviewDrafterUserMessage,
+  type BehaviorReviewDrafterVersionInput,
 } from "./prompts";
 import { computeTokenCost } from "./token-cost";
 import {
@@ -34,7 +35,7 @@ export interface DraftBehaviorReviewResult {
  */
 export async function draftBehaviorReview(args: {
   testCase: TestCase;
-  versions: { version_id: string; version_name: string; turns: { response: string[]; detected_flags: string }[] }[];
+  versions: BehaviorReviewDrafterVersionInput[];
   evaluatorReason?: string | null;
   apiKey: string;
   modelName?: string;
@@ -99,14 +100,17 @@ export async function draftBehaviorReview(args: {
   return { reviews, token_usage };
 }
 
-/** Map stored version entries to the compact shape expected by `draftBehaviorReview`. */
-export function versionEntriesToDraftInputs(versions: VersionEntry[]) {
+/** Map stored version entries to the compact shape expected by `draftBehaviorReview` (all repeated runs). */
+export function versionEntriesToDraftInputs(versions: VersionEntry[]): BehaviorReviewDrafterVersionInput[] {
   return versions.slice(0, 3).map((v) => {
-    const run1 = v.runs.find((r) => r.run_index === 1) ?? v.runs[0];
+    const sortedRuns = [...(v.runs ?? [])].sort((a, b) => a.run_index - b.run_index);
     return {
       version_id: v.version_id,
       version_name: v.version_name,
-      turns: (run1?.turns ?? []).map((t) => ({ response: t.response, detected_flags: t.detected_flags })),
+      runs: sortedRuns.map((run) => ({
+        run_index: run.run_index,
+        turns: (run.turns ?? []).map((t) => ({ response: t.response, detected_flags: t.detected_flags })),
+      })),
     };
   });
 }

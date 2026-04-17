@@ -51,6 +51,31 @@ export function inferRunMode(
  * Best-effort deploy / repo pointer from common CI and Vercel env vars.
  * Returns null when running locally with no CI (expected for dev machines).
  */
+const CODE_SOURCE_APPEND_SEP = " • ";
+
+function splitCodeSourceSegments(value: string): string[] {
+  return value.split(/\s*•\s*/).map((s) => s.trim()).filter(Boolean);
+}
+
+/**
+ * Append a new Evren `code_source` line when adding a version, keeping prior values.
+ * Uses " • " between entries and skips duplicate segments (same string as an existing chunk).
+ * Truncates to 1000 chars to match `validateRunMetadata`.
+ */
+export function appendDistinctCodeSourceSegment(
+  existing: string | null | undefined,
+  segment: string | null | undefined
+): string | null {
+  const add = typeof segment === "string" ? segment.trim() : "";
+  const prevFull = typeof existing === "string" ? existing.trim() : "";
+  if (!add) return prevFull ? prevFull.slice(0, 1000) : null;
+  if (!prevFull) return add.slice(0, 1000);
+  const parts = splitCodeSourceSegments(prevFull);
+  if (parts.some((p) => p === add)) return prevFull.slice(0, 1000);
+  const merged = `${prevFull}${CODE_SOURCE_APPEND_SEP}${add}`;
+  return merged.slice(0, 1000);
+}
+
 export function inferCodeSourceFromEnv(): string | null {
   const sha =
     process.env.VERCEL_GIT_COMMIT_SHA?.trim() ||

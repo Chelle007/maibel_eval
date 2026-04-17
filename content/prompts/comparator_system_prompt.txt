@@ -6,8 +6,8 @@ When ORGANIZATION CONTEXT is provided in the user message, it is the authoritati
 
 You will be given:
 1. TEST CASE: test_case_id, Expected states, Expected behavior, Forbidden, Notes (if any).
-2. RESPONSE A: Evren's response and detected flags for version A.
-3. RESPONSE B: Evren's response and detected flags for version B.
+2. RESPONSE A: Evren's response(s) and detected flags for version A (every repeated Evren run, if more than one).
+3. RESPONSE B: Evren's response(s) and detected flags for version B (every repeated Evren run, if more than one).
 
 The labels "A" and "B" are randomized. Do not assume any order implies quality.
 

@@ -223,21 +223,35 @@ function getVersionEntries(results: EvalResult[]): VersionEntry[] {
   return best;
 }
 
-/** Same canonicalization as the version comparison table (merge duplicate ids by version name). */
-function buildCanonicalVersionIdMap(results: EvalResult[]): { canonicalId: (vid: string) => string } {
+/** Merge duplicate ids by version_name (first occurrence wins as canonical id). */
+function canonicalIdFromVersionPairs(pairs: Array<{ version_id: string; version_name: string }>): (vid: string) => string {
   const idToName = new Map<string, string>();
   const nameToCanonicalId = new Map<string, string>();
-  for (const r of results) {
-    for (const v of r.evren_responses ?? []) {
-      if (!idToName.has(v.version_id)) idToName.set(v.version_id, v.version_name);
-      if (!nameToCanonicalId.has(v.version_name)) nameToCanonicalId.set(v.version_name, v.version_id);
-    }
+  for (const v of pairs) {
+    if (!idToName.has(v.version_id)) idToName.set(v.version_id, v.version_name);
+    if (!nameToCanonicalId.has(v.version_name)) nameToCanonicalId.set(v.version_name, v.version_id);
   }
-  const canonicalId = (vid: string): string => {
+  return (vid: string) => {
     const name = idToName.get(vid) ?? vid;
     return nameToCanonicalId.get(name) ?? vid;
   };
-  return { canonicalId };
+}
+
+/** Same canonicalization as the version comparison table (merge duplicate ids by version name). */
+function buildCanonicalVersionIdMap(results: EvalResult[]): { canonicalId: (vid: string) => string } {
+  const pairs: { version_id: string; version_name: string }[] = [];
+  for (const r of results) {
+    for (const v of r.evren_responses ?? []) {
+      pairs.push({ version_id: v.version_id, version_name: v.version_name });
+    }
+  }
+  return { canonicalId: canonicalIdFromVersionPairs(pairs) };
+}
+
+/** Per eval_result row: canonicalize ids using only that row's versions (tiers / behavior_review keys vs evren_responses). */
+function buildCanonicalVersionIdMapForRow(r: EvalResult): (vid: string) => string {
+  const pairs = (r.evren_responses ?? []) as Array<{ version_id: string; version_name: string }>;
+  return canonicalIdFromVersionPairs(pairs);
 }
 
 function versionBehaviorReviewIsPass(review: VersionBehaviorReview | undefined): boolean | null {
@@ -251,6 +265,21 @@ function versionBehaviorReviewIsPass(review: VersionBehaviorReview | undefined):
     if (v === "pass" || v === "na") return true;
   }
   return null;
+}
+
+function topTierHasAnyOverallHardFailure(
+  topCanonicalIds: string[],
+  overallHardFailures: Record<string, string[]> | null | undefined,
+  sessionCanonicalId: (id: string) => string
+): boolean {
+  if (!overallHardFailures || topCanonicalIds.length === 0) return false;
+  for (const tid of topCanonicalIds) {
+    for (const [k, list] of Object.entries(overallHardFailures)) {
+      if (sessionCanonicalId(k) !== tid) continue;
+      if (Array.isArray(list) && list.length > 0) return true;
+    }
+  }
+  return false;
 }
 
 /**
@@ -268,7 +297,12 @@ function championPassForComparisonRow(
 
   const tiers = r.comparison?.tiers;
   const top = Array.isArray(tiers?.[0]) ? tiers![0].map((x) => canonicalId(String(x))) : [];
-  if (top.length > 0) return top.includes(championCanonical);
+  if (top.length > 0) {
+    if (!top.includes(championCanonical)) return false;
+    const hf = r.comparison?.overall_hard_failures;
+    if (topTierHasAnyOverallHardFailure(top, hf, canonicalId)) return false;
+    return true;
+  }
 
   const nv = normalizeVersionEntry(champEntry);
   const brRaw =
@@ -376,8 +410,16 @@ function getBehaviorReviewDraft(
   if (chunk?.[versionId]) return chunk[versionId];
   const br = r.behavior_review;
   if (br && typeof br === "object" && !Array.isArray(br)) {
-    const parsed = parseVersionBehaviorReview((br as Record<string, unknown>)[versionId]);
-    if (parsed) return parsed;
+    const brObj = br as Record<string, unknown>;
+    const direct = parseVersionBehaviorReview(brObj[versionId]);
+    if (direct) return direct;
+    const rowCanon = buildCanonicalVersionIdMapForRow(r);
+    const target = rowCanon(versionId);
+    const altKey = Object.keys(brObj).find((k) => rowCanon(k) === target);
+    if (altKey) {
+      const parsed = parseVersionBehaviorReview(brObj[altKey]);
+      if (parsed) return parsed;
+    }
   }
   return emptyVersionBehaviorReview();
 }
@@ -458,6 +500,7 @@ export default function SessionDetailPage() {
   const router = useRouter();
   const versionEntries = useMemo(() => getVersionEntries(results), [results]);
   const versionCount = versionEntries.length;
+  const sessionCanonicalId = useMemo(() => buildCanonicalVersionIdMap(results).canonicalId, [results]);
   const comparisonStats = useMemo(() => {
     const statsMap = new Map<string, { version_id: string; version_name: string; wins: number; ties: number; losses: number }>();
     const idToName = new Map<string, string>();
@@ -490,14 +533,15 @@ export default function SessionDetailPage() {
       const topTier = Array.isArray(tiers[0]) ? tiers[0].map(String) : [];
       if (topTier.length === 0) continue;
       const isTie = topTier.length > 1;
-      const topSet = new Set<string>(topTier);
+      const topCanonical = new Set(topTier.map((t) => canonicalId(t)));
 
       for (const v of versions) {
         const cid = canonicalId(v.version_id);
         const entry = statsMap.get(cid)!;
-        if (isTie && topSet.has(v.version_id)) {
+        const inTop = topCanonical.has(cid);
+        if (isTie && inTop) {
           entry.ties++;
-        } else if (!isTie && topSet.has(v.version_id)) {
+        } else if (!isTie && inTop) {
           entry.wins++;
         } else {
           entry.losses++;
@@ -584,8 +628,12 @@ export default function SessionDetailPage() {
   }
 
   function getVersionLabel(versionId: string): string {
-    const entry = versionEntries.find((v) => v.version_id === versionId);
-    return entry?.version_name ?? "Unknown";
+    const cid = sessionCanonicalId(versionId);
+    const entry =
+      versionEntries.find((v) => v.version_id === versionId) ??
+      versionEntries.find((v) => sessionCanonicalId(v.version_id) === cid);
+    const name = entry?.version_name?.trim();
+    return name || "Unknown";
   }
 
   function saveResultEdits(r: EvalResult) {
@@ -1122,17 +1170,15 @@ export default function SessionDetailPage() {
       if (!championId) return { text: "—" as const, title: undefined as string | undefined };
       const canonicalChampion = canonicalId(championId);
       const championName = comparisonStats[0]?.version_name ?? versionEntries[0]?.version_name ?? null;
+      const total = results.length;
       let passed = 0;
-      let total = 0;
       for (const r of results) {
         const v = championPassForComparisonRow(r, canonicalChampion, canonicalId, versionCount);
-        if (v === null) continue;
-        total++;
-        if (v) passed++;
+        if (v === true) passed++;
       }
       if (total === 0) return { text: "—" as const, title: undefined as string | undefined };
       const title = championName
-        ? `Best version: ${championName}. Count uses per-case comparison tiers when present; otherwise behavior review, or completed Evren runs for a single version.`
+        ? `Best version: ${championName}. Pass = that version is in the top comparison tier with no hard failures in that tier (same idea as the green row badge). Denominator is all ${total} test case(s) in this session. Rows without that version or without comparison data count as not passed.`
         : undefined;
       return { text: `${passed} / ${total}` as const, title };
     }
@@ -2286,25 +2332,34 @@ export default function SessionDetailPage() {
                       }
                       
                       const overallHardFailuresById = r.comparison?.overall_hard_failures ?? null;
+                      const rowCanon = buildCanonicalVersionIdMapForRow(r);
 
                       const hasHardFailures = (versionId: string): boolean => {
-                        const overall = overallHardFailuresById?.[versionId];
-                        if (Array.isArray(overall) && overall.length > 0) return true;
+                        const target = rowCanon(versionId);
+                        if (!overallHardFailuresById) return false;
+                        for (const [k, list] of Object.entries(overallHardFailuresById)) {
+                          if (rowCanon(k) !== target) continue;
+                          if (Array.isArray(list) && list.length > 0) return true;
+                        }
                         return false;
                       };
 
                       const topIds = new Set<string>((tiers[0] ?? []).map(String));
-                      
+
                       // Sort the IDs so they appear in the same order as the versions (e.g., Version 1 & Version 2)
-                      const versionEntries = r.evren_responses ?? [];
+                      const rowVersionEntries = r.evren_responses ?? [];
                       const topNames = Array.from(topIds)
-                        .map(id => {
-                          const idx = versionEntries.findIndex(v => v.version_id === id);
-                          return { name: versionEntries[idx]?.version_name, idx };
+                        .map((id) => {
+                          const cid = rowCanon(id);
+                          const idx = rowVersionEntries.findIndex((v) => rowCanon(v.version_id) === cid);
+                          const rawName = idx >= 0 ? rowVersionEntries[idx]?.version_name : null;
+                          const name =
+                            (typeof rawName === "string" && rawName.trim()) ||
+                            (idx >= 0 ? `Version ${idx + 1}` : getVersionLabel(id));
+                          return { name, idx: idx >= 0 ? idx : 999 };
                         })
-                        .filter(item => item.name)
                         .sort((a, b) => a.idx - b.idx)
-                        .map(item => item.name);
+                        .map((item) => item.name);
 
                       const anyFailedTop = Array.from(topIds).some((id) => hasHardFailures(id));
 
@@ -2988,23 +3043,38 @@ export default function SessionDetailPage() {
                   {r.comparison && Array.isArray(r.comparison.tiers) && r.comparison.tiers.length > 0 && (() => {
                     const tiers = r.comparison!.tiers.map((t) => (Array.isArray(t) ? t.map(String) : [])).filter((t) => t.length > 0);
                     const ranking = tiers.flat().slice(0, 3);
-                    if (ranking.length < 2) return null;
+                    if (ranking.length === 0) return null;
 
                     const overallReasonText = String(r.comparison!.overall_reason ?? "").trim();
                     const overallHardFailures = r.comparison!.overall_hard_failures ?? {};
+                    const rowCanon = buildCanonicalVersionIdMapForRow(r);
 
                     const tierIndexById = new Map<string, number>();
                     for (let i = 0; i < tiers.length; i++) {
                       for (const vid of tiers[i] ?? []) tierIndexById.set(String(vid), i);
                     }
 
+                    const tierIndexFor = (vid: string): number => {
+                      const direct = tierIndexById.get(vid);
+                      if (direct != null) return direct;
+                      const target = rowCanon(vid);
+                      for (const [k, i] of tierIndexById) {
+                        if (rowCanon(k) === target) return i;
+                      }
+                      return 0;
+                    };
+
                     const topTier = tiers[0] ?? [];
                     const hasSingleWinner = topTier.length === 1;
                     const winnerId = hasSingleWinner ? topTier[0] : null;
 
                     const hasOverallFailure = (vid: string): boolean => {
-                      const list = overallHardFailures?.[vid];
-                      return Array.isArray(list) && list.length > 0;
+                      const target = rowCanon(vid);
+                      for (const [k, list] of Object.entries(overallHardFailures)) {
+                        if (rowCanon(k) !== target) continue;
+                        if (Array.isArray(list) && list.length > 0) return true;
+                      }
+                      return false;
                     };
 
                     return (
@@ -3014,7 +3084,7 @@ export default function SessionDetailPage() {
                           <div className="flex items-center justify-between gap-2">
                             <div>
                               <p className="text-xs font-medium uppercase tracking-wide text-stone-400">Version comparison</p>
-                              <p className="text-[11px] text-stone-500">Comparison basis: Run 1</p>
+                              <p className="text-[11px] text-stone-500">Comparison basis: all repeated Evren runs per version</p>
                             </div>
                             <div className="flex items-center gap-2">
                               {aiEditingComparisonId === r.eval_result_id ? (
@@ -3075,9 +3145,13 @@ export default function SessionDetailPage() {
 
                           <div className="mt-2 flex items-center gap-2">
                             {ranking.map((vId: string) => {
-                              const tierIdx = tierIndexById.get(vId) ?? 0;
+                              const tierIdx = tierIndexFor(vId);
                               const rank = tierIdx + 1;
-                              const isChampion = rank === 1 && hasSingleWinner && winnerId === vId;
+                              const isChampion =
+                                rank === 1 &&
+                                hasSingleWinner &&
+                                winnerId != null &&
+                                (winnerId === vId || rowCanon(winnerId) === rowCanon(vId));
                               const isFailed = hasOverallFailure(vId);
                               return (
                                 <span
@@ -3087,7 +3161,7 @@ export default function SessionDetailPage() {
                                       ? "bg-red-100 text-red-800 border border-red-200"
                                       : isChampion
                                         ? "bg-amber-100 text-amber-800 border border-amber-200"
-                                        : "bg-stone-100 text-stone-600 border border-stone-200"
+                                        : "bg-emerald-50 text-emerald-800 border border-emerald-200"
                                   }`}
                                 >
                                   <span className="text-xs font-bold">#{rank}</span>
