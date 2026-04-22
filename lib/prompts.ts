@@ -71,6 +71,36 @@ export function loadSessionReviewSummaryDrafterSystemPrompt(): string {
   return content.replace(/\{base_system_prompt\}/g, base);
 }
 
+/** Per-version Evren transcripts for comparator edit (stable order, matches version_entries). */
+function appendEditModeConversationSections(
+  sections: string[],
+  testCase: TestCase,
+  evrenVersions: AnyVersionEntry[],
+  versionOrder: { version_id: string; version_name: string }[]
+): void {
+  const userMessages: string[] =
+    testCase.type === "multi_turn" && Array.isArray(testCase.turns) && testCase.turns.length > 0
+      ? testCase.turns.map((s) => String(s ?? "").trim())
+      : [testCase.input_message?.trim() ?? ""];
+  const snapshots = versionOrder.map((v) => extractVersionSnapshot(evrenVersions, v.version_id));
+  const turnCount = Math.max(userMessages.length, ...snapshots.map((s) => maxTurnsInSnapshot(s)));
+
+  sections.push("=== TEST CASE (conversation context) ===");
+  sections.push(`test_case_id: ${testCase.test_case_id}`);
+  if (testCase.img_url) sections.push(`Img url: ${testCase.img_url}`);
+  sections.push(`Expected states: ${testCase.expected_state}`);
+  sections.push(`Expected behavior: ${testCase.expected_behavior}`);
+  if (testCase.forbidden) sections.push(`Forbidden: ${testCase.forbidden}`);
+  if (testCase.notes) sections.push(`Notes: ${testCase.notes}`);
+  sections.push("");
+
+  for (let i = 0; i < versionOrder.length; i++) {
+    const v = versionOrder[i];
+    const header = `=== VERSION: ${v.version_name} | version_id: ${v.version_id} ===`;
+    appendComparatorResponseBlock(sections, header, snapshots[i], userMessages, turnCount);
+  }
+}
+
 export function buildComparatorOverallEditUserMessage(args: {
   feedback: string;
   version_entries: { version_id: string; version_name: string }[];
@@ -78,15 +108,21 @@ export function buildComparatorOverallEditUserMessage(args: {
   test_case_id?: string | null;
   expected_state?: string | null;
   expected_behavior?: string | null;
+  /** Full user/Evren turn history per version (same layout as the main comparator). */
+  conversation?: { testCase: TestCase; evrenVersions: AnyVersionEntry[] } | null;
 }): string {
   const versions = Array.isArray(args.version_entries) ? args.version_entries : [];
   const feedback = String(args.feedback ?? "").trim();
   const sections: string[] = [];
+  const tcMeta = args.conversation?.testCase ?? null;
 
   sections.push("=== CONTEXT ===");
-  if (args.test_case_id) sections.push(`test_case_id: ${args.test_case_id}`);
-  if (args.expected_state) sections.push(`Expected states: ${String(args.expected_state)}`);
-  if (args.expected_behavior) sections.push(`Expected behavior: ${String(args.expected_behavior)}`);
+  const tid = tcMeta?.test_case_id ?? args.test_case_id;
+  if (tid) sections.push(`test_case_id: ${tid}`);
+  const es = tcMeta?.expected_state ?? args.expected_state;
+  if (es) sections.push(`Expected states: ${String(es)}`);
+  const eb = tcMeta?.expected_behavior ?? args.expected_behavior;
+  if (eb) sections.push(`Expected behavior: ${String(eb)}`);
   sections.push("");
 
   sections.push("=== AVAILABLE VERSIONS (authoritative mapping) ===");
@@ -95,6 +131,15 @@ export function buildComparatorOverallEditUserMessage(args: {
     sections.push(`${i + 1}. ${v.version_name} | version_id: ${v.version_id}`);
   }
   sections.push("");
+
+  const conv = args.conversation;
+  if (conv?.testCase && Array.isArray(conv.evrenVersions) && conv.evrenVersions.length > 0 && versions.length >= 2) {
+    sections.push(
+      "=== CONVERSATION (user inputs + Evren outputs per version; use version_id to match AVAILABLE VERSIONS) ==="
+    );
+    appendEditModeConversationSections(sections, conv.testCase, conv.evrenVersions, versions.slice(0, 3));
+    sections.push("");
+  }
 
   sections.push("=== CURRENT COMPARISON (for reference) ===");
   try {
@@ -128,7 +173,7 @@ function maxTurnsInSnapshot(snap: VersionSnapshot): number {
   return Math.max(0, ...snap.runs.map((r) => r.responses.length));
 }
 
-/** Serialize one RESPONSE A/B/C block: every repeated run, then every turn. */
+/** Serialize one version transcript block: every repeated run, then every turn. */
 function appendComparatorResponseBlock(
   sections: string[],
   header: string,
@@ -168,6 +213,33 @@ function extractVersionSnapshot(versions: AnyVersionEntry[], versionId: string):
       flags: (run.turns ?? []).map((t) => t.detected_flags),
     })),
   };
+}
+
+export function displayVersionName(versions: AnyVersionEntry[], versionId: string): string {
+  const entry = versions.find((v) => v.version_id === versionId);
+  if (!entry) return versionId;
+  const normalized = normalizeVersionEntry(entry);
+  const name = String(normalized.version_name ?? "").trim();
+  return name || versionId;
+}
+
+/** Map model output token (version_id or exact/case-insensitive version_name) to version_id. */
+export function resolveComparatorVersionToken(
+  token: unknown,
+  versions: AnyVersionEntry[],
+  allowedIds: readonly string[]
+): string | null {
+  const allowed = new Set(allowedIds.map((x) => String(x).trim()).filter(Boolean));
+  const s = String(token ?? "").trim();
+  if (!s) return null;
+  if (allowed.has(s)) return s;
+  for (const id of allowed) {
+    if (displayVersionName(versions, id) === s) return id;
+  }
+  for (const id of allowed) {
+    if (displayVersionName(versions, id).toLowerCase() === s.toLowerCase()) return id;
+  }
+  return null;
 }
 
 /** Build the user message for the comparator. Randomizes A/B to reduce position bias. */
@@ -267,42 +339,26 @@ export function buildComparatorTripleUserMessage(
   return { message: sections.join("\n"), labelToVersionId };
 }
 
-/** Build the user message for the unified overall comparator. Supports 2 or 3 versions. Randomizes A/B(/C) to reduce position bias. */
+/**
+ * Build the user message for the unified overall comparator (2 or 3 versions).
+ * Each candidate is labeled with its real version name + version_id.
+ * Section order is shuffled to reduce position bias while keeping names unambiguous.
+ */
 export function buildComparatorOverallUserMessage(
   testCase: TestCase,
   versions: AnyVersionEntry[],
   versionIds: [string, string] | [string, string, string]
-): {
-  message: string;
-  labels: ("A" | "B" | "C")[];
-  labelToVersionId: Partial<Record<"A" | "B" | "C", string>>;
-} {
+): { message: string; orderedVersionIdsInPrompt: string[] } {
   const ids = [...versionIds] as string[];
-  const shuffled = [...ids].sort(() => Math.random() - 0.5);
-  const labels: ("A" | "B" | "C")[] = shuffled.length === 2 ? ["A", "B"] : ["A", "B", "C"];
-
-  const labelToVersionId: Partial<Record<"A" | "B" | "C", string>> = {};
-  for (let i = 0; i < labels.length; i++) {
-    labelToVersionId[labels[i]] = shuffled[i];
-  }
-
-  const snapshots: Partial<Record<"A" | "B" | "C", VersionSnapshot>> = {
-    A: labelToVersionId.A ? extractVersionSnapshot(versions, labelToVersionId.A) : undefined,
-    B: labelToVersionId.B ? extractVersionSnapshot(versions, labelToVersionId.B) : undefined,
-    C: labelToVersionId.C ? extractVersionSnapshot(versions, labelToVersionId.C) : undefined,
-  };
+  const orderedVersionIdsInPrompt = [...ids].sort(() => Math.random() - 0.5);
 
   const userMessages: string[] =
     testCase.type === "multi_turn" && Array.isArray(testCase.turns) && testCase.turns.length > 0
       ? testCase.turns.map((s) => String(s ?? "").trim())
       : [testCase.input_message?.trim() ?? ""];
 
-  const turnCount = Math.max(
-    userMessages.length,
-    snapshots.A ? maxTurnsInSnapshot(snapshots.A) : 0,
-    snapshots.B ? maxTurnsInSnapshot(snapshots.B) : 0,
-    snapshots.C ? maxTurnsInSnapshot(snapshots.C) : 0
-  );
+  const snapshots = orderedVersionIdsInPrompt.map((id) => extractVersionSnapshot(versions, id));
+  const turnCount = Math.max(userMessages.length, ...snapshots.map((s) => maxTurnsInSnapshot(s)));
 
   const sections: string[] = [];
   sections.push("=== TEST CASE ===");
@@ -314,17 +370,14 @@ export function buildComparatorOverallUserMessage(
   if (testCase.notes) sections.push(`Notes: ${testCase.notes}`);
   sections.push("");
 
-  const pushResponse = (label: "A" | "B" | "C") => {
-    const snap = snapshots[label];
-    if (!snap) return;
-    appendComparatorResponseBlock(sections, `=== RESPONSE ${label} ===`, snap, userMessages, turnCount);
-  };
+  for (let i = 0; i < orderedVersionIdsInPrompt.length; i++) {
+    const id = orderedVersionIdsInPrompt[i];
+    const name = displayVersionName(versions, id);
+    const header = `=== VERSION: ${name} (version_id: ${id}) ===`;
+    appendComparatorResponseBlock(sections, header, snapshots[i], userMessages, turnCount);
+  }
 
-  pushResponse("A");
-  pushResponse("B");
-  pushResponse("C");
-
-  return { message: sections.join("\n"), labels, labelToVersionId };
+  return { message: sections.join("\n"), orderedVersionIdsInPrompt };
 }
 
 /** Build the user message (INPUT DATA) for the evaluator. Always one format: test case metadata + CONVERSATION (turns of user input + Evren response + detected flags). */

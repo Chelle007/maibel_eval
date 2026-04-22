@@ -23,6 +23,7 @@ import {
   validateRunMetadata,
 } from "@/lib/db.types";
 import type { AnyVersionEntry, RunMetadata, VersionEntry } from "@/lib/db.types";
+import { fingerprintEvalResultsComparisons } from "@/lib/session-review-summary-basis";
 import {
   SESSION_REVIEW_FAILURE_TAXONOMY,
   emptySessionReviewSummaryV0,
@@ -42,6 +43,7 @@ type Session = {
   total_eval_time_seconds?: number | null;
   summary: string | null;
   session_review_summary?: unknown;
+  session_review_summary_basis_fingerprint?: string | null;
   mode?: "single" | "comparison";
   manually_edited: boolean;
   run_metadata?: RunMetadata | null;
@@ -454,6 +456,7 @@ export default function SessionDetailPage() {
   );
   const [savingSessionReviewSummary, setSavingSessionReviewSummary] = useState(false);
   const [savedSessionReviewSummary, setSavedSessionReviewSummary] = useState(false);
+  const [resummarizingSessionReviewSummary, setResummarizingSessionReviewSummary] = useState(false);
   const sessionReviewSavedTimeoutRef = useRef<number | null>(null);
   const [refiningWording, setRefiningWording] = useState(false);
   const [resummarizing, setResummarizing] = useState(false);
@@ -578,6 +581,20 @@ export default function SessionDetailPage() {
     return sorted;
   }, [results, searchQuery, passFailFilter, typeFilter, sortBy]);
 
+  const currentComparisonBasisFingerprint = useMemo(
+    () =>
+      fingerprintEvalResultsComparisons(
+        results.map((r) => ({ eval_result_id: r.eval_result_id, comparison: r.comparison ?? null }))
+      ),
+    [results]
+  );
+
+  const sessionReviewSummaryStale = useMemo(() => {
+    const stored = session?.session_review_summary_basis_fingerprint ?? null;
+    if (session?.mode !== "comparison" || stored == null) return false;
+    return stored !== currentComparisonBasisFingerprint;
+  }, [session?.mode, session?.session_review_summary_basis_fingerprint, currentComparisonBasisFingerprint]);
+
   useEffect(() => {
     if (!id) return;
     fetch(`/api/sessions/${id}`)
@@ -624,6 +641,25 @@ export default function SessionDetailPage() {
       setError(e instanceof Error ? e.message : "Failed to save session review summary");
     } finally {
       setSavingSessionReviewSummary(false);
+    }
+  }
+
+  async function resummarizeSessionReviewSummary() {
+    if (!id) return;
+    setResummarizingSessionReviewSummary(true);
+    setError(null);
+    try {
+      const res = await fetch(`/api/sessions/${id}/resummarize-review-summary`, { method: "POST" });
+      const data = (await res.json().catch(() => ({}))) as { error?: string; session?: Session };
+      if (!res.ok || data.error) throw new Error(data.error ?? `Request failed (${res.status})`);
+      if (!data.session) throw new Error("No session returned.");
+      const nextSession = data.session;
+      setSession(nextSession);
+      setSessionReviewSummary(mergeSessionReviewSummaryFromSession(nextSession, results));
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Failed to resummarize session review summary");
+    } finally {
+      setResummarizingSessionReviewSummary(false);
     }
   }
 
@@ -1869,20 +1905,41 @@ export default function SessionDetailPage() {
       )}
 
       <div className="mt-6 rounded-xl border border-stone-200 bg-white p-5 shadow-sm">
-        <div className="flex items-start justify-between gap-3">
-          <h2 className="text-xl font-semibold tracking-tight text-stone-900">Session review summary</h2>
-          <button
-            type="button"
-            onClick={() => { void saveSessionReviewSummary(); }}
-            disabled={savingSessionReviewSummary}
-            className={sessionSaveButtonClass({
-              working: savingSessionReviewSummary,
-              saved: savedSessionReviewSummary,
-            })}
-          >
-            <Save className="h-3 w-3 shrink-0" aria-hidden />
-            {savingSessionReviewSummary ? "Saving…" : savedSessionReviewSummary ? "Saved" : "Save"}
-          </button>
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div className="flex items-center gap-3">
+            <h2 className="text-xl font-semibold tracking-tight text-stone-900">Session review summary</h2>
+            {sessionReviewSummaryStale && (
+              <span
+                className="inline-flex items-center rounded-md bg-amber-50 px-2 py-1 text-xs font-medium text-amber-800 ring-1 ring-inset ring-amber-600/20"
+                title="Version comparison data changed. Use AI resummarize to regenerate, or Save to confirm your manual update matches the latest comparisons."
+              >
+                Outdated (comparisons changed)
+              </span>
+            )}
+          </div>
+          <div className="flex flex-wrap items-center gap-2">
+            <button
+              type="button"
+              onClick={() => { void resummarizeSessionReviewSummary(); }}
+              disabled={resummarizingSessionReviewSummary}
+              className="inline-flex items-center gap-1.5 rounded-lg border border-emerald-300 bg-emerald-50 px-3 py-2 text-sm font-medium text-emerald-800 hover:bg-emerald-100 hover:border-emerald-400 disabled:opacity-50"
+            >
+              <RefreshCw className="h-3.5 w-3.5 shrink-0" aria-hidden />
+              {resummarizingSessionReviewSummary ? "Resummarizing…" : "AI resummarize"}
+            </button>
+            <button
+              type="button"
+              onClick={() => { void saveSessionReviewSummary(); }}
+              disabled={savingSessionReviewSummary}
+              className={sessionSaveButtonClass({
+                working: savingSessionReviewSummary,
+                saved: savedSessionReviewSummary,
+              })}
+            >
+              <Save className="h-3 w-3 shrink-0" aria-hidden />
+              {savingSessionReviewSummary ? "Saving…" : savedSessionReviewSummary ? "Saved" : "Save"}
+            </button>
+          </div>
         </div>
 
         <div className="mt-4 grid grid-cols-1 gap-4 lg:grid-cols-3">

@@ -3,6 +3,14 @@ import type { TestCase, EvrenOutput } from "./types";
 /** Path for the Evren eval endpoint (POST /evren-eval). */
 const EVREN_EVAL_PATH = "/evren-eval";
 
+/** Server-side Evren auth: `EVREN_API_KEY` → `x-api-key`; optional `EVREN_AUTHORIZATION` (e.g. `Bearer <token>`) for Cloud Run / OIDC. */
+function applyEvrenAuthHeaders(headers: Record<string, string>): void {
+  const key = process.env.EVREN_API_KEY?.trim();
+  if (key) headers["x-api-key"] = key;
+  const authorization = process.env.EVREN_AUTHORIZATION?.trim();
+  if (authorization) headers["Authorization"] = authorization;
+}
+
 function evrenBaseUrl(input: string): string {
   let url = input.trim().replace(/\/+$/, "");
   url = url.replace(/\/\/localhost([:\/])/g, "//127.0.0.1$1");
@@ -81,8 +89,7 @@ function parseEvrenCodeSourceFromResponse(data: unknown): EvrenCodeSource | null
 export async function fetchEvrenCodeSource(evrenModelApiUrl: string): Promise<string | null> {
   const base = evrenBaseUrl(evrenModelApiUrl);
   const headers: Record<string, string> = { Accept: "application/json" };
-  const evrenApiKey = process.env.EVREN_API_KEY;
-  if (evrenApiKey) headers["x-api-key"] = evrenApiKey;
+  applyEvrenAuthHeaders(headers);
 
   const overridePath = process.env.EVREN_META_PATH?.trim();
   const candidates = [
@@ -130,13 +137,17 @@ export async function callEvrenApiWithMeta(
   const body: Record<string, unknown> = { messages };
 
   const url = evrenEndpoint(evrenModelApiUrl);
-  const evrenApiKey = process.env.EVREN_API_KEY;
   const headers: Record<string, string> = { "Content-Type": "application/json" };
-  if (evrenApiKey) {
-    headers["x-api-key"] = evrenApiKey;
-  }
+  applyEvrenAuthHeaders(headers);
 
-  console.log("[Evren API] request", { url, messages, messageCount: messages.length });
+  const hasKey = Boolean(process.env.EVREN_API_KEY?.trim());
+  const hasAuthz = Boolean(process.env.EVREN_AUTHORIZATION?.trim());
+  console.log("[Evren API] request", {
+    url,
+    messages,
+    messageCount: messages.length,
+    evrenAuth: { xApiKey: hasKey ? "set" : "missing", authorization: hasAuthz ? "set" : "missing" },
+  });
   let res: Response;
   try {
     res = await fetch(url, {
@@ -155,7 +166,13 @@ export async function callEvrenApiWithMeta(
 
   if (!res.ok) {
     const text = await res.text();
-    throw new Error(`Evren API error: ${res.status} ${res.statusText}${text ? ` — ${text}` : ""}`);
+    const base = `Evren API error: ${res.status} ${res.statusText}${text ? ` — ${text}` : ""}`;
+    if (res.status === 403) {
+      throw new Error(
+        `${base} If this is Google “Forbidden / permission to get URL”, check EVREN_API_KEY (exact name in .env.local), optional EVREN_AUTHORIZATION for Bearer/OIDC, restart \`next dev\` after env changes, and with Evren owners: unauthenticated/authorized invoker vs IAP.`
+      );
+    }
+    throw new Error(base);
   }
 
   const data = (await res.json()) as Record<string, unknown>;

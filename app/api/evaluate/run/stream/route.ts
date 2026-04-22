@@ -446,6 +446,7 @@ export async function POST(request: Request) {
               sessionUpdate.total_cost_usd =
                 (sessionUpdate.total_cost_usd ?? 0) + (draftSummary.token_usage?.cost_usd ?? 0);
               sessionUpdate.session_review_summary = toSessionReviewSummaryJson(draftSummary.summary);
+              sessionUpdate.session_review_summary_basis_fingerprint = draftSummary.comparisonBasisFingerprint;
               console.log("[evaluate/run/stream] session review summary drafted successfully");
             } else {
               console.warn("[evaluate/run/stream] session review summary drafter returned null/empty");

@@ -80,6 +80,8 @@ export interface TestSessionsRow {
   summary: string | null;
   /** Session-level human interpretation layer (TASK-021). Structured; sits above per-dimension review. */
   session_review_summary: Json;
+  /** Hash of eval_results comparison payloads when session_review_summary was last written (AI or manual). */
+  session_review_summary_basis_fingerprint: string | null;
   /** Versioned organization context pack bundle id (see context/md-files/CONTEXT_PACK_MANIFEST.md). */
   context_bundle_id?: string | null;
   mode: "single" | "comparison";

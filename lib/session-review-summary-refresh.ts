@@ -1,5 +1,6 @@
 import { loadContextPack } from "@/lib/context-pack";
 import type { Database } from "@/lib/db.types";
+import { fingerprintEvalResultsComparisons } from "@/lib/session-review-summary-basis";
 import {
   draftSessionReviewSummary,
   extractSessionVersionEntriesFromEvalRows,
@@ -9,6 +10,7 @@ import type { TokenUsage } from "@/lib/types";
 import type { SupabaseClient } from "@supabase/supabase-js";
 
 type SummaryRow = {
+  eval_result_id?: string | number;
   success: boolean;
   score: number;
   reason: string | null;
@@ -66,7 +68,11 @@ export async function draftSessionReviewSummaryForSessionData(
     modelName?: string;
     logPrefix?: string;
   }
-): Promise<{ summary: SessionReviewSummaryV0; token_usage?: TokenUsage } | null> {
+): Promise<{
+  summary: SessionReviewSummaryV0;
+  token_usage?: TokenUsage;
+  comparisonBasisFingerprint: string;
+} | null> {
   const errLog = (msg: string) =>
     console.error(`${args.logPrefix ?? "[session-review-summary]"} ${msg}`);
 
@@ -84,6 +90,7 @@ export async function draftSessionReviewSummaryForSessionData(
   }
 
   const rows = evalSummaryRows as Array<SummaryRow & { evren_responses?: unknown }>;
+  const comparisonBasisFingerprint = fingerprintEvalResultsComparisons(rows);
   const evalRows = mapEvalSummaryRowsToEvalRows(rows);
   const versionEntries =
     args.sessionMode === "comparison"
@@ -116,7 +123,8 @@ export async function draftSessionReviewSummaryForSessionData(
         drafted.summary.cases_versions_tested = suggested;
       }
     }
-    return drafted;
+    if (!drafted?.summary) return null;
+    return { ...drafted, comparisonBasisFingerprint };
   } catch (e) {
     errLog(`draft failed: ${e instanceof Error ? e.message : String(e)}`);
     return null;
@@ -174,6 +182,7 @@ export async function persistSessionReviewSummaryForSession(
     .from("test_sessions")
     .update({
       session_review_summary: toSessionReviewSummaryJson(draftSummary.summary),
+      session_review_summary_basis_fingerprint: draftSummary.comparisonBasisFingerprint,
       total_cost_usd: (totalBefore ?? 0) + addCost,
     } as never)
     .eq("session_id", args.sessionId);
