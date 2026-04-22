@@ -2,8 +2,7 @@ import { GoogleGenerativeAI } from "@google/generative-ai";
 import {
   loadComparatorOverallSystemPrompt,
   buildComparatorOverallUserMessage,
-  loadComparatorOverallEditSystemPrompt,
-  buildComparatorOverallEditUserMessage,
+  resolveComparatorVersionToken,
 } from "./prompts";
 import { computeTokenCost } from "./token-cost";
 import type { TestCase, ComparisonData } from "./types";
@@ -18,30 +17,11 @@ function extractJson(text: string): string {
 
 const DEFAULT_MODEL = "gemini-3-flash-preview";
 
-type OverallComparatorLabels = "A" | "B" | "C";
-
-type OverallComparatorJson = {
-  tiers: OverallComparatorLabels[][];
+type OverallComparatorJsonV2 = {
+  tiers?: unknown;
   reason?: string;
-  hard_failures?: Partial<Record<OverallComparatorLabels, string[]>>;
+  hard_failures?: Record<string, unknown>;
 };
-
-type OverallComparatorEditJson = {
-  tiers: string[][];
-  reason?: string;
-  hard_failures?: Record<string, string[]>;
-};
-
-function normalizeLabel(x: unknown): OverallComparatorLabels | null {
-  const s = String(x ?? "").trim().toUpperCase();
-  if (s === "A" || s === "B" || s === "C") return s;
-  return null;
-}
-
-function normalizeId(x: unknown): string | null {
-  const s = String(x ?? "").trim();
-  return s ? s : null;
-}
 
 function uniq<T>(xs: T[]): T[] {
   const out: T[] = [];
@@ -54,49 +34,29 @@ function uniq<T>(xs: T[]): T[] {
   return out;
 }
 
-function normalizeComparisonFromEditJson(
-  parsed: OverallComparatorEditJson | null,
-  versionIds: string[],
-  fallback: ComparisonData | null
-): ComparisonData {
-  const ids = versionIds.map(String).filter(Boolean);
-  const allowed = new Set(ids);
-
-  const rawTiers = Array.isArray(parsed?.tiers) ? parsed!.tiers : null;
-  const normalizedTiers: string[][] | null = rawTiers
-    ? rawTiers
-        .map((tier) =>
-          Array.isArray(tier)
-            ? (tier.map(normalizeId).filter(Boolean) as string[]).filter((id) => allowed.has(id))
-            : []
-        )
-        .filter((tier) => tier.length > 0)
-    : null;
-
-  const flat = normalizedTiers ? normalizedTiers.flat() : [];
-  const uniqueFlat = uniq(flat);
-  const tiersOk = normalizedTiers != null && uniqueFlat.length === ids.length && new Set(uniqueFlat).size === ids.length;
-
-  const tiers = tiersOk ? normalizedTiers!.map((t) => uniq(t)) : (fallback?.tiers?.length ? fallback.tiers : [ids]);
-
-  const reasonRaw = String(parsed?.reason ?? "").trim();
-  const overall_reason =
-    reasonRaw || (fallback?.overall_reason?.trim() ? fallback.overall_reason : "Edited comparison.");
-
-  const hfRaw = parsed?.hard_failures ?? {};
-  const overall_hard_failures: Record<string, string[]> = {};
-  for (const id of ids) {
-    const list = hfRaw?.[id];
-    overall_hard_failures[id] = Array.isArray(list) ? list.map(String) : [];
-  }
-
-  return { tiers, overall_reason, overall_hard_failures };
+/** When re-ranking with extra reviewer text, strip meta phrases the model often echoes. */
+function scrubGuidanceEchoesFromReason(reason: string): string {
+  let s = reason;
+  s = s.replace(/\bfollowing\s+user\s+guidance\b[,;:]?\s*/gi, "");
+  s = s.replace(/\bper\s+user\s+guidance\b[,;:]?\s*/gi, "");
+  s = s.replace(/\bas\s+per\s+user\s+guidance\b[,;:]?\s*/gi, "");
+  s = s.replace(/\buser\s+guidance\b/gi, "");
+  s = s.replace(/\s*,\s*,/g, ",").replace(/\s{2,}/g, " ").replace(/^\s*,\s*|\s*,\s*$/g, "").trim();
+  return s;
 }
 
 /**
  * Run one unified overall comparison across 2 or 3 versions by ID.
  * Stores tiers (by version_id) + overall_reason + overall_hard_failures (by version_id).
+ *
+ * Optional `guidedReplay`: after org context, appends previous comparison JSON + user guidance
+ * (same model path as add-version, for session “AI edit comparison”).
  */
+export type CompareOverallGuidedReplay = {
+  previous_comparison: ComparisonData | null;
+  user_guidance: string;
+};
+
 export async function compareOverall(
   testCase: TestCase,
   versions: VersionEntry[],
@@ -104,7 +64,8 @@ export async function compareOverall(
   apiKey: string,
   modelName: string = DEFAULT_MODEL,
   systemPrompt?: string,
-  contextPack?: { text: string; bundleId: string }
+  contextPack?: { text: string; bundleId: string },
+  guidedReplay?: CompareOverallGuidedReplay | null
 ): Promise<ComparisonData> {
   const genAI = new GoogleGenerativeAI(apiKey);
   const systemInstruction = systemPrompt ?? loadComparatorOverallSystemPrompt();
@@ -113,15 +74,22 @@ export async function compareOverall(
     systemInstruction,
   });
 
-  const { message, labels, labelToVersionId } = buildComparatorOverallUserMessage(
-    testCase,
-    versions,
-    versionIds
-  );
-  const finalMessage =
+  const { message } = buildComparatorOverallUserMessage(testCase, versions, versionIds);
+  let finalMessage =
     contextPack?.text?.trim()
       ? `${message}\n\n=== ORGANIZATION CONTEXT (bundle: ${contextPack.bundleId}) ===\n${contextPack.text.trim()}\n`
       : message;
+
+  const guidance = String(guidedReplay?.user_guidance ?? "").trim();
+  if (guidance) {
+    const prev = guidedReplay?.previous_comparison ?? null;
+    const prevBlock =
+      prev != null
+        ? `\n\n=== PREVIOUS COMPARISON (context — user requested a fresh ranking after this stored result; tiers use version_id) ===\n${JSON.stringify(prev, null, 2)}\n`
+        : "";
+    finalMessage += `${prevBlock}\n\n=== ADDITIONAL RANKING INPUT (use for close calls only; still ground tiers in VERSION transcript blocks + test case + organization context; do not ignore hard-failure criteria. Do not name this section or call out "guidance" in the reason field — write as a normal evaluation.) ===\n${guidance}\n`;
+  }
+
   const result = await model.generateContent(finalMessage);
   const response = result.response;
   const text = response.text();
@@ -135,10 +103,12 @@ export async function compareOverall(
       )
     : undefined;
 
+  const allowedList = [...versionIds] as string[];
+
   const jsonStr = extractJson(text);
-  let parsed: OverallComparatorJson | null = null;
+  let parsed: OverallComparatorJsonV2 | null = null;
   try {
-    parsed = JSON.parse(jsonStr) as OverallComparatorJson;
+    parsed = JSON.parse(jsonStr) as OverallComparatorJsonV2;
   } catch {
     const ids = [...versionIds];
     return {
@@ -149,44 +119,52 @@ export async function compareOverall(
     };
   }
 
-  const allowedLabels = new Set(labels);
-
-  const parsedTiers = Array.isArray(parsed?.tiers) ? parsed!.tiers : null;
-  const normalizedLabelTiers: OverallComparatorLabels[][] | null = parsedTiers
+  const parsedTiers = Array.isArray(parsed?.tiers) ? parsed.tiers : null;
+  const normalizedTiers: string[][] | null = parsedTiers
     ? parsedTiers
-        .map((tier) => (Array.isArray(tier) ? tier.map(normalizeLabel).filter(Boolean) as OverallComparatorLabels[] : []))
+        .map((tier) =>
+          Array.isArray(tier)
+            ? uniq(
+                tier
+                  .map((cell) => resolveComparatorVersionToken(cell, versions, allowedList))
+                  .filter((id): id is string => Boolean(id))
+              )
+            : []
+        )
         .filter((tier) => tier.length > 0)
     : null;
 
-  const labelsFlat = normalizedLabelTiers ? normalizedLabelTiers.flat() : [];
-  const labelsFlatFiltered = labelsFlat.filter((l) => allowedLabels.has(l));
-  const uniqueLabels = new Set(labelsFlatFiltered);
-  const tiersOk = normalizedLabelTiers != null && labelsFlatFiltered.length === labels.length && uniqueLabels.size === labels.length;
-
-  const labelToId = (l: OverallComparatorLabels): string | null => {
-    const id = labelToVersionId[l];
-    return typeof id === "string" ? id : null;
-  };
+  const flat = normalizedTiers ? normalizedTiers.flat() : [];
+  const uniqueFlat = uniq(flat);
+  const allowedSet = new Set(allowedList);
+  const tiersOk =
+    normalizedTiers != null &&
+    uniqueFlat.length === allowedList.length &&
+    uniqueFlat.every((id) => allowedSet.has(id)) &&
+    new Set(uniqueFlat).size === allowedList.length;
 
   const tiersById: string[][] = tiersOk
-    ? normalizedLabelTiers!.map((tier) => uniq(tier).map((l) => labelToId(l)!).filter(Boolean) as string[])
-    : [[...versionIds]];
+    ? normalizedTiers!.map((tier) => uniq(tier))
+    : [[...allowedList]];
 
-  const hardFailures = parsed?.hard_failures ?? {};
+  const hfRaw = parsed?.hard_failures ?? {};
   const overall_hard_failures: Record<string, string[]> = {};
-  for (const label of labels) {
-    const id = labelToVersionId[label];
-    if (!id) continue;
-    const list = hardFailures[label];
-    overall_hard_failures[id] = Array.isArray(list) ? list.map(String) : [];
+  for (const id of allowedList) {
+    overall_hard_failures[id] = [];
+  }
+  for (const key of Object.keys(hfRaw)) {
+    const resolvedId = resolveComparatorVersionToken(key, versions, allowedList);
+    if (!resolvedId) continue;
+    const list = hfRaw[key];
+    const arr = Array.isArray(list) ? list.map(String) : [];
+    overall_hard_failures[resolvedId] = [...overall_hard_failures[resolvedId], ...arr];
   }
 
-  // Ensure every provided version_id has an entry, even if prompt omitted failures.
-  for (const id of versionIds) {
-    if (!Array.isArray(overall_hard_failures[id])) overall_hard_failures[id] = [];
+  let overall_reason = String(parsed?.reason ?? "").trim();
+  if (String(guidedReplay?.user_guidance ?? "").trim()) {
+    const scrubbed = scrubGuidanceEchoesFromReason(overall_reason);
+    if (scrubbed) overall_reason = scrubbed;
   }
-
-  const overall_reason = String(parsed?.reason ?? "").trim();
 
   return {
     tiers: tiersById.filter((t) => t.length > 0),
@@ -194,73 +172,4 @@ export async function compareOverall(
     overall_hard_failures,
     ...(token_usage && { token_usage }),
   };
-}
-
-export async function editOverallComparison(args: {
-  feedback: string;
-  version_entries: { version_id: string; version_name: string }[];
-  current_comparison: ComparisonData | null;
-  apiKey: string;
-  modelName?: string;
-  systemPrompt?: string;
-  test_case_id?: string | null;
-  expected_state?: string | null;
-  expected_behavior?: string | null;
-}): Promise<ComparisonData & { token_usage?: ReturnType<typeof computeTokenCost> }> {
-  const versionIds = (args.version_entries ?? []).map((v) => v.version_id).filter(Boolean).slice(0, 3);
-  if (versionIds.length < 2) {
-    return {
-      tiers: [versionIds],
-      overall_reason: "Not enough versions to compare.",
-      overall_hard_failures: Object.fromEntries(versionIds.map((id) => [id, []])),
-    };
-  }
-
-  const genAI = new GoogleGenerativeAI(args.apiKey);
-  const systemInstruction = args.systemPrompt ?? loadComparatorOverallEditSystemPrompt();
-  const model = genAI.getGenerativeModel({
-    model: args.modelName ?? DEFAULT_MODEL,
-    systemInstruction,
-  });
-
-  const message = buildComparatorOverallEditUserMessage({
-    feedback: args.feedback,
-    version_entries: args.version_entries.slice(0, 3),
-    current_comparison: args.current_comparison,
-    test_case_id: args.test_case_id ?? null,
-    expected_state: args.expected_state ?? null,
-    expected_behavior: args.expected_behavior ?? null,
-  });
-
-  const result = await model.generateContent(message);
-  const response = result.response;
-  const text = response.text();
-
-  const usage = response.usageMetadata;
-  const token_usage = usage
-    ? computeTokenCost(
-        usage.promptTokenCount ?? 0,
-        usage.candidatesTokenCount ?? 0,
-        args.modelName ?? DEFAULT_MODEL
-      )
-    : undefined;
-
-  const jsonStr = extractJson(text);
-  let parsed: OverallComparatorEditJson | null = null;
-  try {
-    parsed = JSON.parse(jsonStr) as OverallComparatorEditJson;
-  } catch {
-    const fallback = args.current_comparison;
-    return {
-      ...(fallback ?? {
-        tiers: [versionIds],
-        overall_reason: "AI edit returned invalid JSON — leaving comparison unchanged.",
-        overall_hard_failures: Object.fromEntries(versionIds.map((id) => [id, []])),
-      }),
-      ...(token_usage && { token_usage }),
-    };
-  }
-
-  const normalized = normalizeComparisonFromEditJson(parsed, versionIds, args.current_comparison);
-  return { ...normalized, ...(token_usage && { token_usage }) };
 }

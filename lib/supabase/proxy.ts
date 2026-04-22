@@ -1,8 +1,12 @@
 import { createServerClient } from "@supabase/ssr";
 import { NextResponse, type NextRequest } from "next/server";
+import { getRequestOrigin } from "@/lib/request-origin";
 
 export async function updateSession(request: NextRequest) {
   const url = request.nextUrl.clone();
+  const origin = getRequestOrigin(request);
+  url.protocol = new URL(origin).protocol;
+  url.host = new URL(origin).host;
   const isLogin = url.pathname === "/login";
   const isAuthCallback = url.pathname.startsWith("/auth/");
   const isAuthApi = url.pathname === "/api/auth/login";

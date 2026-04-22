@@ -1,8 +1,11 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
-import { editOverallComparison } from "@/lib/comparator";
-import type { ComparisonData } from "@/lib/types";
-import type { DefaultSettingsRow } from "@/lib/db.types";
+import { compareOverall } from "@/lib/comparator";
+import { loadComparatorOverallSystemPrompt } from "@/lib/prompts";
+import { loadContextPack } from "@/lib/context-pack";
+import type { ComparisonData, TestCase } from "@/lib/types";
+import type { AnyVersionEntry, DefaultSettingsRow, VersionEntry } from "@/lib/db.types";
+import { normalizeVersionEntry } from "@/lib/db.types";
 
 type Body = {
   feedback?: string;
@@ -15,6 +18,23 @@ type Body = {
 
 function isNonEmptyString(x: unknown): x is string {
   return typeof x === "string" && x.trim().length > 0;
+}
+
+function testCaseFromJoin(row: Record<string, unknown> | null | undefined): TestCase | null {
+  if (!row || typeof row !== "object") return null;
+  const test_case_id = String(row.test_case_id ?? "").trim();
+  if (!test_case_id) return null;
+  return {
+    test_case_id,
+    type: row.type === "multi_turn" ? "multi_turn" : "single_turn",
+    input_message: String(row.input_message ?? ""),
+    turns: Array.isArray(row.turns) ? row.turns.map((x) => String(x)) : undefined,
+    expected_state: String(row.expected_state ?? ""),
+    expected_behavior: String(row.expected_behavior ?? ""),
+    forbidden: row.forbidden != null && String(row.forbidden).trim() ? String(row.forbidden) : undefined,
+    notes: row.notes != null && String(row.notes).trim() ? String(row.notes) : undefined,
+    img_url: row.img_url != null && String(row.img_url).trim() ? String(row.img_url) : undefined,
+  };
 }
 
 function validateComparisonStrict(
@@ -89,6 +109,51 @@ export async function POST(
   }
 
   const supabase = await createClient();
+
+  const { data: evalRowRaw, error: evalRowError } = await supabase
+    .from("eval_results")
+    .select(
+      "evren_responses, comparison, test_cases(test_case_id, input_message, expected_state, expected_behavior, title, type, turns, forbidden, notes, img_url)"
+    )
+    .eq("eval_result_id", id)
+    .maybeSingle();
+  if (evalRowError) {
+    return NextResponse.json({ error: evalRowError.message }, { status: 500 });
+  }
+  if (!evalRowRaw) {
+    return NextResponse.json({ error: "eval_result not found" }, { status: 404 });
+  }
+
+  const evalRow = evalRowRaw as {
+    evren_responses: unknown;
+    comparison: unknown;
+    test_cases: Record<string, unknown> | Record<string, unknown>[] | null;
+  };
+
+  const tcJoined = evalRow.test_cases;
+  const tcRow = Array.isArray(tcJoined) ? tcJoined[0] : tcJoined;
+  const testCaseFromDb = testCaseFromJoin(tcRow as Record<string, unknown> | null | undefined);
+  const evrenVersions = (Array.isArray(evalRow.evren_responses) ? evalRow.evren_responses : []) as AnyVersionEntry[];
+  const versionsNorm: VersionEntry[] = evrenVersions.map((v) => normalizeVersionEntry(v));
+  const previousFromDb = evalRow.comparison as ComparisonData | null | undefined;
+  const previousComparison: ComparisonData | null =
+    previousFromDb && typeof previousFromDb === "object" && Array.isArray(previousFromDb.tiers)
+      ? previousFromDb
+      : ((body.current_comparison ?? null) as ComparisonData | null);
+
+  if (!testCaseFromDb) {
+    return NextResponse.json({ error: "Missing test case data for this eval result." }, { status: 400 });
+  }
+  const idSet = new Set(versionsNorm.map((v) => v.version_id));
+  for (const vid of allowedIds) {
+    if (!idSet.has(vid)) {
+      return NextResponse.json(
+        { error: "Stored evren_responses are missing a version referenced in version_entries." },
+        { status: 400 }
+      );
+    }
+  }
+
   const { data: settingsRow } = await supabase
     .from("default_settings")
     .select("evaluator_model")
@@ -98,25 +163,42 @@ export async function POST(
     (settingsRow as Pick<DefaultSettingsRow, "evaluator_model"> | null)?.evaluator_model?.trim() ||
     "gemini-3-flash-preview";
 
+  const versionIds =
+    allowedIds.length === 2
+      ? ([allowedIds[0], allowedIds[1]] as [string, string])
+      : ([allowedIds[0], allowedIds[1], allowedIds[2]] as [string, string, string]);
+
+  const comparatorPrompt = loadComparatorOverallSystemPrompt();
+  let contextPack: { text: string; bundleId: string };
+  try {
+    const pack = loadContextPack({
+      purpose: "comparator",
+      query: `${testCaseFromDb.test_case_id}\n${testCaseFromDb.expected_state}\n${testCaseFromDb.expected_behavior}\n${testCaseFromDb.forbidden ?? ""}\n${testCaseFromDb.notes ?? ""}`,
+    });
+    contextPack = { text: pack.text, bundleId: pack.bundleId };
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    console.error("[ai-edit-comparison] context pack load failed:", msg);
+    return NextResponse.json({ error: `Context pack load failed: ${msg}` }, { status: 500 });
+  }
+
   let edited: ComparisonData;
   try {
-    const result = await editOverallComparison({
-      feedback: body.feedback,
-      version_entries: versionEntries.slice(0, 3),
-      current_comparison: (body.current_comparison ?? null) as ComparisonData | null,
+    edited = await compareOverall(
+      testCaseFromDb,
+      versionsNorm,
+      versionIds,
       apiKey,
-      modelName: comparatorModel,
-      test_case_id: body.test_case_id ?? null,
-      expected_state: body.expected_state ?? null,
-      expected_behavior: body.expected_behavior ?? null,
-    });
-    edited = {
-      tiers: result.tiers,
-      overall_reason: result.overall_reason,
-      overall_hard_failures: result.overall_hard_failures,
-    };
+      comparatorModel,
+      comparatorPrompt,
+      contextPack,
+      {
+        previous_comparison: previousComparison,
+        user_guidance: body.feedback.trim(),
+      }
+    );
   } catch (err) {
-    const msg = err instanceof Error ? err.message : "AI edit failed";
+    const msg = err instanceof Error ? err.message : "Comparison rerun failed";
     return NextResponse.json({ error: msg }, { status: 500 });
   }
 
