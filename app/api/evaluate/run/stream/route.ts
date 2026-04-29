@@ -77,10 +77,10 @@ export async function POST(request: Request) {
     );
   }
 
-  const sessionMode = body.mode === "comparison" ? "comparison" : "single";
+  const sessionMode: "comparison" = "comparison";
   const runCount = Number.isFinite(body.run_count) ? Math.max(1, Math.floor(body.run_count as number)) : 1;
-  const useEvaluator = sessionMode === "single";
-  const useSummarizer = sessionMode === "single";
+  const useEvaluator = false;
+  const useSummarizer = false;
   const apiKey = process.env.GEMINI_API_KEY;
   if ((useEvaluator || useSummarizer) && !apiKey) {
     return new Response(JSON.stringify({ error: "Missing GEMINI_API_KEY" }), {

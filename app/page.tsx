@@ -21,7 +21,7 @@ type SessionMode = "single" | "comparison";
 export default function Home() {
   const { runState, startRun, cancelRun, clearRunState } = useEvalRun();
   const [evrenUrl, setEvrenUrl] = useState(FALLBACK_EVREN_URL);
-  const [mode, setMode] = useState<SessionMode>("comparison");
+  const mode: SessionMode = "comparison";
   const [runCount, setRunCount] = useState(1);
   const [evaluatorModel, setEvaluatorModel] = useState(FALLBACK_EVALUATOR_MODEL);
   const [summarizerModel, setSummarizerModel] = useState(FALLBACK_SUMMARIZER_MODEL);
@@ -53,8 +53,8 @@ export default function Home() {
       evren_model_api_url: evrenUrl.trim(),
       mode,
       run_count: Math.max(1, Math.floor(runCount || 1)),
-      model_name: mode === "single" ? (evaluatorModel || undefined) : undefined,
-      summarizer_model: mode === "single" ? (summarizerModel || undefined) : undefined,
+      model_name: undefined,
+      summarizer_model: undefined,
     });
   }
 
@@ -76,36 +76,9 @@ export default function Home() {
             className="mt-1.5 block w-full rounded-lg border border-stone-200 bg-white px-3 py-2.5 text-stone-900 placeholder:text-stone-400 focus:border-stone-400 focus:outline-none focus:ring-1 focus:ring-stone-400"
           />
         </div>
-        <fieldset className="mt-5">
-          <legend className="block text-sm font-medium text-stone-700">Mode</legend>
-          <div className="relative mt-1.5 flex rounded-full bg-stone-200 p-1">
-            <span
-              className="pointer-events-none absolute inset-y-1 w-[calc(50%-4px)] rounded-full bg-white shadow transition-transform duration-200"
-              style={{ transform: mode === "single" ? "translateX(0)" : "translateX(100%)" }}
-            />
-            {([
-              { value: "single" as const, label: "Single Evaluation" },
-              { value: "comparison" as const, label: "Version Comparison" },
-            ]).map((opt) => (
-              <button
-                key={opt.value}
-                type="button"
-                onClick={() => setMode(opt.value)}
-                className={`relative z-10 flex-1 rounded-full px-3 py-2 text-center text-sm font-medium transition-colors ${
-                  mode === opt.value ? "text-stone-900" : "text-stone-500"
-                }`}
-              >
-                {opt.label}
-              </button>
-            ))}
-          </div>
-          {mode === "single" && (
-            <p className="mt-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs leading-relaxed text-amber-950">
-              Note: Single evaluation mode is no longer used. Prefer{" "}
-              <span className="font-medium">Version Comparison</span> for new runs.
-            </p>
-          )}
-        </fieldset>
+        <div className="mt-5 rounded-lg border border-stone-200 bg-stone-50 px-3 py-2 text-xs text-stone-700">
+          Mode: <span className="font-medium text-stone-900">Version Comparison</span> (single mode is disabled)
+        </div>
         <div className="mt-4">
           <label className="block text-sm font-medium text-stone-700">Runs per case</label>
           <input
@@ -117,7 +90,7 @@ export default function Home() {
             className="mt-1.5 block w-full rounded-lg border border-stone-200 bg-white px-3 py-2.5 text-stone-900 focus:border-stone-400 focus:outline-none focus:ring-1 focus:ring-stone-400"
           />
         </div>
-        {mode === "single" && (
+        {false && mode === "single" && (
           <>
             <div className="mt-4">
               <label className="block text-sm font-medium text-stone-700">Evaluator model</label>

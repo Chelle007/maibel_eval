@@ -7,6 +7,7 @@ import type { TestCase, ComparisonData } from "@/lib/types";
 import { mergeBehaviorReviewMap, pruneBehaviorReviewForVersions, type BehaviorReviewByVersion } from "@/lib/behavior-review";
 import { draftBehaviorReviewForVersionEntries } from "@/lib/behavior-review-drafter";
 import type { EvalResultsRow, VersionEntry, TestCasesRow, DefaultSettingsRow } from "@/lib/db.types";
+import { createSessionResultSnapshot } from "@/lib/session-snapshots";
 
 type EvalResultLite = Pick<
   EvalResultsRow,
@@ -34,6 +35,14 @@ export async function DELETE(
     return NextResponse.json({ error: sessionError?.message ?? "Session not found" }, { status: 404 });
   }
   const sessionId = (session as { session_id: string }).session_id;
+
+  // Snapshot current session result state before mutating versions (Git-like "commit").
+  await createSessionResultSnapshot({
+    supabase,
+    sessionId,
+    kind: "before_delete_version",
+    message: `Before delete version: ${versionId}`,
+  });
 
   const apiKey = process.env.GEMINI_API_KEY;
 

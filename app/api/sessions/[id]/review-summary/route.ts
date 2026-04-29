@@ -6,6 +6,7 @@ import {
   toSessionReviewSummaryJson,
   validateSessionReviewSummaryV0Payload,
 } from "@/lib/session-review-summary";
+import { refreshLatestSessionResultSnapshot } from "@/lib/session-snapshots";
 
 export async function PATCH(
   request: Request,
@@ -57,6 +58,9 @@ export async function PATCH(
     .select()
     .single();
   if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+
+  await refreshLatestSessionResultSnapshot({ supabase, sessionId });
+
   return NextResponse.json({ session: data });
 }
 

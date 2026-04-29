@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import { mergeBehaviorReviewMap } from "@/lib/behavior-review";
 import type { VersionEntry } from "@/lib/db.types";
+import { refreshLatestSessionResultSnapshot } from "@/lib/session-snapshots";
 
 export async function PATCH(
   request: Request,
@@ -57,5 +58,11 @@ export async function PATCH(
     .select()
     .single();
   if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+
+  const sessionId = typeof (data as any)?.session_id === "string" ? (data as any).session_id : null;
+  if (sessionId) {
+    await refreshLatestSessionResultSnapshot({ supabase, sessionId });
+  }
+
   return NextResponse.json(data);
 }

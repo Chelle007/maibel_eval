@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import type { Database } from "@/lib/db.types";
+import { refreshLatestSessionResultSnapshot } from "@/lib/session-snapshots";
 
 export async function PATCH(
   request: Request,
@@ -20,5 +21,12 @@ export async function PATCH(
     .select()
     .single();
   if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+
+  const out = data as unknown as Record<string, unknown>;
+  const sessionId = typeof out.session_id === "string" ? out.session_id : null;
+  if (sessionId) {
+    await refreshLatestSessionResultSnapshot({ supabase, sessionId });
+  }
+
   return NextResponse.json(data);
 }
