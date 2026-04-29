@@ -62,7 +62,9 @@ CREATE TABLE test_sessions (
   summary            TEXT,
   -- Session-level human interpretation layer (TASK-021). Structured + short; lives above per-dimension reviews.
   session_review_summary JSONB NOT NULL DEFAULT '{}'::jsonb,
-  mode               TEXT NOT NULL DEFAULT 'single' CHECK (mode IN ('single', 'comparison')),
+  -- Pointer to the latest snapshot that is treated as mutable (edits update payload).
+  latest_snapshot_id UUID,
+  mode               TEXT NOT NULL DEFAULT 'comparison' CHECK (mode IN ('single', 'comparison')),
   manually_edited    BOOLEAN NOT NULL DEFAULT FALSE,
   repeated_runs_mode TEXT NOT NULL DEFAULT 'auto' CHECK (repeated_runs_mode IN ('auto', 'manual')),
   -- Structured run provenance: environment, code source, deploy URL, models, run mode, sample size, repeated-run evidence (TASK-022).
@@ -88,6 +90,16 @@ CREATE TABLE eval_results (
   behavior_review    JSONB NOT NULL DEFAULT '{}'::jsonb,
   created_at         TIMESTAMPTZ NOT NULL DEFAULT now(),
   updated_at         TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+-- Snapshot history of session results (Git-like "commits" for add/delete version).
+CREATE TABLE session_result_snapshots (
+  snapshot_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  session_id  UUID NOT NULL REFERENCES test_sessions(session_id) ON DELETE CASCADE,
+  kind        TEXT NOT NULL,
+  message     TEXT,
+  payload     JSONB NOT NULL DEFAULT '{}'::jsonb,
+  created_at  TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
 CREATE TABLE default_settings (
@@ -134,6 +146,7 @@ CREATE INDEX idx_test_sessions_user_id ON test_sessions(user_id);
 CREATE INDEX idx_test_sessions_test_session_id ON test_sessions(test_session_id);
 CREATE INDEX idx_eval_results_session_id ON eval_results(session_id);
 CREATE INDEX idx_eval_results_test_case_uuid ON eval_results(test_case_uuid);
+CREATE INDEX idx_session_result_snapshots_session_id_created_at ON session_result_snapshots(session_id, created_at DESC);
 CREATE INDEX idx_test_cases_category_id ON test_cases(category_id);
 CREATE INDEX idx_test_cases_test_case_id ON test_cases(test_case_id);
 
@@ -145,6 +158,7 @@ ALTER TABLE users ENABLE ROW LEVEL SECURITY;
 ALTER TABLE categories ENABLE ROW LEVEL SECURITY;
 ALTER TABLE test_sessions ENABLE ROW LEVEL SECURITY;
 ALTER TABLE eval_results ENABLE ROW LEVEL SECURITY;
+ALTER TABLE session_result_snapshots ENABLE ROW LEVEL SECURITY;
 ALTER TABLE test_cases ENABLE ROW LEVEL SECURITY;
 ALTER TABLE default_settings ENABLE ROW LEVEL SECURITY;
 
@@ -210,6 +224,30 @@ CREATE POLICY "Test sessions: authenticated all"
   USING (true)
   WITH CHECK (true);
 
+CREATE POLICY "Session result snapshots: service_role all"
+  ON session_result_snapshots FOR ALL
+  TO service_role
+  USING (true)
+  WITH CHECK (true);
+
+CREATE POLICY "Session result snapshots: authenticated all by session access"
+  ON session_result_snapshots FOR ALL
+  TO authenticated
+  USING (
+    EXISTS (
+      SELECT 1
+      FROM test_sessions s
+      WHERE s.session_id = session_result_snapshots.session_id
+    )
+  )
+  WITH CHECK (
+    EXISTS (
+      SELECT 1
+      FROM test_sessions s
+      WHERE s.session_id = session_result_snapshots.session_id
+    )
+  );
+
 CREATE POLICY "Eval results: service_role all"
   ON eval_results FOR ALL
   TO service_role
@@ -252,6 +290,7 @@ GRANT SELECT, INSERT, UPDATE, DELETE ON categories TO service_role, authenticate
 GRANT SELECT, INSERT, UPDATE, DELETE ON test_cases TO service_role, authenticated;
 GRANT SELECT, INSERT, UPDATE, DELETE ON test_sessions TO service_role, authenticated;
 GRANT SELECT, INSERT, UPDATE, DELETE ON eval_results TO service_role, authenticated;
+GRANT SELECT, INSERT, UPDATE, DELETE ON session_result_snapshots TO service_role, authenticated;
 GRANT SELECT, INSERT, UPDATE, DELETE ON default_settings TO service_role, authenticated;
 
 -- If you use anon key for API (e.g. Next.js server using service_role in env):

@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import type { DefaultSettingsRow } from "@/lib/db.types";
 import { persistSessionReviewSummaryForSession } from "@/lib/session-review-summary-refresh";
+import { refreshLatestSessionResultSnapshot } from "@/lib/session-snapshots";
 
 export async function POST(
   _request: Request,
@@ -67,5 +68,6 @@ export async function POST(
     return NextResponse.json({ error: outErr?.message ?? "Failed to load session after update" }, { status: 500 });
   }
 
+  await refreshLatestSessionResultSnapshot({ supabase, sessionId });
   return NextResponse.json({ session: sessionOut });
 }

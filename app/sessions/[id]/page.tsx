@@ -1,9 +1,9 @@
 "use client";
 
 import Link from "next/link";
-import { Pencil, RefreshCw, Save, X, Trash2, Check, Plus, Eye, EyeOff, Eraser } from "lucide-react";
+import { Pencil, RefreshCw, Save, X, Trash2, Check, Plus, Eye, EyeOff, Eraser, GitCommitHorizontal } from "lucide-react";
 import { useParams, useRouter } from "next/navigation";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import ReactMarkdown from "react-markdown";
 import { SummaryEditor } from "@/app/components/SummaryEditor";
 import { computeTokenCostParts } from "@/lib/token-cost";
@@ -56,10 +56,57 @@ type SessionModels = {
   summarizer_model: string | null;
 };
 
+type SnapshotListItem = {
+  snapshot_id: string;
+  created_at: string;
+  kind: string;
+  message: string | null;
+};
+
 function formatSessionDate(iso: string | null | undefined): string {
   if (!iso) return "";
   const d = new Date(iso);
   return Number.isNaN(d.getTime()) ? "" : d.toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" });
+}
+
+function formatSnapshotRelativeTime(iso: string): string {
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return "";
+  const diffMs = Date.now() - d.getTime();
+  const sec = Math.floor(diffMs / 1000);
+  if (sec < 60) return "just now";
+  const min = Math.floor(sec / 60);
+  if (min < 60) return `${min}m ago`;
+  const hr = Math.floor(min / 60);
+  if (hr < 24) return `${hr}h ago`;
+  const day = Math.floor(hr / 24);
+  if (day < 7) return `${day}d ago`;
+  return d.toLocaleDateString(undefined, { month: "short", day: "numeric" });
+}
+
+function snapshotKindPresentation(kind: string): { label: string; badgeClass: string } {
+  if (kind === "before_add_version") {
+    return {
+      label: "Before add version",
+      badgeClass: "bg-amber-100 text-amber-900 ring-1 ring-amber-200/80",
+    };
+  }
+  if (kind === "before_delete_version") {
+    return {
+      label: "Before delete version",
+      badgeClass: "bg-rose-100 text-rose-900 ring-1 ring-rose-200/80",
+    };
+  }
+  if (kind === "current") {
+    return {
+      label: "Working copy",
+      badgeClass: "bg-slate-100 text-slate-800 ring-1 ring-slate-200/80",
+    };
+  }
+  return {
+    label: kind.replaceAll("_", " "),
+    badgeClass: "bg-stone-100 text-stone-800 ring-1 ring-stone-200/80",
+  };
 }
 
 function formatEvalTime(seconds: number): string {
@@ -178,6 +225,108 @@ type EvalResult = {
   comparison?: ComparisonData;
   behavior_review?: BehaviorReviewByVersion | null;
 };
+
+type SessionSnapshotPayload = {
+  session?: {
+    test_session_id?: string;
+    title?: string | null;
+    mode?: "single" | "comparison";
+    summary?: string | null;
+    session_review_summary?: unknown;
+  };
+  eval_results?: Array<{
+    eval_result_id: string;
+    test_case_id: string | null;
+    test_case_title: string | null;
+    comparison: ComparisonData | null;
+    behavior_review: unknown;
+    reason: string | null;
+    success: boolean;
+    score: number;
+    manually_edited?: boolean;
+    prompt_tokens?: number | null;
+    completion_tokens?: number | null;
+    total_tokens?: number | null;
+    cost_usd?: number | null;
+    evren_responses?: AnyVersionEntry[] | null;
+    test_cases?: EvalResult["test_cases"] | Record<string, unknown> | null;
+  }>;
+};
+
+function shortSnapshotId(snapshotId: string): string {
+  return snapshotId.replace(/-/g, "").slice(0, 7);
+}
+
+function normalizeSnapshotTestCases(raw: unknown): EvalResult["test_cases"] | null {
+  if (!raw || typeof raw !== "object") return null;
+  const o = raw as Record<string, unknown>;
+  return {
+    input_message: String(o.input_message ?? ""),
+    expected_state: String(o.expected_state ?? ""),
+    expected_behavior: String(o.expected_behavior ?? ""),
+    title: o.title != null && String(o.title).trim() ? String(o.title) : null,
+    type: o.type === "multi_turn" ? "multi_turn" : "single_turn",
+    turns: Array.isArray(o.turns) ? o.turns.map((x) => String(x)) : null,
+  };
+}
+
+/** Replay checkpoint rows as full EvalResult[] (merge with live rows for ids / session id). */
+function checkpointRowsToEvalResults(
+  payload: SessionSnapshotPayload,
+  live: EvalResult[],
+  testSessionId: string
+): EvalResult[] {
+  const rows = payload.eval_results;
+  if (!rows?.length) return live;
+  const liveById = new Map(live.map((r) => [r.eval_result_id, r]));
+  return rows.map((snap) => {
+    const liveRow = liveById.get(snap.eval_result_id);
+    const evrenArr =
+      Array.isArray(snap.evren_responses) && snap.evren_responses.length > 0 ? snap.evren_responses : null;
+    const testCases = normalizeSnapshotTestCases(snap.test_cases);
+    const comparison = snap.comparison ?? undefined;
+    const behaviorReview = snap.behavior_review as BehaviorReviewByVersion | null | undefined;
+
+    const base: EvalResult =
+      liveRow ??
+      ({
+        eval_result_id: snap.eval_result_id,
+        test_session_id: testSessionId,
+        test_case_id: snap.test_case_id ?? "",
+        success: snap.success,
+        score: snap.score,
+        reason: snap.reason,
+        prompt_tokens: snap.prompt_tokens ?? null,
+        completion_tokens: snap.completion_tokens ?? null,
+        total_tokens: snap.total_tokens ?? null,
+        cost_usd: snap.cost_usd ?? null,
+        manually_edited: snap.manually_edited ?? false,
+        evren_responses: evrenArr,
+        test_cases: testCases,
+        comparison: comparison ?? null,
+        behavior_review: behaviorReview ?? null,
+      } as EvalResult);
+
+    const mergedEvren = evrenArr && evrenArr.length > 0 ? evrenArr : base.evren_responses ?? null;
+    const mergedTc = testCases ?? base.test_cases ?? null;
+    return {
+      ...base,
+      test_case_id: snap.test_case_id ?? base.test_case_id,
+      evren_responses: mergedEvren,
+      test_cases: mergedTc,
+      comparison: comparison ?? base.comparison,
+      behavior_review: behaviorReview ?? base.behavior_review ?? null,
+      reason: snap.reason ?? base.reason,
+      success: snap.success,
+      score: snap.score,
+      manually_edited: snap.manually_edited ?? base.manually_edited,
+      prompt_tokens: snap.prompt_tokens ?? base.prompt_tokens,
+      completion_tokens: snap.completion_tokens ?? base.completion_tokens,
+      total_tokens: snap.total_tokens ?? base.total_tokens,
+      cost_usd: snap.cost_usd ?? base.cost_usd,
+    };
+  });
+}
 
 type AddVersionProgress = {
   stage: string;
@@ -500,16 +649,41 @@ export default function SessionDetailPage() {
   const [typeFilter, setTypeFilter] = useState<"" | "single_turn" | "multi_turn">("");
   const [sortBy, setSortBy] = useState<"id" | "score">("id");
   const [showComparatorMetrics, setShowComparatorMetrics] = useState(false);
+  const [snapshots, setSnapshots] = useState<SnapshotListItem[]>([]);
+  const [snapshotsLoading, setSnapshotsLoading] = useState(false);
+  const [snapshotsError, setSnapshotsError] = useState<string | null>(null);
+  const [activeSnapshotId, setActiveSnapshotId] = useState<string | null>(null);
+  const [activeSnapshotMeta, setActiveSnapshotMeta] = useState<SnapshotListItem | null>(null);
+  const [activeSnapshotPayload, setActiveSnapshotPayload] = useState<SessionSnapshotPayload | null>(null);
+  const [historyMenuOpen, setHistoryMenuOpen] = useState(false);
   const router = useRouter();
-  const versionEntries = useMemo(() => getVersionEntries(results), [results]);
+
+  const isViewingCheckpoint = Boolean(activeSnapshotId && activeSnapshotPayload);
+  const effectiveResults = useMemo(() => {
+    if (!isViewingCheckpoint || !activeSnapshotPayload) return results;
+    return checkpointRowsToEvalResults(activeSnapshotPayload, results, session?.test_session_id ?? "");
+  }, [isViewingCheckpoint, activeSnapshotPayload, results, session?.test_session_id]);
+
+  const displaySessionReviewSummary = useMemo(() => {
+    if (!isViewingCheckpoint || !activeSnapshotPayload?.session || !session) return sessionReviewSummary;
+    return mergeSessionReviewSummaryFromSession(
+      {
+        ...session,
+        session_review_summary: activeSnapshotPayload.session.session_review_summary,
+      } as Session,
+      effectiveResults
+    );
+  }, [isViewingCheckpoint, activeSnapshotPayload, session, sessionReviewSummary, effectiveResults]);
+
+  const versionEntries = useMemo(() => getVersionEntries(effectiveResults), [effectiveResults]);
   const versionCount = versionEntries.length;
-  const sessionCanonicalId = useMemo(() => buildCanonicalVersionIdMap(results).canonicalId, [results]);
+  const sessionCanonicalId = useMemo(() => buildCanonicalVersionIdMap(effectiveResults).canonicalId, [effectiveResults]);
   const comparisonStats = useMemo(() => {
     const statsMap = new Map<string, { version_id: string; version_name: string; wins: number; ties: number; losses: number }>();
     const idToName = new Map<string, string>();
     const nameToCanonicalId = new Map<string, string>();
 
-    for (const r of results) {
+    for (const r of effectiveResults) {
       for (const v of (r.evren_responses ?? [])) {
         if (!idToName.has(v.version_id)) idToName.set(v.version_id, v.version_name);
         if (!nameToCanonicalId.has(v.version_name)) nameToCanonicalId.set(v.version_name, v.version_id);
@@ -521,7 +695,7 @@ export default function SessionDetailPage() {
       return nameToCanonicalId.get(name) ?? vid;
     };
 
-    for (const r of results) {
+    for (const r of effectiveResults) {
       const versions = r.evren_responses ?? [];
       const tiers = r.comparison?.tiers;
 
@@ -555,10 +729,10 @@ export default function SessionDetailPage() {
     return Array.from(statsMap.values())
       .map((s) => ({ ...s, score: s.wins * 3 + s.ties * 1 }))
       .sort((a, b) => b.score - a.score);
-  }, [results]);
+  }, [effectiveResults]);
 
   const filteredResults = useMemo(() => {
-    const filtered = results.filter((r) => {
+    const filtered = effectiveResults.filter((r) => {
       if (!matchResultSearch(r, searchQuery)) return false;
       const evaluated = isResultEvaluated(r);
       if (passFailFilter === "pass" && (!evaluated || !r.success)) return false;
@@ -579,7 +753,7 @@ export default function SessionDetailPage() {
       });
     }
     return sorted;
-  }, [results, searchQuery, passFailFilter, typeFilter, sortBy]);
+  }, [effectiveResults, searchQuery, passFailFilter, typeFilter, sortBy]);
 
   const currentComparisonBasisFingerprint = useMemo(
     () =>
@@ -590,10 +764,11 @@ export default function SessionDetailPage() {
   );
 
   const sessionReviewSummaryStale = useMemo(() => {
+    if (isViewingCheckpoint) return false;
     const stored = session?.session_review_summary_basis_fingerprint ?? null;
     if (session?.mode !== "comparison" || stored == null) return false;
     return stored !== currentComparisonBasisFingerprint;
-  }, [session?.mode, session?.session_review_summary_basis_fingerprint, currentComparisonBasisFingerprint]);
+  }, [isViewingCheckpoint, session?.mode, session?.session_review_summary_basis_fingerprint, currentComparisonBasisFingerprint]);
 
   useEffect(() => {
     if (!id) return;
@@ -614,6 +789,72 @@ export default function SessionDetailPage() {
       .catch((e) => setError(e.message))
       .finally(() => setLoading(false));
   }, [id]);
+
+  const loadSnapshotsList = useCallback(async () => {
+    if (!id) return;
+    setSnapshotsLoading(true);
+    setSnapshotsError(null);
+    try {
+      const res = await fetch(`/api/sessions/${id}/snapshots`);
+      const data = (await res.json().catch(() => ({}))) as { error?: string; snapshots?: SnapshotListItem[] };
+      if (!res.ok || data.error) throw new Error(data.error ?? `Request failed (${res.status})`);
+      setSnapshots(Array.isArray(data.snapshots) ? data.snapshots : []);
+    } catch (e) {
+      setSnapshotsError(e instanceof Error ? e.message : "Failed to load snapshots");
+    } finally {
+      setSnapshotsLoading(false);
+    }
+  }, [id]);
+
+  useEffect(() => {
+    void loadSnapshotsList();
+  }, [loadSnapshotsList]);
+
+  useEffect(() => {
+    if (!isViewingCheckpoint) return;
+    setEditingReasonId(null);
+    setAiEditingComparisonId(null);
+    setEditingVersionId(null);
+  }, [isViewingCheckpoint]);
+
+  useEffect(() => {
+    setHistoryMenuOpen(false);
+  }, [id]);
+
+  useEffect(() => {
+    if (!historyMenuOpen) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setHistoryMenuOpen(false);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [historyMenuOpen]);
+
+  async function openSnapshot(meta: SnapshotListItem) {
+    setHistoryMenuOpen(false);
+    setActiveSnapshotId(meta.snapshot_id);
+    setActiveSnapshotMeta(meta);
+    setActiveSnapshotPayload(null);
+    setSnapshotsError(null);
+    try {
+      const res = await fetch(`/api/sessions/${id}/snapshots/${meta.snapshot_id}`);
+      const data = (await res.json().catch(() => ({}))) as { error?: string; snapshot?: { payload?: unknown } };
+      if (!res.ok || data.error) throw new Error(data.error ?? `Request failed (${res.status})`);
+      const payload = (data.snapshot?.payload ?? null) as SessionSnapshotPayload | null;
+      setActiveSnapshotPayload(payload);
+    } catch (e) {
+      setSnapshotsError(e instanceof Error ? e.message : "Failed to open snapshot");
+      setActiveSnapshotId(null);
+      setActiveSnapshotMeta(null);
+      setActiveSnapshotPayload(null);
+    }
+  }
+
+  function closeSnapshot() {
+    setActiveSnapshotId(null);
+    setActiveSnapshotMeta(null);
+    setActiveSnapshotPayload(null);
+  }
 
   async function saveSessionReviewSummary() {
     if (!id) return;
@@ -984,6 +1225,7 @@ export default function SessionDetailPage() {
                 .catch(() => {
                   /* keep prior form state */
                 });
+              void loadSnapshotsList();
               playCompletionSound();
               notifyVersionAdded();
               setAddVersionProgress(null);
@@ -1069,6 +1311,7 @@ export default function SessionDetailPage() {
       }
       const nextResults = Array.isArray(data.results) ? data.results : [];
       setResults(nextResults);
+      void loadSnapshotsList();
       setDraftVersions((prev) => prev.filter((d) => d.version_id !== versionId));
       if (editingVersionId === versionId) setEditingVersionId(null);
       const nextEntries = getVersionEntries(nextResults);
@@ -1195,20 +1438,20 @@ export default function SessionDetailPage() {
       .finally(() => setResummarizing(false));
   }
 
-  const evaluatedResults = results.filter(isResultEvaluated);
+  const evaluatedResults = effectiveResults.filter(isResultEvaluated);
   const hasEvaluationResults = evaluatedResults.length > 0;
 
   const passedTestCasesDisplay = useMemo(() => {
     if (session?.mode === "comparison") {
-      const { canonicalId } = buildCanonicalVersionIdMap(results);
+      const { canonicalId } = buildCanonicalVersionIdMap(effectiveResults);
       const championId =
         comparisonStats.length > 0 ? comparisonStats[0].version_id : versionEntries[0]?.version_id ?? null;
       if (!championId) return { text: "—" as const, title: undefined as string | undefined };
       const canonicalChampion = canonicalId(championId);
       const championName = comparisonStats[0]?.version_name ?? versionEntries[0]?.version_name ?? null;
-      const total = results.length;
+      const total = effectiveResults.length;
       let passed = 0;
-      for (const r of results) {
+      for (const r of effectiveResults) {
         const v = championPassForComparisonRow(r, canonicalChampion, canonicalId, versionCount);
         if (v === true) passed++;
       }
@@ -1218,13 +1461,13 @@ export default function SessionDetailPage() {
         : undefined;
       return { text: `${passed} / ${total}` as const, title };
     }
-    const evaluated = results.filter(isResultEvaluated);
+    const evaluated = effectiveResults.filter(isResultEvaluated);
     if (evaluated.length === 0) return { text: "—" as const, title: undefined as string | undefined };
     return {
       text: `${evaluated.filter((r) => r.success).length} / ${evaluated.length}` as const,
       title: undefined as string | undefined,
     };
-  }, [session?.mode, results, comparisonStats, versionEntries, versionCount]);
+  }, [session?.mode, effectiveResults, comparisonStats, versionEntries, versionCount]);
 
   const evaluatorModelName = models.evaluator_model ?? "gemini-3-flash-preview";
   const evaluatorTokensSummary = useMemo(() => {
@@ -1259,7 +1502,7 @@ export default function SessionDetailPage() {
     let total = 0;
     let any = false;
     let costUsd = 0;
-    for (const r of results) {
+    for (const r of effectiveResults) {
       const u = getComparisonTokenUsage(r);
       if (!u) continue;
       any = true;
@@ -1269,7 +1512,7 @@ export default function SessionDetailPage() {
       costUsd += u.costUsd;
     }
     return { any, prompt, completion, total, costUsd };
-  }, [results]);
+  }, [effectiveResults]);
   const comparisonCostSummary = useMemo(() => {
     if (!comparisonTokensSummary.any) return null;
     return computeTokenCostParts(comparisonTokensSummary.prompt, comparisonTokensSummary.completion, evaluatorModelName);
@@ -1297,8 +1540,8 @@ export default function SessionDetailPage() {
     });
   }
 
-  const anyMultiRunInSession = evalResultsHaveAnyMultiRun(results);
-  const anyMultiTurnInSession = evalResultsHaveAnyMultiTurn(results);
+  const anyMultiRunInSession = evalResultsHaveAnyMultiRun(effectiveResults);
+  const anyMultiTurnInSession = evalResultsHaveAnyMultiTurn(effectiveResults);
 
   const autoRunMode =
     `${anyMultiRunInSession ? "repeated-run" : "single-run"}, ${anyMultiTurnInSession ? "multi-turn" : "single-turn"}`;
@@ -1339,13 +1582,13 @@ export default function SessionDetailPage() {
     <div className="mx-auto max-w-5xl px-4 py-8 sm:px-6 lg:px-8">
       <div className="flex flex-wrap items-center justify-between gap-2">
         <Link href="/sessions" className="text-sm text-stone-500 hover:text-stone-700">← Sessions</Link>
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2.5">
           {session.mode !== "single" && (
-            <>
+            <div className="relative flex flex-wrap items-center gap-2.5">
               <button
                 type="button"
                 onClick={toggleComparatorMetrics}
-                disabled={addingVersion || deleting}
+                disabled={addingVersion || deleting || isViewingCheckpoint}
                 className="inline-flex items-center gap-2 rounded-lg border border-stone-200 bg-white px-3 py-1.5 text-sm font-medium text-stone-700 hover:bg-stone-50 disabled:opacity-50"
                 title={showComparatorMetrics ? "Hide details" : "Show details"}
                 aria-pressed={showComparatorMetrics}
@@ -1360,8 +1603,30 @@ export default function SessionDetailPage() {
               </button>
               <button
                 type="button"
+                onClick={() => {
+                  setHistoryMenuOpen((prev) => {
+                    if (!prev) void loadSnapshotsList();
+                    return !prev;
+                  });
+                }}
+                aria-expanded={historyMenuOpen}
+                aria-haspopup="dialog"
+                aria-controls="session-history-popover"
+                id="session-history-trigger"
+                className={`inline-flex items-center gap-2 rounded-lg border px-3 py-1.5 text-sm font-medium transition-colors disabled:opacity-50 ${
+                  historyMenuOpen
+                    ? "border-amber-400 bg-amber-100 text-amber-950"
+                    : "border-amber-300 bg-amber-50 text-amber-900 hover:bg-amber-100"
+                }`}
+                title="Browse checkpoints (saved before add/delete version)"
+              >
+                <GitCommitHorizontal className="h-4 w-4 shrink-0 text-amber-700" aria-hidden />
+                History
+              </button>
+              <button
+                type="button"
                 onClick={addVersion}
-                disabled={addingVersion || deleting}
+                disabled={addingVersion || deleting || isViewingCheckpoint}
                 className="inline-flex items-center gap-2 rounded-lg border border-emerald-300 bg-emerald-50 px-3 py-1.5 text-sm font-medium text-emerald-700 hover:bg-emerald-100 disabled:opacity-50"
                 title="Manage versions"
               >
@@ -1370,7 +1635,93 @@ export default function SessionDetailPage() {
                 </svg>
                 {addingVersion ? "Working…" : "Manage versions"}
               </button>
-            </>
+
+              {historyMenuOpen && (
+                <>
+                  <button
+                    type="button"
+                    aria-label="Close history"
+                    className="fixed inset-0 z-40 cursor-default bg-transparent"
+                    onClick={() => setHistoryMenuOpen(false)}
+                  />
+                  <div
+                    id="session-history-popover"
+                    role="dialog"
+                    aria-labelledby="session-history-popover-title"
+                    className="absolute right-0 z-50 mt-1 w-[min(calc(100vw-2rem),22rem)] overflow-hidden rounded-lg border border-stone-200 bg-white shadow-lg ring-1 ring-black/5"
+                  >
+                    <div className="flex items-center justify-between gap-2 border-b border-stone-200 bg-stone-50 px-3 py-2">
+                      <h2 id="session-history-popover-title" className="text-xs font-semibold uppercase tracking-wide text-stone-600">
+                        History
+                      </h2>
+                      <button
+                        type="button"
+                        onClick={() => void loadSnapshotsList()}
+                        disabled={snapshotsLoading}
+                        className="inline-flex items-center gap-1 rounded border border-stone-200 bg-white px-2 py-1 text-[11px] font-medium text-stone-700 hover:bg-stone-100 disabled:opacity-50"
+                      >
+                        <RefreshCw className={snapshotsLoading ? "h-3 w-3 animate-spin" : "h-3 w-3"} aria-hidden />
+                        Refresh
+                      </button>
+                    </div>
+                    {snapshotsError && (
+                      <div className="border-b border-red-100 bg-red-50 px-3 py-2 text-xs text-red-800">{snapshotsError}</div>
+                    )}
+                    <div className="max-h-64 overflow-y-auto">
+                      {snapshotsLoading && snapshots.length === 0 ? (
+                        <div className="flex items-center gap-2 px-3 py-5 text-sm text-stone-500">
+                          <RefreshCw className="h-4 w-4 animate-spin" aria-hidden />
+                          Loading…
+                        </div>
+                      ) : snapshots.length === 0 ? (
+                        <p className="px-3 py-4 text-sm text-stone-600">
+                          No checkpoints yet. Add or delete a version to create one.
+                        </p>
+                      ) : (
+                        <ul className="divide-y divide-stone-100">
+                          {snapshots.map((s) => {
+                            const isSel = s.snapshot_id === activeSnapshotId;
+                            const abs = new Date(s.created_at);
+                            const timeStr = Number.isNaN(abs.getTime()) ? s.created_at : abs.toLocaleString();
+                            return (
+                              <li key={s.snapshot_id}>
+                                <button
+                                  type="button"
+                                  onClick={() => void openSnapshot(s)}
+                                  className={
+                                    isSel
+                                      ? "flex w-full items-start gap-3 bg-sky-50/90 px-3 py-2.5 text-left ring-1 ring-inset ring-sky-200/80"
+                                      : "flex w-full items-start gap-3 px-3 py-2.5 text-left hover:bg-stone-50"
+                                  }
+                                >
+                                  <span
+                                    className={`mt-1.5 h-2.5 w-2.5 shrink-0 rounded-full border-2 ${
+                                      isSel ? "border-sky-600 bg-sky-600" : "border-stone-300 bg-white"
+                                    }`}
+                                    aria-hidden
+                                  />
+                                  <span className="min-w-0 flex-1">
+                                    <span className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5">
+                                      <code className="font-mono text-xs text-stone-700">{shortSnapshotId(s.snapshot_id)}</code>
+                                      <span className="text-[11px] text-stone-500">
+                                        {formatSnapshotRelativeTime(s.created_at) || timeStr}
+                                      </span>
+                                    </span>
+                                    <span className="mt-0.5 block text-left text-sm font-medium text-stone-900">
+                                      {s.message ?? snapshotKindPresentation(s.kind).label}
+                                    </span>
+                                  </span>
+                                </button>
+                              </li>
+                            );
+                          })}
+                        </ul>
+                      )}
+                    </div>
+                  </div>
+                </>
+              )}
+            </div>
           )}
           <button
             type="button"
@@ -1462,13 +1813,52 @@ export default function SessionDetailPage() {
         )}
       </header>
 
+      {session.mode !== "single" && (
+        <>
+          {activeSnapshotId && activeSnapshotMeta && (
+            <div
+              className={`mt-4 flex flex-wrap items-center justify-between gap-3 rounded-md border px-4 py-2.5 text-sm ${
+                isViewingCheckpoint
+                  ? "border-amber-300 bg-amber-50 text-amber-950"
+                  : "border-stone-200 bg-stone-50 text-stone-700"
+              }`}
+            >
+              <div className="flex min-w-0 flex-1 flex-wrap items-baseline gap-x-2 gap-y-1">
+                <GitCommitHorizontal className="h-4 w-4 shrink-0 text-current opacity-70" aria-hidden />
+                <code className="rounded bg-black/5 px-1.5 py-0.5 font-mono text-xs font-semibold">
+                  {shortSnapshotId(activeSnapshotMeta.snapshot_id)}
+                </code>
+                <span className="min-w-0 truncate font-medium">
+                  {activeSnapshotMeta.message ?? snapshotKindPresentation(activeSnapshotMeta.kind).label}
+                </span>
+                {!isViewingCheckpoint && (
+                  <span className="text-xs opacity-80">Loading checkpoint into the page…</span>
+                )}
+                {isViewingCheckpoint && (
+                  <span className="text-xs text-amber-900/85">
+                    Read-only view — same layout as live. Exit to edit or run comparisons again.
+                  </span>
+                )}
+              </div>
+              <button
+                type="button"
+                onClick={closeSnapshot}
+                className="shrink-0 rounded-md border border-stone-300 bg-white px-3 py-1.5 text-xs font-semibold text-stone-800 shadow-sm hover:bg-stone-50"
+              >
+                Exit
+              </button>
+            </div>
+          )}
+        </>
+      )}
+
       <div className="mt-6 rounded-xl border border-stone-200 bg-white p-5 shadow-sm">
         <div className="flex items-center justify-between">
           <h2 className="text-xl font-semibold tracking-tight text-stone-900">Run metadata</h2>
           <button
             type="button"
             onClick={() => void saveRunMetadata()}
-            disabled={savingRunMetadata}
+            disabled={savingRunMetadata || isViewingCheckpoint}
             className={sessionSaveButtonClass({ working: savingRunMetadata, saved: savedRunMetadata })}
             title="Save run metadata"
           >
@@ -1921,7 +2311,7 @@ export default function SessionDetailPage() {
             <button
               type="button"
               onClick={() => { void resummarizeSessionReviewSummary(); }}
-              disabled={resummarizingSessionReviewSummary}
+              disabled={resummarizingSessionReviewSummary || isViewingCheckpoint}
               className="inline-flex items-center gap-1.5 rounded-lg border border-emerald-300 bg-emerald-50 px-3 py-2 text-sm font-medium text-emerald-800 hover:bg-emerald-100 hover:border-emerald-400 disabled:opacity-50"
             >
               <RefreshCw className="h-3.5 w-3.5 shrink-0" aria-hidden />
@@ -1930,7 +2320,7 @@ export default function SessionDetailPage() {
             <button
               type="button"
               onClick={() => { void saveSessionReviewSummary(); }}
-              disabled={savingSessionReviewSummary}
+              disabled={savingSessionReviewSummary || isViewingCheckpoint}
               className={sessionSaveButtonClass({
                 working: savingSessionReviewSummary,
                 saved: savedSessionReviewSummary,
@@ -1948,10 +2338,13 @@ export default function SessionDetailPage() {
               <label className="text-xs font-medium uppercase tracking-wide text-stone-400">Goal</label>
               <textarea
                 rows={2}
-                value={sessionReviewSummary.goal ?? ""}
+                readOnly={isViewingCheckpoint}
+                value={displaySessionReviewSummary.goal ?? ""}
                 onChange={(e) => setSessionReviewSummary((p) => ({ ...p, goal: e.target.value.trim() ? e.target.value : null }))}
                 placeholder="What was this session trying to validate?"
-                className="mt-1 block w-full rounded-lg border border-stone-200 bg-white px-3 py-2 text-sm text-stone-900 leading-relaxed focus:border-stone-400 focus:outline-none focus:ring-1 focus:ring-stone-400"
+                className={`mt-1 block w-full rounded-lg border border-stone-200 px-3 py-2 text-sm leading-relaxed focus:border-stone-400 focus:outline-none focus:ring-1 focus:ring-stone-400 ${
+                  isViewingCheckpoint ? "cursor-default bg-stone-50 text-stone-800" : "bg-white text-stone-900"
+                }`}
               />
             </div>
 
@@ -1959,10 +2352,13 @@ export default function SessionDetailPage() {
               <label className="text-xs font-medium uppercase tracking-wide text-stone-400">Cases / versions tested</label>
               <input
                 type="text"
-                value={sessionReviewSummary.cases_versions_tested ?? ""}
+                readOnly={isViewingCheckpoint}
+                value={displaySessionReviewSummary.cases_versions_tested ?? ""}
                 onChange={(e) => setSessionReviewSummary((p) => ({ ...p, cases_versions_tested: e.target.value.trim() ? e.target.value : null }))}
                 placeholder="e.g. 24 cases; versions: v1, v2"
-                className="mt-1 block w-full rounded-lg border border-stone-200 bg-white px-3 py-2 text-sm text-stone-900 focus:border-stone-400 focus:outline-none focus:ring-1 focus:ring-stone-400"
+                className={`mt-1 block w-full rounded-lg border border-stone-200 px-3 py-2 text-sm focus:border-stone-400 focus:outline-none focus:ring-1 focus:ring-stone-400 ${
+                  isViewingCheckpoint ? "cursor-default bg-stone-50 text-stone-800" : "bg-white text-stone-900"
+                }`}
               />
             </div>
 
@@ -1970,10 +2366,13 @@ export default function SessionDetailPage() {
               <label className="text-xs font-medium uppercase tracking-wide text-stone-400">Pass/fail summary</label>
               <input
                 type="text"
-                value={sessionReviewSummary.pass_fail_summary ?? ""}
+                readOnly={isViewingCheckpoint}
+                value={displaySessionReviewSummary.pass_fail_summary ?? ""}
                 onChange={(e) => setSessionReviewSummary((p) => ({ ...p, pass_fail_summary: e.target.value.trim() ? e.target.value : null }))}
                 placeholder="e.g. 18 / 24 passed"
-                className="mt-1 block w-full rounded-lg border border-stone-200 bg-white px-3 py-2 text-sm text-stone-900 focus:border-stone-400 focus:outline-none focus:ring-1 focus:ring-stone-400"
+                className={`mt-1 block w-full rounded-lg border border-stone-200 px-3 py-2 text-sm focus:border-stone-400 focus:outline-none focus:ring-1 focus:ring-stone-400 ${
+                  isViewingCheckpoint ? "cursor-default bg-stone-50 text-stone-800" : "bg-white text-stone-900"
+                }`}
               />
             </div>
 
@@ -1981,12 +2380,13 @@ export default function SessionDetailPage() {
               <div>
                 <label className="text-xs font-medium uppercase tracking-wide text-stone-400">Overall finding</label>
                 <select
-                  value={sessionReviewSummary.overall_finding ?? ""}
+                  disabled={isViewingCheckpoint}
+                  value={displaySessionReviewSummary.overall_finding ?? ""}
                   onChange={(e) => {
                     const v = e.target.value as SessionOverallFinding | "";
                     setSessionReviewSummary((p) => ({ ...p, overall_finding: v === "deterministic" || v === "likely_variable" || v === "unclear" ? v : null }));
                   }}
-                  className="mt-1 block w-full rounded-lg border border-stone-200 bg-white px-3 py-2 text-sm text-stone-900 focus:border-stone-400 focus:outline-none focus:ring-1 focus:ring-stone-400"
+                  className="mt-1 block w-full rounded-lg border border-stone-200 bg-white px-3 py-2 text-sm text-stone-900 focus:border-stone-400 focus:outline-none focus:ring-1 focus:ring-stone-400 disabled:cursor-not-allowed disabled:bg-stone-50"
                 >
                   <option value="">—</option>
                   <option value="deterministic">Deterministic</option>
@@ -1998,12 +2398,13 @@ export default function SessionDetailPage() {
               <div>
                 <label className="text-xs font-medium uppercase tracking-wide text-stone-400">Trust severity</label>
                 <select
-                  value={sessionReviewSummary.trust_severity ?? ""}
+                  disabled={isViewingCheckpoint}
+                  value={displaySessionReviewSummary.trust_severity ?? ""}
                   onChange={(e) => {
                     const v = e.target.value as SessionTrustSeverity | "";
                     setSessionReviewSummary((p) => ({ ...p, trust_severity: v === "high" || v === "medium" || v === "low" ? v : null }));
                   }}
-                  className="mt-1 block w-full rounded-lg border border-stone-200 bg-white px-3 py-2 text-sm text-stone-900 focus:border-stone-400 focus:outline-none focus:ring-1 focus:ring-stone-400"
+                  className="mt-1 block w-full rounded-lg border border-stone-200 bg-white px-3 py-2 text-sm text-stone-900 focus:border-stone-400 focus:outline-none focus:ring-1 focus:ring-stone-400 disabled:cursor-not-allowed disabled:bg-stone-50"
                 >
                   <option value="">—</option>
                   <option value="high">High</option>
@@ -2015,12 +2416,13 @@ export default function SessionDetailPage() {
               <div>
                 <label className="text-xs font-medium uppercase tracking-wide text-stone-400">Recommendation</label>
                 <select
-                  value={sessionReviewSummary.recommendation ?? ""}
+                  disabled={isViewingCheckpoint}
+                  value={displaySessionReviewSummary.recommendation ?? ""}
                   onChange={(e) => {
                     const v = e.target.value as SessionRecommendation | "";
                     setSessionReviewSummary((p) => ({ ...p, recommendation: v === "ship" || v === "hold" || v === "investigate" ? v : null }));
                   }}
-                  className="mt-1 block w-full rounded-lg border border-stone-200 bg-white px-3 py-2 text-sm text-stone-900 focus:border-stone-400 focus:outline-none focus:ring-1 focus:ring-stone-400"
+                  className="mt-1 block w-full rounded-lg border border-stone-200 bg-white px-3 py-2 text-sm text-stone-900 focus:border-stone-400 focus:outline-none focus:ring-1 focus:ring-stone-400 disabled:cursor-not-allowed disabled:bg-stone-50"
                 >
                   <option value="">—</option>
                   <option value="ship">Ship</option>
@@ -2034,10 +2436,13 @@ export default function SessionDetailPage() {
               <label className="text-xs font-medium uppercase tracking-wide text-stone-400">What still needs confirmation</label>
               <textarea
                 rows={4}
-                value={sessionReviewSummary.needs_confirmation ?? ""}
+                readOnly={isViewingCheckpoint}
+                value={displaySessionReviewSummary.needs_confirmation ?? ""}
                 onChange={(e) => setSessionReviewSummary((p) => ({ ...p, needs_confirmation: e.target.value.trim() ? e.target.value : null }))}
                 placeholder="What would you rerun / double-check to be confident?"
-                className="mt-1 block w-full rounded-lg border border-stone-200 bg-white px-3 py-2 text-sm text-stone-900 leading-relaxed focus:border-stone-400 focus:outline-none focus:ring-1 focus:ring-stone-400"
+                className={`mt-1 block w-full rounded-lg border border-stone-200 px-3 py-2 text-sm leading-relaxed focus:border-stone-400 focus:outline-none focus:ring-1 focus:ring-stone-400 ${
+                  isViewingCheckpoint ? "cursor-default bg-stone-50 text-stone-800" : "bg-white text-stone-900"
+                }`}
               />
             </div>
           </div>
@@ -2047,7 +2452,7 @@ export default function SessionDetailPage() {
               <label className="text-xs font-medium uppercase tracking-wide text-stone-400">Top failure themes</label>
               <div className="mt-2 grid grid-cols-1 gap-2 sm:grid-cols-2">
                 {SESSION_REVIEW_FAILURE_TAXONOMY.map((t) => {
-                  const checked = sessionReviewSummary.top_failure_themes.includes(t.key);
+                  const checked = displaySessionReviewSummary.top_failure_themes.includes(t.key);
                   return (
                     <label
                       key={t.key}
@@ -2055,6 +2460,7 @@ export default function SessionDetailPage() {
                     >
                       <input
                         type="checkbox"
+                        disabled={isViewingCheckpoint}
                         checked={checked}
                         onChange={(e) => {
                           const next = e.target.checked;
@@ -2115,7 +2521,7 @@ export default function SessionDetailPage() {
                     />
                     <button
                       type="button"
-                      disabled={addingVersion || deletingVersionId != null}
+                      disabled={addingVersion || deletingVersionId != null || isViewingCheckpoint}
                       onClick={() => {
                         if (editingVersionId === draft.version_id) {
                           const trimmed = draft.version_name.trim();
@@ -2138,7 +2544,7 @@ export default function SessionDetailPage() {
                     </button>
                     <button
                       type="button"
-                      disabled={addingVersion || deletingVersionId != null || draftVersions.length <= 1}
+                      disabled={addingVersion || deletingVersionId != null || draftVersions.length <= 1 || isViewingCheckpoint}
                       onClick={() => deleteVersionAt(draft.version_id)}
                       className="inline-flex h-9 w-9 items-center justify-center rounded-lg border border-red-200 bg-white text-red-600 hover:bg-red-50 disabled:opacity-50"
                       title="Delete version"
@@ -2229,7 +2635,7 @@ export default function SessionDetailPage() {
               <button
                 type="button"
                 onClick={() => setShowAddVersionModal(false)}
-                disabled={addingVersion}
+                disabled={addingVersion || isViewingCheckpoint}
                 className="inline-flex items-center gap-1.5 rounded-lg border border-stone-200 px-4 py-2 text-sm font-medium text-stone-700 hover:bg-stone-50 disabled:opacity-50"
               >
                 <X className="h-4 w-4 shrink-0" aria-hidden />
@@ -2238,7 +2644,7 @@ export default function SessionDetailPage() {
               <button
                 type="button"
                 onClick={saveVersionNamesOnly}
-                disabled={addingVersion || savingNames}
+                disabled={addingVersion || savingNames || isViewingCheckpoint}
                 className={sessionSaveButtonClass({ working: savingNames })}
               >
                 <Save className="h-3 w-3 shrink-0" aria-hidden />
@@ -2247,7 +2653,7 @@ export default function SessionDetailPage() {
               <button
                 type="button"
                 onClick={confirmAddVersion}
-                disabled={addingVersion || versionCount >= 3}
+                disabled={addingVersion || versionCount >= 3 || isViewingCheckpoint}
                 className="inline-flex items-center gap-1.5 rounded-lg bg-emerald-600 px-4 py-2 text-sm font-medium text-white hover:bg-emerald-500 disabled:opacity-50"
               >
                 <Plus className="h-4 w-4 shrink-0" aria-hidden />
@@ -2460,6 +2866,7 @@ export default function SessionDetailPage() {
                 ) : isEvaluated ? (
                   <button
                     type="button"
+                    disabled={isViewingCheckpoint}
                     onClick={() => {
                       setExpandedResultId(r.eval_result_id);
                       setEditingReasonId(r.eval_result_id);
@@ -2787,7 +3194,7 @@ export default function SessionDetailPage() {
                     return (
                       <>
                         <hr className="border-stone-200" />
-                        <div>
+                        <div className={isViewingCheckpoint ? "pointer-events-none select-none opacity-[0.97]" : undefined}>
                           <div className="flex flex-wrap items-center justify-between gap-2">
                             <div className="flex items-center gap-2">
                               <p className="text-xs font-medium uppercase tracking-wide text-stone-400">Behavior review</p>
@@ -2795,11 +3202,12 @@ export default function SessionDetailPage() {
                             <div className="flex items-center gap-2">
                               <button
                                 type="button"
+                                disabled={isViewingCheckpoint}
                                 onClick={(e) => {
                                   e.stopPropagation();
                                   clearBehaviorReview(r);
                                 }}
-                                className="inline-flex items-center gap-1 rounded-lg border border-stone-300 bg-white px-2.5 py-1.5 text-xs font-medium text-stone-600 transition-colors hover:bg-stone-50"
+                                className="inline-flex items-center gap-1 rounded-lg border border-stone-300 bg-white px-2.5 py-1.5 text-xs font-medium text-stone-600 transition-colors hover:bg-stone-50 disabled:opacity-50"
                               >
                                 <Eraser className="h-3 w-3" />
                                 Clear
@@ -2811,6 +3219,7 @@ export default function SessionDetailPage() {
                                   void saveBehaviorReview(r);
                                 }}
                                 disabled={
+                                  isViewingCheckpoint ||
                                   savingBehaviorReviewId === r.eval_result_id ||
                                   savedBehaviorReviewId === r.eval_result_id
                                 }
@@ -3167,6 +3576,7 @@ export default function SessionDetailPage() {
                               ) : (
                                 <button
                                   type="button"
+                                  disabled={isViewingCheckpoint}
                                   onClick={() => {
                                     setAiEditingComparisonId(r.eval_result_id);
                                     setAiComparisonFeedback("");

@@ -51,10 +51,10 @@ export async function POST(request: Request) {
   }
   const evrenModelApiUrl = body.evren_model_api_url;
   if (!evrenModelApiUrl?.trim()) return NextResponse.json({ error: "evren_model_api_url required" }, { status: 400 });
-  const sessionMode = body.mode === "comparison" ? "comparison" : "single";
+  const sessionMode: "comparison" = "comparison";
   const runCount = Number.isFinite(body.run_count) ? Math.max(1, Math.floor(body.run_count as number)) : 1;
-  const useEvaluator = sessionMode === "single";
-  const useSummarizer = sessionMode === "single";
+  const useEvaluator = false;
+  const useSummarizer = false;
   const apiKey = process.env.GEMINI_API_KEY;
   if ((useEvaluator || useSummarizer) && !apiKey) {
     return NextResponse.json({ error: "Missing GEMINI_API_KEY" }, { status: 500 });

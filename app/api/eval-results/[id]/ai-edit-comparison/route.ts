@@ -6,6 +6,7 @@ import { loadContextPack } from "@/lib/context-pack";
 import type { ComparisonData, TestCase } from "@/lib/types";
 import type { AnyVersionEntry, DefaultSettingsRow, VersionEntry } from "@/lib/db.types";
 import { normalizeVersionEntry } from "@/lib/db.types";
+import { refreshLatestSessionResultSnapshot } from "@/lib/session-snapshots";
 
 type Body = {
   feedback?: string;
@@ -113,7 +114,7 @@ export async function POST(
   const { data: evalRowRaw, error: evalRowError } = await supabase
     .from("eval_results")
     .select(
-      "evren_responses, comparison, test_cases(test_case_id, input_message, expected_state, expected_behavior, title, type, turns, forbidden, notes, img_url)"
+      "session_id, evren_responses, comparison, test_cases(test_case_id, input_message, expected_state, expected_behavior, title, type, turns, forbidden, notes, img_url)"
     )
     .eq("eval_result_id", id)
     .maybeSingle();
@@ -125,10 +126,12 @@ export async function POST(
   }
 
   const evalRow = evalRowRaw as {
+    session_id?: string;
     evren_responses: unknown;
     comparison: unknown;
     test_cases: Record<string, unknown> | Record<string, unknown>[] | null;
   };
+  const sessionId = typeof evalRow.session_id === "string" ? evalRow.session_id : null;
 
   const tcJoined = evalRow.test_cases;
   const tcRow = Array.isArray(tcJoined) ? tcJoined[0] : tcJoined;
@@ -212,6 +215,10 @@ export async function POST(
     .update({ comparison: validated.value, manually_edited: true } as never)
     .eq("eval_result_id", id);
   if (updateError) return NextResponse.json({ error: updateError.message }, { status: 500 });
+
+  if (sessionId) {
+    await refreshLatestSessionResultSnapshot({ supabase, sessionId });
+  }
 
   return NextResponse.json({ comparison: validated.value });
 }
