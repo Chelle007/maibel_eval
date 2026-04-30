@@ -17,7 +17,8 @@ CREATE TABLE users (
   updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
--- User-editable categories (add/remove/rename via UI; soft delete via deleted_at)
+-- User-editable categories (DELETE via API removes row permanently; test_cases.category_id SET NULL.)
+-- Legacy-only: deleted_at + partial unique index; optional cleanup script schema-maintenance-remove-legacy-soft-deleted-categories.sql
 CREATE TABLE categories (
   category_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   name        TEXT NOT NULL,
@@ -92,7 +93,8 @@ CREATE TABLE eval_results (
   updated_at         TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
--- Snapshot history of session results (Git-like "commits" for add/delete version).
+-- Snapshot history of session results (Git-like “commits”). Removing a snapshot row deletes payload from DB.
+-- Deleting a test_session cascades DELETE here (and eval_results); see FK below.
 CREATE TABLE session_result_snapshots (
   snapshot_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   session_id  UUID NOT NULL REFERENCES test_sessions(session_id) ON DELETE CASCADE,

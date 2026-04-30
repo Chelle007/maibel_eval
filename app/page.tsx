@@ -3,11 +3,12 @@
 import { useState, useEffect } from "react";
 import { PageHeader } from "@/app/components/PageHeader";
 import { useEvalRun } from "@/app/context/EvalRunContext";
+import { DEFAULT_EVAL_LLM_MODEL } from "@/lib/eval-llm-defaults";
 
 /** On Vercel, set NEXT_PUBLIC_EVREN_API_URL to your deployed Evren service URL. */
 const FALLBACK_EVREN_URL = process.env.NEXT_PUBLIC_EVREN_API_URL || "http://localhost:8000";
-const FALLBACK_EVALUATOR_MODEL = "gemini-3-flash-preview";
-const FALLBACK_SUMMARIZER_MODEL = "gemini-3-flash-preview";
+const FALLBACK_EVALUATOR_MODEL = DEFAULT_EVAL_LLM_MODEL;
+const FALLBACK_SUMMARIZER_MODEL = DEFAULT_EVAL_LLM_MODEL;
 
 function requestNotificationPermission() {
   if (typeof window === "undefined" || !("Notification" in window)) return;
@@ -62,7 +63,7 @@ export default function Home() {
     <div className="mx-auto max-w-xl px-4 py-8 sm:px-6 lg:px-8">
       <PageHeader
         title="Run evaluation"
-        description="Runs all test cases from the database: Evren → Gemini evaluator. Results are saved to a new session."
+        description="Runs all test cases from the database: Evren → LLM evaluator (Claude Haiku 4.5 by default). Results are saved to a new session."
       />
       <form onSubmit={handleSubmit} className="mt-8 rounded-xl border border-stone-200 bg-white p-6 shadow-sm">
         <div>
@@ -98,7 +99,7 @@ export default function Home() {
                 type="text"
                 value={evaluatorModel}
                 onChange={(e) => setEvaluatorModel(e.target.value)}
-                placeholder="gemini-3-flash-preview"
+                placeholder={DEFAULT_EVAL_LLM_MODEL}
                 className="mt-1.5 block w-full rounded-lg border border-stone-200 bg-white px-3 py-2.5 text-stone-900 placeholder:text-stone-400 focus:border-stone-400 focus:outline-none focus:ring-1 focus:ring-stone-400"
               />
             </div>
@@ -108,7 +109,7 @@ export default function Home() {
                 type="text"
                 value={summarizerModel}
                 onChange={(e) => setSummarizerModel(e.target.value)}
-                placeholder="gemini-3-flash-preview"
+                placeholder={DEFAULT_EVAL_LLM_MODEL}
                 className="mt-1.5 block w-full rounded-lg border border-stone-200 bg-white px-3 py-2.5 text-stone-900 placeholder:text-stone-400 focus:border-stone-400 focus:outline-none focus:ring-1 focus:ring-stone-400"
               />
             </div>

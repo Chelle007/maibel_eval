@@ -7,6 +7,8 @@ import type { TestCase, EvrenOutput, EvaluationResult } from "@/lib/types";
 
 import { normalizeVersionEntry } from "@/lib/db.types";
 import type { AnyVersionEntry, VersionEntry } from "@/lib/db.types";
+import { getAnthropicEvalApiKey } from "@/lib/eval-llm-env";
+import { DEFAULT_EVAL_LLM_MODEL } from "@/lib/eval-llm-defaults";
 
 type EvalResultRow = {
   eval_result_id: string;
@@ -35,9 +37,12 @@ export async function POST(
   { params }: { params: Promise<{ id: string }> }
 ) {
   const { id: testSessionId } = await params;
-  const apiKey = process.env.GEMINI_API_KEY;
+  const apiKey = getAnthropicEvalApiKey();
   if (!apiKey) {
-    return NextResponse.json({ error: "Missing GEMINI_API_KEY" }, { status: 500 });
+    return NextResponse.json(
+      { error: "Missing ANTHROPIC_API_KEY or CLAUDE_API_KEY" },
+      { status: 500 }
+    );
   }
 
   const supabase = await createClient();
@@ -99,7 +104,7 @@ export async function POST(
     return buildRichReport(testCase, evrenOutput, evalResult);
   });
 
-  const modelName = "gemini-3-flash-preview";
+  const modelName = DEFAULT_EVAL_LLM_MODEL;
   const summarizerResult = await runSummarizer(
     apiKey,
     richReports,

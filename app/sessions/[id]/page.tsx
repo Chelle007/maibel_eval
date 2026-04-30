@@ -6,6 +6,7 @@ import { useParams, useRouter } from "next/navigation";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import ReactMarkdown from "react-markdown";
 import { SummaryEditor } from "@/app/components/SummaryEditor";
+import { DEFAULT_EVAL_LLM_MODEL } from "@/lib/eval-llm-defaults";
 import { computeTokenCostParts } from "@/lib/token-cost";
 import {
   BEHAVIOR_REVIEW_DIMENSIONS,
@@ -95,6 +96,12 @@ function snapshotKindPresentation(kind: string): { label: string; badgeClass: st
     return {
       label: "Before delete version",
       badgeClass: "bg-rose-100 text-rose-900 ring-1 ring-rose-200/80",
+    };
+  }
+  if (kind === "before_rerun_comparison") {
+    return {
+      label: "Before rerun comparison",
+      badgeClass: "bg-violet-100 text-violet-900 ring-1 ring-violet-200/80",
     };
   }
   if (kind === "current") {
@@ -609,6 +616,7 @@ export default function SessionDetailPage() {
   const sessionReviewSavedTimeoutRef = useRef<number | null>(null);
   const [refiningWording, setRefiningWording] = useState(false);
   const [resummarizing, setResummarizing] = useState(false);
+  const [rerunningComparison, setRerunningComparison] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [addingVersion, setAddingVersion] = useState(false);
   const [addVersionProgress, setAddVersionProgress] = useState<AddVersionProgress | null>(null);
@@ -655,6 +663,10 @@ export default function SessionDetailPage() {
   const [activeSnapshotId, setActiveSnapshotId] = useState<string | null>(null);
   const [activeSnapshotMeta, setActiveSnapshotMeta] = useState<SnapshotListItem | null>(null);
   const [activeSnapshotPayload, setActiveSnapshotPayload] = useState<SessionSnapshotPayload | null>(null);
+  const [editingSnapshotMessage, setEditingSnapshotMessage] = useState(false);
+  const [snapshotMessageDraft, setSnapshotMessageDraft] = useState("");
+  const [savingSnapshotMessage, setSavingSnapshotMessage] = useState(false);
+  const [deletingSnapshot, setDeletingSnapshot] = useState(false);
   const [historyMenuOpen, setHistoryMenuOpen] = useState(false);
   const router = useRouter();
 
@@ -838,10 +850,19 @@ export default function SessionDetailPage() {
     setSnapshotsError(null);
     try {
       const res = await fetch(`/api/sessions/${id}/snapshots/${meta.snapshot_id}`);
-      const data = (await res.json().catch(() => ({}))) as { error?: string; snapshot?: { payload?: unknown } };
+      const data = (await res.json().catch(() => ({}))) as {
+        error?: string;
+        snapshot?: { payload?: unknown; message?: string | null };
+      };
       if (!res.ok || data.error) throw new Error(data.error ?? `Request failed (${res.status})`);
-      const payload = (data.snapshot?.payload ?? null) as SessionSnapshotPayload | null;
+      const snap = data.snapshot;
+      const payload = (snap?.payload ?? null) as SessionSnapshotPayload | null;
       setActiveSnapshotPayload(payload);
+      if (snap != null && snap.message !== undefined && (typeof snap.message === "string" || snap.message === null)) {
+        setActiveSnapshotMeta((prev) =>
+          prev?.snapshot_id === meta.snapshot_id ? { ...prev, message: snap.message as string | null } : prev
+        );
+      }
     } catch (e) {
       setSnapshotsError(e instanceof Error ? e.message : "Failed to open snapshot");
       setActiveSnapshotId(null);
@@ -851,9 +872,83 @@ export default function SessionDetailPage() {
   }
 
   function closeSnapshot() {
+    setEditingSnapshotMessage(false);
+    setSnapshotMessageDraft("");
     setActiveSnapshotId(null);
     setActiveSnapshotMeta(null);
     setActiveSnapshotPayload(null);
+  }
+
+  function beginRenameSnapshotMessage() {
+    if (!activeSnapshotMeta) return;
+    setEditingSnapshotMessage(true);
+    setSnapshotMessageDraft(activeSnapshotMeta.message ?? "");
+    setSnapshotsError(null);
+  }
+
+  function cancelRenameSnapshotMessage() {
+    setEditingSnapshotMessage(false);
+    setSnapshotMessageDraft("");
+  }
+
+  async function saveSnapshotMessage() {
+    if (!id || !activeSnapshotMeta) return;
+    setSavingSnapshotMessage(true);
+    setSnapshotsError(null);
+    try {
+      const res = await fetch(`/api/sessions/${id}/snapshots/${activeSnapshotMeta.snapshot_id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ message: snapshotMessageDraft }),
+      });
+      const data = (await res.json().catch(() => ({}))) as {
+        error?: string;
+        snapshot?: { message?: string | null };
+      };
+      if (!res.ok || data.error) throw new Error(data.error ?? "Rename failed");
+      const msg =
+        typeof data.snapshot?.message === "string" || data.snapshot?.message === null ? data.snapshot.message : undefined;
+      if (msg !== undefined) {
+        setActiveSnapshotMeta((prev) => (prev ? { ...prev, message: msg } : null));
+      }
+      setEditingSnapshotMessage(false);
+      setSnapshotMessageDraft("");
+      await loadSnapshotsList();
+    } catch (e) {
+      setSnapshotsError(e instanceof Error ? e.message : "Rename failed");
+    } finally {
+      setSavingSnapshotMessage(false);
+    }
+  }
+
+  async function deleteActiveSnapshot() {
+    if (!id || !activeSnapshotMeta) return;
+    const hint =
+      activeSnapshotMeta.message ??
+      snapshotKindPresentation(activeSnapshotMeta.kind).label;
+    if (
+      typeof window !== "undefined" &&
+      !window.confirm(
+        `Delete this snapshot (${shortSnapshotId(activeSnapshotMeta.snapshot_id)} · ${hint})? This cannot be undone.`
+      )
+    ) {
+      return;
+    }
+    setDeletingSnapshot(true);
+    setSnapshotsError(null);
+    try {
+      const res = await fetch(`/api/sessions/${id}/snapshots/${activeSnapshotMeta.snapshot_id}`, {
+        method: "DELETE",
+      });
+      const data = (await res.json().catch(() => ({}))) as { error?: string };
+      if (!res.ok || data.error) throw new Error(data.error ?? "Delete failed");
+      closeSnapshot();
+      await loadSnapshotsList();
+    } catch (e) {
+      setSnapshotsError(e instanceof Error ? e.message : "Delete failed");
+    } finally {
+      setDeletingSnapshot(false);
+    }
   }
 
   async function saveSessionReviewSummary() {
@@ -1413,6 +1508,50 @@ export default function SessionDetailPage() {
       .finally(() => setRefiningWording(false));
   }
 
+  async function rerunAllComparisons() {
+    if (!id || session?.mode !== "comparison") return;
+    setRerunningComparison(true);
+    setError(null);
+    try {
+      const res = await fetch(`/api/sessions/${id}/rerun-comparison`, { method: "POST" });
+      const data = (await res.json().catch(() => ({}))) as {
+        error?: string;
+        compared?: number;
+        skipped?: number;
+        failures?: { test_case_id?: string; message: string }[];
+      };
+      if (!res.ok || data.error) throw new Error(data.error ?? "Rerun comparison failed");
+      const r2 = await fetch(`/api/sessions/${id}`);
+      const d2 = (await r2.json().catch(() => ({}))) as {
+        error?: string;
+        session?: Session | null;
+        models?: SessionModels | null;
+        results?: EvalResult[];
+      };
+      if (!r2.ok || d2.error) throw new Error(d2.error ?? "Failed to reload session");
+      const nextSession = d2.session as Session | null;
+      const nextModels = (d2.models ?? null) as SessionModels | null;
+      const nextResults = (Array.isArray(d2.results) ? d2.results : []) as EvalResult[];
+      setSession(nextSession);
+      if (nextModels && typeof nextModels === "object") setModels(nextModels);
+      setResults(nextResults);
+      setSummary(summaryForDisplay(nextSession?.summary ?? ""));
+      setRunMetadataDraft(validateRunMetadata((nextSession as Record<string, unknown> | null)?.run_metadata));
+      setSessionReviewSummary(mergeSessionReviewSummaryFromSession(nextSession, nextResults));
+      if (data.failures?.length) {
+        console.warn(
+          "[rerun comparison] partial failures:",
+          data.failures.map((f) => `${f.test_case_id ?? "?"}: ${f.message}`).join("; ")
+        );
+      }
+      void loadSnapshotsList();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Rerun comparison failed");
+    } finally {
+      setRerunningComparison(false);
+    }
+  }
+
   function resummarize() {
     setResummarizing(true);
     setError(null);
@@ -1469,7 +1608,7 @@ export default function SessionDetailPage() {
     };
   }, [session?.mode, effectiveResults, comparisonStats, versionEntries, versionCount]);
 
-  const evaluatorModelName = models.evaluator_model ?? "gemini-3-flash-preview";
+  const evaluatorModelName = models.evaluator_model ?? DEFAULT_EVAL_LLM_MODEL;
   const evaluatorTokensSummary = useMemo(() => {
     let prompt = 0;
     let completion = 0;
@@ -1817,20 +1956,35 @@ export default function SessionDetailPage() {
         <>
           {activeSnapshotId && activeSnapshotMeta && (
             <div
-              className={`mt-4 flex flex-wrap items-center justify-between gap-3 rounded-md border px-4 py-2.5 text-sm ${
+              className={`mt-4 flex flex-wrap items-start justify-between gap-3 rounded-md border px-4 py-2.5 text-sm ${
                 isViewingCheckpoint
                   ? "border-amber-300 bg-amber-50 text-amber-950"
                   : "border-stone-200 bg-stone-50 text-stone-700"
               }`}
             >
-              <div className="flex min-w-0 flex-1 flex-wrap items-baseline gap-x-2 gap-y-1">
-                <GitCommitHorizontal className="h-4 w-4 shrink-0 text-current opacity-70" aria-hidden />
-                <code className="rounded bg-black/5 px-1.5 py-0.5 font-mono text-xs font-semibold">
-                  {shortSnapshotId(activeSnapshotMeta.snapshot_id)}
-                </code>
-                <span className="min-w-0 truncate font-medium">
-                  {activeSnapshotMeta.message ?? snapshotKindPresentation(activeSnapshotMeta.kind).label}
-                </span>
+              <div className="flex min-w-0 flex-1 flex-col gap-1">
+                <div className="flex min-w-0 flex-wrap items-baseline gap-x-2 gap-y-1">
+                  <GitCommitHorizontal className="h-4 w-4 shrink-0 text-current opacity-70" aria-hidden />
+                  <code className="rounded bg-black/5 px-1.5 py-0.5 font-mono text-xs font-semibold">
+                    {shortSnapshotId(activeSnapshotMeta.snapshot_id)}
+                  </code>
+                  {editingSnapshotMessage && isViewingCheckpoint ? (
+                    <input
+                      type="text"
+                      value={snapshotMessageDraft}
+                      onChange={(e) => setSnapshotMessageDraft(e.target.value)}
+                      placeholder={snapshotKindPresentation(activeSnapshotMeta.kind).label}
+                      className="min-w-[12rem] max-w-full flex-1 rounded-md border border-amber-400/70 bg-white px-2 py-1 text-sm font-medium text-stone-900 placeholder:text-stone-400 focus:border-amber-500 focus:outline-none focus:ring-1 focus:ring-amber-500"
+                      aria-label="Snapshot title"
+                      disabled={savingSnapshotMessage || deletingSnapshot}
+                      autoFocus
+                    />
+                  ) : (
+                    <span className="min-w-0 truncate font-medium">
+                      {activeSnapshotMeta.message ?? snapshotKindPresentation(activeSnapshotMeta.kind).label}
+                    </span>
+                  )}
+                </div>
                 {!isViewingCheckpoint && (
                   <span className="text-xs opacity-80">Loading checkpoint into the page…</span>
                 )}
@@ -1840,13 +1994,61 @@ export default function SessionDetailPage() {
                   </span>
                 )}
               </div>
-              <button
-                type="button"
-                onClick={closeSnapshot}
-                className="shrink-0 rounded-md border border-stone-300 bg-white px-3 py-1.5 text-xs font-semibold text-stone-800 shadow-sm hover:bg-stone-50"
-              >
-                Exit
-              </button>
+              <div className="flex shrink-0 flex-wrap items-center gap-2">
+                {isViewingCheckpoint && editingSnapshotMessage && (
+                  <>
+                    <button
+                      type="button"
+                      onClick={() => void saveSnapshotMessage()}
+                      disabled={savingSnapshotMessage || deletingSnapshot}
+                      className="inline-flex items-center gap-1 rounded-md border border-amber-600/40 bg-white px-2.5 py-1.5 text-xs font-semibold text-amber-950 hover:bg-amber-100/80 disabled:opacity-50"
+                    >
+                      <Check className="h-3.5 w-3.5" aria-hidden />
+                      {savingSnapshotMessage ? "Saving…" : "Save"}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={cancelRenameSnapshotMessage}
+                      disabled={savingSnapshotMessage || deletingSnapshot}
+                      className="rounded-md border border-stone-300 bg-white px-2.5 py-1.5 text-xs font-semibold text-stone-800 hover:bg-stone-50 disabled:opacity-50"
+                    >
+                      Cancel
+                    </button>
+                  </>
+                )}
+                {isViewingCheckpoint && !editingSnapshotMessage && (
+                  <>
+                    <button
+                      type="button"
+                      onClick={beginRenameSnapshotMessage}
+                      disabled={deletingSnapshot}
+                      className="inline-flex items-center gap-1 rounded-md border border-stone-300 bg-white px-2.5 py-1.5 text-xs font-semibold text-stone-800 shadow-sm hover:bg-stone-50 disabled:opacity-50"
+                      title="Rename snapshot"
+                    >
+                      <Pencil className="h-3.5 w-3.5" aria-hidden />
+                      Rename
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => void deleteActiveSnapshot()}
+                      disabled={deletingSnapshot}
+                      className="inline-flex items-center gap-1 rounded-md border border-rose-300 bg-white px-2.5 py-1.5 text-xs font-semibold text-rose-800 hover:bg-rose-50 disabled:opacity-50"
+                      title="Delete snapshot from history"
+                    >
+                      <Trash2 className="h-3.5 w-3.5" aria-hidden />
+                      {deletingSnapshot ? "Deleting…" : "Delete"}
+                    </button>
+                  </>
+                )}
+                <button
+                  type="button"
+                  onClick={closeSnapshot}
+                  disabled={savingSnapshotMessage}
+                  className="rounded-md border border-stone-300 bg-white px-3 py-1.5 text-xs font-semibold text-stone-800 shadow-sm hover:bg-stone-50 disabled:opacity-50"
+                >
+                  Exit
+                </button>
+              </div>
             </div>
           )}
         </>
@@ -2709,7 +2911,21 @@ export default function SessionDetailPage() {
             <option value="score">Sort by score</option>
           </select>
         </div>
-        <h2 className="text-lg font-medium text-stone-900">Results ({filteredResults.length})</h2>
+        <div className="mt-3 flex flex-wrap items-center justify-between gap-3">
+          <h2 className="text-lg font-medium text-stone-900">Results ({filteredResults.length})</h2>
+          {session?.mode === "comparison" && (
+            <button
+              type="button"
+              onClick={() => void rerunAllComparisons()}
+              disabled={loading || rerunningComparison || isViewingCheckpoint || !id}
+              title="For each row with 2–3 Evren versions: run the comparator model again (tiers + reasons + hard failures), then refresh AI dimension reviews for those versions—the same logic as after Add version with comparison on."
+              className="inline-flex items-center gap-1.5 rounded-lg border border-stone-300 bg-white px-3 py-2 text-sm font-medium text-stone-800 shadow-sm hover:bg-stone-50 disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              <RefreshCw className={`h-4 w-4 shrink-0 ${rerunningComparison ? "animate-spin" : ""}`} aria-hidden />
+              {rerunningComparison ? "Rerunning…" : "Rerun comparison"}
+            </button>
+          )}
+        </div>
       </div>
       <ul className="mt-3 space-y-3">
         {filteredResults.length === 0 ? (

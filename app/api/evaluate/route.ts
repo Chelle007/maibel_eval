@@ -2,13 +2,15 @@ import { NextResponse } from "next/server";
 import { evaluateOne } from "@/lib/evaluator";
 import { loadContextPack } from "@/lib/context-pack";
 import type { EvaluateInput } from "@/lib/types";
+import { getAnthropicEvalApiKey } from "@/lib/eval-llm-env";
+import { DEFAULT_EVAL_LLM_MODEL } from "@/lib/eval-llm-defaults";
 
 export async function POST(request: Request) {
   try {
-    const apiKey = process.env.GEMINI_API_KEY;
+    const apiKey = getAnthropicEvalApiKey();
     if (!apiKey) {
       return NextResponse.json(
-        { error: "Missing GEMINI_API_KEY environment variable" },
+        { error: "Missing ANTHROPIC_API_KEY or CLAUDE_API_KEY environment variable" },
         { status: 500 }
       );
     }
@@ -36,7 +38,7 @@ export async function POST(request: Request) {
       );
     }
 
-    const modelName = body.model_name ?? "gemini-3-flash-preview";
+    const modelName = body.model_name ?? DEFAULT_EVAL_LLM_MODEL;
     const systemPrompt = body.system_prompt;
     const contextPack = loadContextPack({
       purpose: "evaluator",

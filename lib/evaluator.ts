@@ -1,4 +1,5 @@
-import { GoogleGenerativeAI } from "@google/generative-ai";
+import { anthropicGenerateText } from "./anthropic-generate";
+import { DEFAULT_EVAL_LLM_MODEL } from "./eval-llm-defaults";
 import {
   loadEvaluatorSystemPrompt,
   buildEvaluatorUserMessage,
@@ -92,41 +93,28 @@ function extractEvaluatorFieldsFallback(
   return obj;
 }
 
-const DEFAULT_MODEL = "gemini-3-flash-preview";
-
 /** Run evaluator on one test case + Evren output(s). For multi_turn pass all outputs to evaluate whole conversation. */
 export async function evaluateOne(
   testCase: TestCase,
   evrenOutputOrOutputs: EvrenOutput | EvrenOutput[],
   apiKey: string,
-  modelName: string = DEFAULT_MODEL,
+  modelName: string = DEFAULT_EVAL_LLM_MODEL,
   systemPrompt?: string,
   contextPack?: { text: string; bundleId: string }
 ): Promise<EvaluationResult> {
-  const genAI = new GoogleGenerativeAI(apiKey);
-  const systemInstruction = systemPrompt ?? loadEvaluatorSystemPrompt();
-  const model = genAI.getGenerativeModel({
-    model: modelName,
-    systemInstruction,
-  });
-
+  const system = systemPrompt ?? loadEvaluatorSystemPrompt();
   const baseUserMessage = buildEvaluatorUserMessage(testCase, evrenOutputOrOutputs);
   const userMessage =
     contextPack?.text?.trim()
       ? `${baseUserMessage}\n\n=== ORGANIZATION CONTEXT (bundle: ${contextPack.bundleId}) ===\n${contextPack.text.trim()}\n`
       : baseUserMessage;
-  const result = await model.generateContent(userMessage);
-  const response = result.response;
-  const text = response.text();
-
-  const usage = response.usageMetadata;
-  const token_usage = usage
-    ? computeTokenCost(
-        usage.promptTokenCount ?? 0,
-        usage.candidatesTokenCount ?? 0,
-        modelName
-      )
-    : undefined;
+  const { text, inputTokens, outputTokens } = await anthropicGenerateText({
+    apiKey,
+    model: modelName,
+    system,
+    userText: userMessage,
+  });
+  const token_usage = computeTokenCost(inputTokens, outputTokens, modelName);
 
   const jsonStr = extractJson(text);
   const sanitized = sanitizeJsonStringLiterals(jsonStr);

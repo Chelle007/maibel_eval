@@ -1,4 +1,5 @@
-import { GoogleGenerativeAI } from "@google/generative-ai";
+import { anthropicGenerateText } from "./anthropic-generate";
+import { DEFAULT_EVAL_LLM_MODEL } from "./eval-llm-defaults";
 import { loadSummarizerSystemPrompt } from "./prompts";
 import { computeTokenCost } from "./token-cost";
 import type { TestCase, EvrenOutput, EvaluationResult } from "./types";
@@ -47,8 +48,6 @@ export function buildRichReport(
   };
 }
 
-const DEFAULT_MODEL = "gemini-3-flash-preview";
-
 export interface SummarizerResult {
   title: string;
   summary: string;
@@ -59,21 +58,19 @@ export interface SummarizerResult {
 export async function runSummarizer(
   apiKey: string,
   richReports: RichTestCaseReport[],
-  modelName: string = DEFAULT_MODEL,
+  modelName: string = DEFAULT_EVAL_LLM_MODEL,
   systemPrompt?: string
 ): Promise<SummarizerResult> {
-  const genAI = new GoogleGenerativeAI(apiKey);
-  const systemInstruction = systemPrompt ?? loadSummarizerSystemPrompt();
-  const model = genAI.getGenerativeModel({
-    model: modelName,
-    systemInstruction,
-  });
-
+  const system = systemPrompt ?? loadSummarizerSystemPrompt();
   const userMessage = JSON.stringify(richReports, null, 2);
 
-  const result = await model.generateContent(userMessage);
-  const response = result.response;
-  let raw = response.text().trim();
+  const { text, inputTokens, outputTokens } = await anthropicGenerateText({
+    apiKey,
+    model: modelName,
+    system,
+    userText: userMessage,
+  });
+  let raw = text.trim();
 
   // Strip markdown code block if present (e.g. ```json ... ```)
   const codeBlockMatch = raw.match(/^```(?:json)?\s*\n?([\s\S]*?)\n?```$/m);
@@ -98,16 +95,8 @@ export async function runSummarizer(
   // Normalize literal \n in summary to real newlines (in case of double-escape or stored literal)
   summary = summary.replace(/\\n/g, "\n");
 
-  const usage = response.usageMetadata;
-  const token_usage = usage
-    ? computeTokenCost(
-        usage.promptTokenCount ?? 0,
-        usage.candidatesTokenCount ?? 0,
-        modelName
-      )
-    : null;
-
-  const cost_usd = token_usage?.cost_usd ?? 0;
+  const token_usage = computeTokenCost(inputTokens, outputTokens, modelName);
+  const cost_usd = token_usage.cost_usd;
 
   return { title, summary, cost_usd };
 }

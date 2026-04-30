@@ -1,4 +1,5 @@
-import { GoogleGenerativeAI } from "@google/generative-ai";
+import { anthropicGenerateText } from "./anthropic-generate";
+import { DEFAULT_EVAL_LLM_MODEL } from "./eval-llm-defaults";
 import {
   loadBehaviorReviewDrafterSystemPrompt,
   buildBehaviorReviewDrafterUserMessage,
@@ -22,8 +23,6 @@ function extractJson(text: string): string {
   return trimmed;
 }
 
-const DEFAULT_MODEL = "gemini-3-flash-preview";
-
 export interface DraftBehaviorReviewResult {
   reviews: BehaviorReviewByVersion;
   token_usage?: TokenUsage;
@@ -41,26 +40,22 @@ export async function draftBehaviorReview(args: {
   modelName?: string;
   contextPack?: { text: string; bundleId: string };
 }): Promise<DraftBehaviorReviewResult> {
-  const { testCase, versions, evaluatorReason, apiKey, modelName = DEFAULT_MODEL, contextPack } = args;
+  const { testCase, versions, evaluatorReason, apiKey, modelName = DEFAULT_EVAL_LLM_MODEL, contextPack } = args;
   if (versions.length === 0) return { reviews: {} };
 
-  const genAI = new GoogleGenerativeAI(apiKey);
-  const systemInstruction = loadBehaviorReviewDrafterSystemPrompt();
-  const model = genAI.getGenerativeModel({ model: modelName, systemInstruction });
-
+  const system = loadBehaviorReviewDrafterSystemPrompt();
   let userMessage = buildBehaviorReviewDrafterUserMessage({ testCase, versions, evaluatorReason });
   if (contextPack?.text?.trim()) {
     userMessage += `\n\n=== ORGANIZATION CONTEXT (bundle: ${contextPack.bundleId}) ===\n${contextPack.text.trim()}\n`;
   }
 
-  const result = await model.generateContent(userMessage);
-  const response = result.response;
-  const text = response.text();
-
-  const usage = response.usageMetadata;
-  const token_usage = usage
-    ? computeTokenCost(usage.promptTokenCount ?? 0, usage.candidatesTokenCount ?? 0, modelName)
-    : undefined;
+  const { text, inputTokens, outputTokens } = await anthropicGenerateText({
+    apiKey,
+    model: modelName,
+    system,
+    userText: userMessage,
+  });
+  const token_usage = computeTokenCost(inputTokens, outputTokens, modelName);
 
   const jsonStr = extractJson(text);
   let parsed: Record<string, unknown>;

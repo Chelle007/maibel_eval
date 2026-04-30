@@ -74,10 +74,14 @@ export async function DELETE(
 ) {
   const { id } = await params;
   const supabase = await createClient();
-  const { error } = await supabase
+  const { data, error } = await supabase
     .from("test_cases")
     .delete()
-    .eq("test_case_id", id);
+    .eq("test_case_id", id)
+    .select("id");
   if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+  if (!data?.length) {
+    return NextResponse.json({ error: "Test case not found" }, { status: 404 });
+  }
   return NextResponse.json({ ok: true });
 }

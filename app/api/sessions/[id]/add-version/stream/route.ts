@@ -11,6 +11,8 @@ import { persistSessionReviewSummaryForSession } from "@/lib/session-review-summ
 import { createSessionResultSnapshot } from "@/lib/session-snapshots";
 import type { TestCase } from "@/lib/types";
 import type { DefaultSettingsRow, EvalResultsRow, RunEntry, TestCasesRow, VersionEntry } from "@/lib/db.types";
+import { getAnthropicEvalApiKey } from "@/lib/eval-llm-env";
+import { DEFAULT_EVAL_LLM_MODEL, normalizeAnthropicModelName } from "@/lib/eval-llm-defaults";
 
 const FALLBACK_EVREN_URL = process.env.NEXT_PUBLIC_EVREN_API_URL || "http://localhost:8000";
 const DEFAULT_MAX_INFLIGHT_COMPARISONS = 3;
@@ -107,12 +109,15 @@ export async function POST(
 
   const supabase = await createClient();
 
-  const apiKey = process.env.GEMINI_API_KEY;
+  const apiKey = getAnthropicEvalApiKey();
   if (runComparison && !apiKey) {
-    return new Response(JSON.stringify({ error: "Missing GEMINI_API_KEY (required for comparison)" }), {
-      status: 500,
-      headers: { "Content-Type": "application/json" },
-    });
+    return new Response(
+      JSON.stringify({ error: "Missing ANTHROPIC_API_KEY or CLAUDE_API_KEY (required for comparison)" }),
+      {
+        status: 500,
+        headers: { "Content-Type": "application/json" },
+      }
+    );
   }
 
   const { data: session, error: sessionError } = await supabase
@@ -148,7 +153,7 @@ export async function POST(
     .maybeSingle();
   const settings = settingsRow as Pick<DefaultSettingsRow, "evren_api_url" | "evaluator_model"> | null;
   const evrenModelApiUrl = settings?.evren_api_url?.trim() || FALLBACK_EVREN_URL;
-  const comparatorModel = settings?.evaluator_model?.trim() || "gemini-3-flash-preview";
+  const comparatorModel = normalizeAnthropicModelName(settings?.evaluator_model?.trim()) ?? DEFAULT_EVAL_LLM_MODEL;
 
   const evrenUrlCheck = validateEvrenUrlForDeploy(evrenModelApiUrl);
   if (!evrenUrlCheck.ok) {

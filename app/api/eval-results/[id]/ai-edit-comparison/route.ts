@@ -7,6 +7,8 @@ import type { ComparisonData, TestCase } from "@/lib/types";
 import type { AnyVersionEntry, DefaultSettingsRow, VersionEntry } from "@/lib/db.types";
 import { normalizeVersionEntry } from "@/lib/db.types";
 import { refreshLatestSessionResultSnapshot } from "@/lib/session-snapshots";
+import { getAnthropicEvalApiKey } from "@/lib/eval-llm-env";
+import { DEFAULT_EVAL_LLM_MODEL, normalizeAnthropicModelName } from "@/lib/eval-llm-defaults";
 
 type Body = {
   feedback?: string;
@@ -104,9 +106,12 @@ export async function POST(
     return NextResponse.json({ error: "At least 2 versions are required." }, { status: 400 });
   }
 
-  const apiKey = process.env.GEMINI_API_KEY;
+  const apiKey = getAnthropicEvalApiKey();
   if (!apiKey) {
-    return NextResponse.json({ error: "Missing GEMINI_API_KEY (required for AI edit)" }, { status: 500 });
+    return NextResponse.json(
+      { error: "Missing ANTHROPIC_API_KEY or CLAUDE_API_KEY (required for AI edit)" },
+      { status: 500 }
+    );
   }
 
   const supabase = await createClient();
@@ -163,8 +168,9 @@ export async function POST(
     .limit(1)
     .maybeSingle();
   const comparatorModel =
-    (settingsRow as Pick<DefaultSettingsRow, "evaluator_model"> | null)?.evaluator_model?.trim() ||
-    "gemini-3-flash-preview";
+    normalizeAnthropicModelName(
+      (settingsRow as Pick<DefaultSettingsRow, "evaluator_model"> | null)?.evaluator_model?.trim()
+    ) || DEFAULT_EVAL_LLM_MODEL;
 
   const versionIds =
     allowedIds.length === 2

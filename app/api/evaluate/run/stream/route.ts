@@ -15,6 +15,8 @@ import { loadContextPack } from "@/lib/context-pack";
 import type { TestCase, EvrenOutput, EvaluationResult } from "@/lib/types";
 import type { Database, DefaultSettingsRow, RunEntry, TestCasesRow, VersionEntry } from "@/lib/db.types";
 import { buildAutofillRunMetadata } from "@/lib/run-metadata-autofill";
+import { getAnthropicEvalApiKey } from "@/lib/eval-llm-env";
+import { DEFAULT_EVAL_LLM_MODEL } from "@/lib/eval-llm-defaults";
 
 export const maxDuration = 300;
 
@@ -81,12 +83,15 @@ export async function POST(request: Request) {
   const runCount = Number.isFinite(body.run_count) ? Math.max(1, Math.floor(body.run_count as number)) : 1;
   const useEvaluator = false;
   const useSummarizer = false;
-  const apiKey = process.env.GEMINI_API_KEY;
+  const apiKey = getAnthropicEvalApiKey();
   if ((useEvaluator || useSummarizer) && !apiKey) {
-    return new Response(JSON.stringify({ error: "Missing GEMINI_API_KEY" }), {
-      status: 500,
-      headers: { "Content-Type": "application/json" },
-    });
+    return new Response(
+      JSON.stringify({ error: "Missing ANTHROPIC_API_KEY (or CLAUDE_API_KEY) for evaluator/summarizer" }),
+      {
+        status: 500,
+        headers: { "Content-Type": "application/json" },
+      }
+    );
   }
 
   // On Vercel (and similar), localhost is this server—Evren must be a reachable URL.
@@ -138,7 +143,7 @@ export async function POST(request: Request) {
     });
   }
 
-  const modelName = body.model_name ?? "gemini-3-flash-preview";
+  const modelName = body.model_name ?? DEFAULT_EVAL_LLM_MODEL;
   const summarizerModel = body.summarizer_model ?? modelName;
   const runMetadata = await buildAutofillRunMetadata(supabase, evrenModelApiUrl, testCasesRows, {
     sessionMode,

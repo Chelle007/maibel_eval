@@ -1,12 +1,12 @@
 # MAIBEL Eval
 
-A Next.js app for running and evaluating test cases against the **Evren** model. It sends test cases to your Evren API, then uses Google Gemini as an evaluator. Results are stored in Supabase and organized into sessions with summaries.
+A Next.js app for running and evaluating test cases against the **Evren** model. It sends test cases to your Evren API, then uses **Anthropic Claude** (Haiku 4.5, `claude-haiku-4-5-20251001`, by default) as the evaluator and for session summaries. Results are stored in Supabase and organized into sessions with summaries.
 
 ## Tech stack
 
 - **Next.js 16** (App Router), **React 19**, **TypeScript**
 - **Supabase** — auth, database (PostgreSQL)
-- **Google Generative AI (Gemini)** — evaluation and summarization
+- **Anthropic API (Claude Haiku 4.5)** — evaluation, comparison, and summarization
 - **Tailwind CSS** — styling
 
 ## Features
@@ -16,6 +16,8 @@ A Next.js app for running and evaluating test cases against the **Evren** model.
 - **Sessions** — View past runs, session summaries (with optional AI summarization and manual edits), and per-case scores
 - **Settings** — Persist default Evren URL and model preferences
 - **Auth** — Email/password login; owner can add users and manage access
+
+**Deletes (Supabase):** Removing a **test case** deletes its row and cascades to **eval_results** rows for that case. Removing a **session** deletes the session row and cascades to **eval_results** and **session_result_snapshots**. **Snapshot** delete or session history actions use real `DELETE` on `session_result_snapshots`. **Categories** are removed permanently (no soft-delete).
 
 ## Getting started
 
@@ -31,7 +33,7 @@ Copy `.env.example` to `.env.local` and fill in:
 
 | Variable | Description |
 |----------|-------------|
-| `GEMINI_API_KEY` | From [Google AI Studio](https://aistudio.google.com/apikey) — used for evaluator and summarizer |
+| `ANTHROPIC_API_KEY` | From [Anthropic Console](https://console.anthropic.com/) — used for evaluator, comparator, and summarizer. `CLAUDE_API_KEY` is also accepted as an alias. |
 | `NEXT_PUBLIC_SUPABASE_URL` | Supabase project URL (Settings → API) |
 | `NEXT_PUBLIC_SUPABASE_ANON_KEY` | Supabase anon/public key |
 | `SUPABASE_SERVICE_ROLE_KEY` | Supabase service role key (server-only; for auth sync and add-user) |
