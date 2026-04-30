@@ -1,4 +1,5 @@
-import { GoogleGenerativeAI } from "@google/generative-ai";
+import { anthropicGenerateText } from "./anthropic-generate";
+import { DEFAULT_EVAL_LLM_MODEL } from "./eval-llm-defaults";
 import {
   loadComparatorOverallSystemPrompt,
   buildComparatorOverallUserMessage,
@@ -14,8 +15,6 @@ function extractJson(text: string): string {
   if (codeBlock) return codeBlock[1].trim();
   return trimmed;
 }
-
-const DEFAULT_MODEL = "gemini-3-flash-preview";
 
 type OverallComparatorJsonV2 = {
   tiers?: unknown;
@@ -62,18 +61,12 @@ export async function compareOverall(
   versions: VersionEntry[],
   versionIds: [string, string] | [string, string, string],
   apiKey: string,
-  modelName: string = DEFAULT_MODEL,
+  modelName: string = DEFAULT_EVAL_LLM_MODEL,
   systemPrompt?: string,
   contextPack?: { text: string; bundleId: string },
   guidedReplay?: CompareOverallGuidedReplay | null
 ): Promise<ComparisonData> {
-  const genAI = new GoogleGenerativeAI(apiKey);
-  const systemInstruction = systemPrompt ?? loadComparatorOverallSystemPrompt();
-  const model = genAI.getGenerativeModel({
-    model: modelName,
-    systemInstruction,
-  });
-
+  const system = systemPrompt ?? loadComparatorOverallSystemPrompt();
   const { message } = buildComparatorOverallUserMessage(testCase, versions, versionIds);
   let finalMessage =
     contextPack?.text?.trim()
@@ -90,18 +83,13 @@ export async function compareOverall(
     finalMessage += `${prevBlock}\n\n=== ADDITIONAL RANKING INPUT (use for close calls only; still ground tiers in VERSION transcript blocks + test case + organization context; do not ignore hard-failure criteria. Do not name this section or call out "guidance" in the reason field — write as a normal evaluation.) ===\n${guidance}\n`;
   }
 
-  const result = await model.generateContent(finalMessage);
-  const response = result.response;
-  const text = response.text();
-
-  const usage = response.usageMetadata;
-  const token_usage = usage
-    ? computeTokenCost(
-        usage.promptTokenCount ?? 0,
-        usage.candidatesTokenCount ?? 0,
-        modelName
-      )
-    : undefined;
+  const { text, inputTokens, outputTokens } = await anthropicGenerateText({
+    apiKey,
+    model: modelName,
+    system,
+    userText: finalMessage,
+  });
+  const token_usage = computeTokenCost(inputTokens, outputTokens, modelName);
 
   const allowedList = [...versionIds] as string[];
 

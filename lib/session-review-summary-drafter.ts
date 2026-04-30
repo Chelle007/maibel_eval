@@ -1,4 +1,5 @@
-import { GoogleGenerativeAI } from "@google/generative-ai";
+import { anthropicGenerateText } from "./anthropic-generate";
+import { DEFAULT_EVAL_LLM_MODEL } from "./eval-llm-defaults";
 import {
   loadSessionReviewSummaryDrafterSystemPrompt,
   buildSessionReviewSummaryDrafterUserMessage,
@@ -47,8 +48,6 @@ function extractJson(text: string): string {
   return trimmed;
 }
 
-const DEFAULT_MODEL = "gemini-3-flash-preview";
-
 export interface DraftSessionReviewSummaryArgs {
   sessionMode: "single" | "comparison";
   sessionTitle: string | null;
@@ -75,13 +74,10 @@ export interface DraftSessionReviewSummaryArgs {
 export async function draftSessionReviewSummary(
   args: DraftSessionReviewSummaryArgs
 ): Promise<{ summary: SessionReviewSummaryV0; token_usage?: TokenUsage } | null> {
-  const { apiKey, modelName = DEFAULT_MODEL, contextPack } = args;
+  const { apiKey, modelName = DEFAULT_EVAL_LLM_MODEL, contextPack } = args;
   if (!args.evalRows.length) return null;
 
-  const genAI = new GoogleGenerativeAI(apiKey);
-  const systemInstruction = loadSessionReviewSummaryDrafterSystemPrompt();
-  const model = genAI.getGenerativeModel({ model: modelName, systemInstruction });
-
+  const system = loadSessionReviewSummaryDrafterSystemPrompt();
   let userMessage = buildSessionReviewSummaryDrafterUserMessage({
     sessionMode: args.sessionMode,
     sessionTitle: args.sessionTitle,
@@ -93,14 +89,13 @@ export async function draftSessionReviewSummary(
     userMessage += `\n\n=== ORGANIZATION CONTEXT (bundle: ${contextPack.bundleId}) ===\n${contextPack.text.trim()}\n`;
   }
 
-  const result = await model.generateContent(userMessage);
-  const response = result.response;
-  const text = response.text();
-
-  const usage = response.usageMetadata;
-  const token_usage = usage
-    ? computeTokenCost(usage.promptTokenCount ?? 0, usage.candidatesTokenCount ?? 0, modelName)
-    : undefined;
+  const { text, inputTokens, outputTokens } = await anthropicGenerateText({
+    apiKey,
+    model: modelName,
+    system,
+    userText: userMessage,
+  });
+  const token_usage = computeTokenCost(inputTokens, outputTokens, modelName);
 
   const jsonStr = extractJson(text);
   let parsedRoot: unknown;

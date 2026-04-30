@@ -4,6 +4,8 @@ import { draftBehaviorReviewForVersionEntries } from "@/lib/behavior-review-draf
 import { mergeBehaviorReviewMap, type BehaviorReviewByVersion } from "@/lib/behavior-review";
 import { normalizeVersionEntry } from "@/lib/db.types";
 import type { AnyVersionEntry, DefaultSettingsRow, EvalResultsRow, VersionEntry } from "@/lib/db.types";
+import { getAnthropicEvalApiKey } from "@/lib/eval-llm-env";
+import { DEFAULT_EVAL_LLM_MODEL } from "@/lib/eval-llm-defaults";
 
 export async function POST(
   request: Request,
@@ -11,9 +13,12 @@ export async function POST(
 ) {
   const { id } = await params;
 
-  const apiKey = process.env.GEMINI_API_KEY;
+  const apiKey = getAnthropicEvalApiKey();
   if (!apiKey) {
-    return NextResponse.json({ error: "Missing GEMINI_API_KEY" }, { status: 500 });
+    return NextResponse.json(
+      { error: "Missing ANTHROPIC_API_KEY or CLAUDE_API_KEY" },
+      { status: 500 }
+    );
   }
 
   const supabase = await createClient();
@@ -74,7 +79,7 @@ export async function POST(
     .maybeSingle();
   const modelName =
     (settingsRow as Pick<DefaultSettingsRow, "evaluator_model"> | null)?.evaluator_model?.trim() ||
-    "gemini-3-flash-preview";
+    DEFAULT_EVAL_LLM_MODEL;
 
   try {
     const { reviews, token_usage } = await draftBehaviorReviewForVersionEntries({

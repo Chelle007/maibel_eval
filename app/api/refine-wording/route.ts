@@ -1,5 +1,7 @@
-import { GoogleGenerativeAI } from "@google/generative-ai";
 import { NextResponse } from "next/server";
+import { anthropicGenerateText } from "@/lib/anthropic-generate";
+import { getAnthropicEvalApiKey } from "@/lib/eval-llm-env";
+import { DEFAULT_EVAL_LLM_MODEL } from "@/lib/eval-llm-defaults";
 
 const REFINE_SYSTEM = `You are a light-touch editor. The user will provide the current session summary text.
 
@@ -16,24 +18,22 @@ export async function POST(request: Request) {
     const body = (await request.json()) as { summary?: string };
     const summary = body.summary ?? "";
 
-    const apiKey = process.env.GEMINI_API_KEY;
+    const apiKey = getAnthropicEvalApiKey();
     if (!apiKey) {
       return NextResponse.json(
-        { error: "Missing GEMINI_API_KEY environment variable" },
+        { error: "Missing ANTHROPIC_API_KEY or CLAUDE_API_KEY environment variable" },
         { status: 500 }
       );
     }
 
-    const genAI = new GoogleGenerativeAI(apiKey);
-    const model = genAI.getGenerativeModel({
-      model: "gemini-3-flash-preview",
-      systemInstruction: REFINE_SYSTEM,
-    });
-
     const userMessage = summary || "(empty)";
-    const result = await model.generateContent(userMessage);
-    const response = result.response;
-    const refined = response.text().trim();
+    const { text } = await anthropicGenerateText({
+      apiKey,
+      model: DEFAULT_EVAL_LLM_MODEL,
+      system: REFINE_SYSTEM,
+      userText: userMessage,
+    });
+    const refined = text.trim();
 
     return NextResponse.json({ refined });
   } catch (err) {

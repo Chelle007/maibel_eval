@@ -80,6 +80,8 @@ export interface TestSessionsRow {
   summary: string | null;
   /** Session-level human interpretation layer (TASK-021). Structured; sits above per-dimension review. */
   session_review_summary: Json;
+  /** Pointer to the latest "mutable" snapshot (edits refresh this payload). */
+  latest_snapshot_id?: string | null;
   /** Hash of eval_results comparison payloads when session_review_summary was last written (AI or manual). */
   session_review_summary_basis_fingerprint: string | null;
   /** Versioned organization context pack bundle id (see context/md-files/CONTEXT_PACK_MANIFEST.md). */
@@ -220,6 +222,15 @@ export interface DefaultSettingsRow {
   summarizer_prompt: string | null;
 }
 
+export interface SessionResultSnapshotsRow {
+  snapshot_id: string;
+  session_id: string;
+  kind: string;
+  message: string | null;
+  payload: Json;
+  created_at: string;
+}
+
 /** Use this type when your DB has quoted table names (e.g. "USERS"). */
 export interface Database {
   public: {
@@ -246,6 +257,11 @@ export interface Database {
       test_cases: { Row: TestCasesRow; Insert: Omit<TestCasesRow, "id" | "test_case_id"> & { id?: string; test_case_id?: string }; Update: Partial<TestCasesRow> };
       default_settings: { Row: DefaultSettingsRow; Insert: Omit<DefaultSettingsRow, "default_setting_id"> & { default_setting_id?: string }; Update: Partial<DefaultSettingsRow> };
       categories: { Row: CategoriesRow; Insert: Omit<CategoriesRow, "category_id"> & { category_id?: string }; Update: Partial<CategoriesRow> };
+      session_result_snapshots: {
+        Row: SessionResultSnapshotsRow;
+        Insert: Omit<SessionResultSnapshotsRow, "snapshot_id" | "created_at"> & { snapshot_id?: string; created_at?: string };
+        Update: Partial<SessionResultSnapshotsRow>;
+      };
     };
     Views: Record<string, never>;
     Functions: Record<string, never>;

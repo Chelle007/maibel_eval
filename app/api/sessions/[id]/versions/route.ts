@@ -7,6 +7,9 @@ import type { TestCase, ComparisonData } from "@/lib/types";
 import { mergeBehaviorReviewMap, pruneBehaviorReviewForVersions, type BehaviorReviewByVersion } from "@/lib/behavior-review";
 import { draftBehaviorReviewForVersionEntries } from "@/lib/behavior-review-drafter";
 import type { EvalResultsRow, VersionEntry, TestCasesRow, DefaultSettingsRow } from "@/lib/db.types";
+import { createSessionResultSnapshot } from "@/lib/session-snapshots";
+import { getAnthropicEvalApiKey } from "@/lib/eval-llm-env";
+import { DEFAULT_EVAL_LLM_MODEL, normalizeAnthropicModelName } from "@/lib/eval-llm-defaults";
 
 type EvalResultLite = Pick<
   EvalResultsRow,
@@ -35,7 +38,15 @@ export async function DELETE(
   }
   const sessionId = (session as { session_id: string }).session_id;
 
-  const apiKey = process.env.GEMINI_API_KEY;
+  // Snapshot current session result state before mutating versions (Git-like "commit").
+  await createSessionResultSnapshot({
+    supabase,
+    sessionId,
+    kind: "before_delete_version",
+    message: `Before delete version: ${versionId}`,
+  });
+
+  const apiKey = getAnthropicEvalApiKey();
 
   const { data: settingsRow } = await supabase
     .from("default_settings")
@@ -43,8 +54,9 @@ export async function DELETE(
     .limit(1)
     .maybeSingle();
   const comparatorModel =
-    (settingsRow as Pick<DefaultSettingsRow, "evaluator_model"> | null)?.evaluator_model?.trim() ||
-    "gemini-3-flash-preview";
+    normalizeAnthropicModelName(
+      (settingsRow as Pick<DefaultSettingsRow, "evaluator_model"> | null)?.evaluator_model?.trim()
+    ) || DEFAULT_EVAL_LLM_MODEL;
 
   const { data: evalRows, error: evalError } = await supabase
     .from("eval_results")

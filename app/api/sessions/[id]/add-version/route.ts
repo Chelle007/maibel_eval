@@ -2,15 +2,15 @@ import { NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import { getMaxConcurrentTestCases, runWithConcurrency } from "@/lib/evren-concurrency";
 import { callEvrenApiWithMeta } from "@/lib/evren";
-import { mergeBehaviorReviewMap } from "@/lib/behavior-review";
-import { draftBehaviorReviewForVersionEntries } from "@/lib/behavior-review-drafter";
-import { compareOverall } from "@/lib/comparator";
-import { loadComparatorOverallSystemPrompt } from "@/lib/prompts";
 import { loadContextPack } from "@/lib/context-pack";
 import { appendDistinctCodeSourceSegment } from "@/lib/run-metadata-autofill";
 import { persistSessionReviewSummaryForSession } from "@/lib/session-review-summary-refresh";
+import { createSessionResultSnapshot } from "@/lib/session-snapshots";
+import { rerunComparisonsForSession } from "@/lib/rerun-session-comparisons";
 import type { TestCase } from "@/lib/types";
 import type { DefaultSettingsRow, EvalResultsRow, RunEntry, TestCasesRow, VersionEntry } from "@/lib/db.types";
+import { getAnthropicEvalApiKey } from "@/lib/eval-llm-env";
+import { DEFAULT_EVAL_LLM_MODEL, normalizeAnthropicModelName } from "@/lib/eval-llm-defaults";
 
 const FALLBACK_EVREN_URL = process.env.NEXT_PUBLIC_EVREN_API_URL || "http://localhost:8000";
 
@@ -18,6 +18,26 @@ type EvalResultLite = Pick<
   EvalResultsRow,
   "eval_result_id" | "test_case_uuid" | "evren_responses" | "comparison" | "reason"
 >;
+
+function validateEvrenUrlForDeploy(evrenModelApiUrl: string): { ok: true } | { ok: false; error: string; code: string } {
+  const isVercel = process.env.VERCEL === "1";
+  if (!isVercel) return { ok: true };
+  try {
+    const u = new URL(evrenModelApiUrl);
+    const host = u.hostname.toLowerCase();
+    if (host === "localhost" || host === "127.0.0.1") {
+      return {
+        ok: false,
+        code: "LOCALHOST_ON_VERCEL",
+        error:
+          "Evren API URL cannot be localhost on Vercel. Set Evren API URL in Settings to your deployed Evren service (or set NEXT_PUBLIC_EVREN_API_URL in Vercel).",
+      };
+    }
+  } catch {
+    // Let downstream Evren call surface invalid URLs.
+  }
+  return { ok: true };
+}
 
 export async function POST(
   request: Request,
@@ -40,9 +60,12 @@ export async function POST(
 
   const supabase = await createClient();
 
-  const apiKey = process.env.GEMINI_API_KEY;
+  const apiKey = getAnthropicEvalApiKey();
   if (runComparison && !apiKey) {
-    return NextResponse.json({ error: "Missing GEMINI_API_KEY (required for comparison)" }, { status: 500 });
+    return NextResponse.json(
+      { error: "Missing ANTHROPIC_API_KEY or CLAUDE_API_KEY (required for comparison)" },
+      { status: 500 }
+    );
   }
 
   const { data: session, error: sessionError } = await supabase
@@ -60,6 +83,14 @@ export async function POST(
   const sessionTitle = (session as { title?: string | null }).title ?? null;
   const sessionSummary = (session as { summary?: string | null }).summary ?? null;
 
+  // Snapshot current session result state before mutating versions (Git-like "commit").
+  await createSessionResultSnapshot({
+    supabase,
+    sessionId,
+    kind: "before_add_version",
+    message: `Before add version: ${body.version_name?.trim() || "new version"}`,
+  });
+
   const { data: settingsRow } = await supabase
     .from("default_settings")
     .select("evren_api_url, evaluator_model")
@@ -67,14 +98,22 @@ export async function POST(
     .maybeSingle();
   const settings = settingsRow as Pick<DefaultSettingsRow, "evren_api_url" | "evaluator_model"> | null;
   const evrenModelApiUrl = settings?.evren_api_url?.trim() || FALLBACK_EVREN_URL;
-  const comparatorModel = settings?.evaluator_model?.trim() || "gemini-3-flash-preview";
+  const comparatorModel = normalizeAnthropicModelName(settings?.evaluator_model?.trim()) ?? DEFAULT_EVAL_LLM_MODEL;
+
+  const evrenUrlCheck = validateEvrenUrlForDeploy(evrenModelApiUrl);
+  if (!evrenUrlCheck.ok) {
+    return NextResponse.json(
+      { error: evrenUrlCheck.error, code: evrenUrlCheck.code, status: 400 },
+      { status: 400 }
+    );
+  }
 
   const { data: evalRows, error: evalError } = await supabase
     .from("eval_results")
     .select("eval_result_id, test_case_uuid, evren_responses, comparison, reason")
     .eq("session_id", sessionId)
     .order("eval_result_id");
-    if (evalError) {
+  if (evalError) {
     return NextResponse.json({ error: evalError.message }, { status: 500 });
   }
 
@@ -178,84 +217,15 @@ export async function POST(
   });
 
   if (runComparison && apiKey) {
-    const { data: freshRows } = await supabase
-      .from("eval_results")
-      .select("eval_result_id, test_case_uuid, evren_responses, comparison, reason")
-      .eq("session_id", sessionId)
-      .order("eval_result_id");
-    const compRows = (freshRows ?? []) as EvalResultLite[];
-    const comparatorPrompt = loadComparatorOverallSystemPrompt();
-
-    for (const compRow of compRows) {
-      const tc = testCaseById.get(compRow.test_case_uuid);
-      if (!tc) continue;
-
-      const versions = Array.isArray(compRow.evren_responses) ? (compRow.evren_responses as VersionEntry[]) : [];
-      if (versions.length < 2) continue;
-      const versionIds = versions.map((v) => v.version_id).slice(0, 3);
-      if (versionIds.length < 2) continue;
-
-      const testCase: TestCase = {
-        test_case_id: tc.test_case_id,
-        type: tc.type ?? "single_turn",
-        input_message: tc.input_message,
-        img_url: tc.img_url ?? undefined,
-        turns: tc.turns ?? undefined,
-        expected_state: tc.expected_state ?? "",
-        expected_behavior: tc.expected_behavior ?? "",
-        forbidden: tc.forbidden ?? undefined,
-        notes: tc.notes ?? undefined,
-      };
-
-      try {
-        const contextPack = loadContextPack({
-          purpose: "comparator",
-          query: `${testCase.test_case_id}\n${testCase.expected_state}\n${testCase.expected_behavior}\n${testCase.forbidden ?? ""}\n${testCase.notes ?? ""}`,
-        });
-        const compResult = await compareOverall(
-          testCase,
-          versions,
-          versionIds.length === 2
-            ? ([versionIds[0], versionIds[1]] as [string, string])
-            : ([versionIds[0], versionIds[1], versionIds[2]] as [string, string, string]),
-          apiKey,
-          comparatorModel,
-          comparatorPrompt,
-          { text: contextPack.text, bundleId: contextPack.bundleId }
-        );
-        await supabase
-          .from("eval_results")
-          .update({ comparison: compResult } as never)
-          .eq("eval_result_id", compRow.eval_result_id);
-
-        const reasonText =
-          (typeof compRow.reason === "string" && compRow.reason.trim() ? compRow.reason : null) ??
-          compResult.overall_reason ??
-          null;
-        try {
-          const draftResult = await draftBehaviorReviewForVersionEntries({
-            testCase,
-            versions,
-            evaluatorReason: reasonText,
-            apiKey,
-            modelName: comparatorModel,
-          });
-          if (Object.keys(draftResult.reviews).length > 0) {
-            const allowed = new Set(versionIds);
-            const merged = mergeBehaviorReviewMap({}, draftResult.reviews, allowed);
-            if (merged) {
-              await supabase
-                .from("eval_results")
-                .update({ behavior_review: merged } as never)
-                .eq("eval_result_id", compRow.eval_result_id);
-            }
-          }
-        } catch (brErr) {
-          console.error("[sessions/add-version] Behavior review draft error for", tc.test_case_id, brErr);
-        }
-      } catch (compErr) {
-        console.error("[sessions/add-version] Comparison error for", tc.test_case_id, compErr);
-      }
+    try {
+      await rerunComparisonsForSession({
+        supabase,
+        sessionId,
+        apiKey,
+        comparatorModel,
+      });
+    } catch (e) {
+      console.error("[sessions/add-version] rerun comparisons failed:", e);
     }
   }
 

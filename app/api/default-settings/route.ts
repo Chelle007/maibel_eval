@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import type { Database, DefaultSettingsRow } from "@/lib/db.types";
+import { normalizeAnthropicModelName } from "@/lib/eval-llm-defaults";
 
 const FIELDS = "evren_api_url, evaluator_model, evaluator_prompt, summarizer_model, summarizer_prompt";
 
@@ -56,11 +57,15 @@ export async function PATCH(request: Request) {
     .maybeSingle();
 
   const existingRow = existing as Pick<DefaultSettingsRow, "default_setting_id"> | null;
+  const evaluatorModelNorm =
+    body.evaluator_model !== undefined ? normalizeAnthropicModelName(body.evaluator_model) : undefined;
+  const summarizerModelNorm =
+    body.summarizer_model !== undefined ? normalizeAnthropicModelName(body.summarizer_model) : undefined;
   const payload = {
     ...(body.evren_api_url !== undefined && { evren_api_url: body.evren_api_url || null }),
-    ...(body.evaluator_model !== undefined && { evaluator_model: body.evaluator_model || null }),
+    ...(body.evaluator_model !== undefined && { evaluator_model: evaluatorModelNorm || null }),
     ...(body.evaluator_prompt !== undefined && { evaluator_prompt: body.evaluator_prompt || null }),
-    ...(body.summarizer_model !== undefined && { summarizer_model: body.summarizer_model || null }),
+    ...(body.summarizer_model !== undefined && { summarizer_model: summarizerModelNorm || null }),
     ...(body.summarizer_prompt !== undefined && { summarizer_prompt: body.summarizer_prompt || null }),
   } as Database["public"]["Tables"]["default_settings"]["Update"];
 

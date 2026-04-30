@@ -1,14 +1,17 @@
-import { GoogleGenerativeAI } from "@google/generative-ai";
 import { NextResponse } from "next/server";
+import { anthropicGenerateText } from "@/lib/anthropic-generate";
+import { getAnthropicEvalApiKey } from "@/lib/eval-llm-env";
+import { DEFAULT_EVAL_LLM_MODEL } from "@/lib/eval-llm-defaults";
 
+/** Legacy path name; calls the configured eval LLM (Anthropic Haiku 4.5 by default). */
 export async function POST(request: Request) {
   try {
     const { prompt } = (await request.json()) as { prompt?: string };
-    const apiKey = process.env.GEMINI_API_KEY;
+    const apiKey = getAnthropicEvalApiKey();
 
     if (!apiKey) {
       return NextResponse.json(
-        { error: "Missing GEMINI_API_KEY environment variable" },
+        { error: "Missing ANTHROPIC_API_KEY or CLAUDE_API_KEY environment variable" },
         { status: 500 }
       );
     }
@@ -20,18 +23,18 @@ export async function POST(request: Request) {
       );
     }
 
-    const genAI = new GoogleGenerativeAI(apiKey);
-    const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
-
-    const result = await model.generateContent(prompt);
-    const response = result.response;
-    const text = response.text();
+    const { text } = await anthropicGenerateText({
+      apiKey,
+      model: DEFAULT_EVAL_LLM_MODEL,
+      system: "You are a helpful assistant. Answer concisely.",
+      userText: prompt,
+    });
 
     return NextResponse.json({ text });
   } catch (err) {
-    console.error("Gemini API error:", err);
+    console.error("Eval LLM API error:", err);
     return NextResponse.json(
-      { error: err instanceof Error ? err.message : "Gemini request failed" },
+      { error: err instanceof Error ? err.message : "LLM request failed" },
       { status: 500 }
     );
   }

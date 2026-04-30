@@ -2,15 +2,21 @@ import { NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import type { DefaultSettingsRow } from "@/lib/db.types";
 import { persistSessionReviewSummaryForSession } from "@/lib/session-review-summary-refresh";
+import { refreshLatestSessionResultSnapshot } from "@/lib/session-snapshots";
+import { getAnthropicEvalApiKey } from "@/lib/eval-llm-env";
+import { DEFAULT_EVAL_LLM_MODEL, normalizeAnthropicModelName } from "@/lib/eval-llm-defaults";
 
 export async function POST(
   _request: Request,
   { params }: { params: Promise<{ id: string }> }
 ) {
   const { id: testSessionId } = await params;
-  const apiKey = process.env.GEMINI_API_KEY;
+  const apiKey = getAnthropicEvalApiKey();
   if (!apiKey) {
-    return NextResponse.json({ error: "Missing GEMINI_API_KEY" }, { status: 500 });
+    return NextResponse.json(
+      { error: "Missing ANTHROPIC_API_KEY or CLAUDE_API_KEY" },
+      { status: 500 }
+    );
   }
 
   const supabase = await createClient();
@@ -38,8 +44,9 @@ export async function POST(
     .limit(1)
     .maybeSingle();
   const modelName =
-    (settingsRow as Pick<DefaultSettingsRow, "evaluator_model"> | null)?.evaluator_model?.trim() ||
-    "gemini-3-flash-preview";
+    normalizeAnthropicModelName(
+      (settingsRow as Pick<DefaultSettingsRow, "evaluator_model"> | null)?.evaluator_model?.trim()
+    ) || DEFAULT_EVAL_LLM_MODEL;
 
   const persist = await persistSessionReviewSummaryForSession(supabase, {
     sessionId,
@@ -67,5 +74,6 @@ export async function POST(
     return NextResponse.json({ error: outErr?.message ?? "Failed to load session after update" }, { status: 500 });
   }
 
+  await refreshLatestSessionResultSnapshot({ supabase, sessionId });
   return NextResponse.json({ session: sessionOut });
 }

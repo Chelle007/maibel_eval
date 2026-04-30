@@ -6,6 +6,9 @@ import { loadContextPack } from "@/lib/context-pack";
 import type { ComparisonData, TestCase } from "@/lib/types";
 import type { AnyVersionEntry, DefaultSettingsRow, VersionEntry } from "@/lib/db.types";
 import { normalizeVersionEntry } from "@/lib/db.types";
+import { refreshLatestSessionResultSnapshot } from "@/lib/session-snapshots";
+import { getAnthropicEvalApiKey } from "@/lib/eval-llm-env";
+import { DEFAULT_EVAL_LLM_MODEL, normalizeAnthropicModelName } from "@/lib/eval-llm-defaults";
 
 type Body = {
   feedback?: string;
@@ -103,9 +106,12 @@ export async function POST(
     return NextResponse.json({ error: "At least 2 versions are required." }, { status: 400 });
   }
 
-  const apiKey = process.env.GEMINI_API_KEY;
+  const apiKey = getAnthropicEvalApiKey();
   if (!apiKey) {
-    return NextResponse.json({ error: "Missing GEMINI_API_KEY (required for AI edit)" }, { status: 500 });
+    return NextResponse.json(
+      { error: "Missing ANTHROPIC_API_KEY or CLAUDE_API_KEY (required for AI edit)" },
+      { status: 500 }
+    );
   }
 
   const supabase = await createClient();
@@ -113,7 +119,7 @@ export async function POST(
   const { data: evalRowRaw, error: evalRowError } = await supabase
     .from("eval_results")
     .select(
-      "evren_responses, comparison, test_cases(test_case_id, input_message, expected_state, expected_behavior, title, type, turns, forbidden, notes, img_url)"
+      "session_id, evren_responses, comparison, test_cases(test_case_id, input_message, expected_state, expected_behavior, title, type, turns, forbidden, notes, img_url)"
     )
     .eq("eval_result_id", id)
     .maybeSingle();
@@ -125,10 +131,12 @@ export async function POST(
   }
 
   const evalRow = evalRowRaw as {
+    session_id?: string;
     evren_responses: unknown;
     comparison: unknown;
     test_cases: Record<string, unknown> | Record<string, unknown>[] | null;
   };
+  const sessionId = typeof evalRow.session_id === "string" ? evalRow.session_id : null;
 
   const tcJoined = evalRow.test_cases;
   const tcRow = Array.isArray(tcJoined) ? tcJoined[0] : tcJoined;
@@ -160,8 +168,9 @@ export async function POST(
     .limit(1)
     .maybeSingle();
   const comparatorModel =
-    (settingsRow as Pick<DefaultSettingsRow, "evaluator_model"> | null)?.evaluator_model?.trim() ||
-    "gemini-3-flash-preview";
+    normalizeAnthropicModelName(
+      (settingsRow as Pick<DefaultSettingsRow, "evaluator_model"> | null)?.evaluator_model?.trim()
+    ) || DEFAULT_EVAL_LLM_MODEL;
 
   const versionIds =
     allowedIds.length === 2
@@ -212,6 +221,10 @@ export async function POST(
     .update({ comparison: validated.value, manually_edited: true } as never)
     .eq("eval_result_id", id);
   if (updateError) return NextResponse.json({ error: updateError.message }, { status: 500 });
+
+  if (sessionId) {
+    await refreshLatestSessionResultSnapshot({ supabase, sessionId });
+  }
 
   return NextResponse.json({ comparison: validated.value });
 }

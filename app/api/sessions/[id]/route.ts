@@ -119,9 +119,16 @@ export async function DELETE(
 ) {
   const { id } = await params;
   const supabase = await createClient();
-  const { error } = await supabase.from("test_sessions").delete().eq("test_session_id", id);
+  const { data, error } = await supabase
+    .from("test_sessions")
+    .delete()
+    .eq("test_session_id", id)
+    .select("session_id");
   if (error) {
-    return NextResponse.json({ error: error.message }, { status: error.code === "PGRST116" ? 404 : 500 });
+    return NextResponse.json({ error: error.message }, { status: 500 });
+  }
+  if (!data?.length) {
+    return NextResponse.json({ error: "Session not found" }, { status: 404 });
   }
   return new Response(null, { status: 204 });
 }

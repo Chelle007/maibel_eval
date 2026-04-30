@@ -29,18 +29,19 @@ export async function PATCH(
   return NextResponse.json(data);
 }
 
-/** DELETE /api/categories/[id] — soft delete (set deleted_at). */
+/** DELETE /api/categories/[id] — permanently remove row; test_cases.category_id becomes NULL (ON DELETE SET NULL). */
 export async function DELETE(
   _request: Request,
   { params }: { params: Promise<{ id: string }> }
 ) {
   const { id } = await params;
   const supabase = await createClient();
-  const payload = { deleted_at: new Date().toISOString() } as Database["public"]["Tables"]["categories"]["Update"];
-  const { error } = await supabase
+  const { data, error } = await supabase
     .from("categories")
-    .update(payload as unknown as never)
-    .eq("category_id", id);
+    .delete()
+    .eq("category_id", id)
+    .select("category_id");
   if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+  if (!data?.length) return NextResponse.json({ error: "Category not found" }, { status: 404 });
   return NextResponse.json({ ok: true });
 }

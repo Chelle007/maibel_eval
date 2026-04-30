@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { PageHeader } from "@/app/components/PageHeader";
+import { DEFAULT_EVAL_LLM_MODEL } from "@/lib/eval-llm-defaults";
 
 const inputClass =
   "mt-1.5 block w-full rounded-lg border border-stone-200 bg-white px-3 py-2.5 text-stone-900 placeholder:text-stone-400 focus:border-stone-400 focus:outline-none focus:ring-1 focus:ring-stone-400";
@@ -189,7 +190,7 @@ export default function SettingsPage() {
                 type="text"
                 value={settings.evaluator_model ?? ""}
                 onChange={(e) => setSettings((s) => ({ ...s, evaluator_model: e.target.value }))}
-                placeholder="gemini-3-flash-preview"
+                placeholder={DEFAULT_EVAL_LLM_MODEL}
                 className={inputClass}
               />
             </div>
@@ -199,7 +200,7 @@ export default function SettingsPage() {
                 type="text"
                 value={settings.summarizer_model ?? ""}
                 onChange={(e) => setSettings((s) => ({ ...s, summarizer_model: e.target.value }))}
-                placeholder="gemini-3-flash-preview"
+                placeholder={DEFAULT_EVAL_LLM_MODEL}
                 className={inputClass}
               />
             </div>
@@ -248,7 +249,9 @@ export default function SettingsPage() {
       {/* Categories */}
       <section className="mt-10">
         <h2 className="text-lg font-medium text-stone-800">Categories</h2>
-        <p className="mt-0.5 text-sm text-stone-500">Add, rename, or remove categories. Remove is soft delete (hidden from lists).</p>
+        <p className="mt-0.5 text-sm text-stone-500">
+          Add, rename, or remove categories. Remove permanently deletes the category (test cases keep their assignment cleared).
+        </p>
         <div className={`mt-4 ${cardClass}`}>
           <form onSubmit={handleAddCategory} className="flex gap-2">
             <input
