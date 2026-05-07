@@ -27,6 +27,7 @@ function testCaseFromJoin(row: Record<string, unknown> | null | undefined): Test
   if (!row || typeof row !== "object") return null;
   const test_case_id = String(row.test_case_id ?? "").trim();
   if (!test_case_id) return null;
+  const evalRaw = row.eval_context;
   return {
     test_case_id,
     type: row.type === "multi_turn" ? "multi_turn" : "single_turn",
@@ -37,6 +38,10 @@ function testCaseFromJoin(row: Record<string, unknown> | null | undefined): Test
     forbidden: row.forbidden != null && String(row.forbidden).trim() ? String(row.forbidden) : undefined,
     notes: row.notes != null && String(row.notes).trim() ? String(row.notes) : undefined,
     img_url: row.img_url != null && String(row.img_url).trim() ? String(row.img_url) : undefined,
+    eval_context:
+      evalRaw != null && typeof evalRaw === "object" && !Array.isArray(evalRaw)
+        ? (evalRaw as Record<string, unknown>)
+        : undefined,
   };
 }
 
@@ -119,7 +124,7 @@ export async function POST(
   const { data: evalRowRaw, error: evalRowError } = await supabase
     .from("eval_results")
     .select(
-      "session_id, evren_responses, comparison, test_cases(test_case_id, input_message, expected_state, expected_behavior, title, type, turns, forbidden, notes, img_url)"
+      "session_id, evren_responses, comparison, test_cases(test_case_id, input_message, expected_state, expected_behavior, title, type, turns, forbidden, notes, img_url, eval_context)"
     )
     .eq("eval_result_id", id)
     .maybeSingle();

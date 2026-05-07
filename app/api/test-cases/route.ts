@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
-import type { Database } from "@/lib/db.types";
+import type { Database, Json } from "@/lib/db.types";
 
 export async function GET() {
   const supabase = await createClient();
@@ -39,6 +39,7 @@ export async function POST(request: Request) {
     forbidden,
     notes,
     is_enabled,
+    eval_context: evalContextRaw,
   } = body as Record<string, unknown>;
   if (!test_case_id || typeof test_case_id !== "string" || !test_case_id.trim()) {
     return NextResponse.json({ error: "test_case_id required" }, { status: 400 });
@@ -58,6 +59,14 @@ export async function POST(request: Request) {
 
   const inputMessage = type === "multi_turn" ? turns![0]! : (input_message as string);
 
+  let eval_context: Json | null = null;
+  if (evalContextRaw !== undefined && evalContextRaw !== null) {
+    if (typeof evalContextRaw !== "object" || Array.isArray(evalContextRaw)) {
+      return NextResponse.json({ error: "eval_context must be a JSON object" }, { status: 400 });
+    }
+    eval_context = evalContextRaw as Json;
+  }
+
   const row = {
     test_case_id: (test_case_id as string).trim(),
     title: title ?? null,
@@ -71,6 +80,7 @@ export async function POST(request: Request) {
     forbidden: forbidden ?? null,
     notes: notes ?? null,
     is_enabled: typeof is_enabled === "boolean" ? is_enabled : true,
+    eval_context,
   } as Database["public"]["Tables"]["test_cases"]["Insert"];
   const { data, error } = await supabase
     .from("test_cases")

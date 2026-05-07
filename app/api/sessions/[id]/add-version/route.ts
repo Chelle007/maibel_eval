@@ -9,6 +9,7 @@ import { createSessionResultSnapshot } from "@/lib/session-snapshots";
 import { rerunComparisonsForSession } from "@/lib/rerun-session-comparisons";
 import type { TestCase } from "@/lib/types";
 import type { DefaultSettingsRow, EvalResultsRow, RunEntry, TestCasesRow, VersionEntry } from "@/lib/db.types";
+import { testCaseFromRow } from "@/lib/test-case-from-row";
 import { getAnthropicEvalApiKey } from "@/lib/eval-llm-env";
 import { DEFAULT_EVAL_LLM_MODEL, normalizeAnthropicModelName } from "@/lib/eval-llm-defaults";
 
@@ -145,16 +146,7 @@ export async function POST(
     const tc = testCaseById.get(row.test_case_uuid);
     if (!tc) return;
 
-    const testCase: TestCase = {
-      test_case_id: tc.test_case_id,
-      type: tc.type ?? "single_turn",
-      input_message: tc.input_message,
-      img_url: tc.img_url ?? undefined,
-      turns: tc.turns ?? undefined,
-      expected_state: tc.expected_state ?? "",
-      expected_behavior: tc.expected_behavior ?? "",
-      forbidden: tc.forbidden ?? undefined,
-    };
+    const testCase: TestCase = testCaseFromRow(tc);
 
     const runPromises = Array.from({ length: runCount }, async () => callEvrenApiWithMeta(evrenModelApiUrl, testCase));
     const runResults = await Promise.allSettled(runPromises);

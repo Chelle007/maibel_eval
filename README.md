@@ -1,23 +1,26 @@
 # MAIBEL Eval
 
-A Next.js app for running and evaluating test cases against the **Evren** model. It sends test cases to your Evren API, then uses **Anthropic Claude** (Haiku 4.5, `claude-haiku-4-5-20251001`, by default) as the evaluator and for session summaries. Results are stored in Supabase and organized into sessions with summaries.
+A Next.js app for running and evaluating test cases against the **Evren** model. It sends test cases to your Evren API, then uses **Anthropic Claude** (Haiku 4.5, `claude-haiku-4-5-20251001`, by default) as the evaluator, comparator, and for session summaries. Results are stored in Supabase and organized into sessions with summaries, optional review drafts, and version history.
 
 ## Tech stack
 
 - **Next.js 16** (App Router), **React 19**, **TypeScript**
 - **Supabase** — auth, database (PostgreSQL)
-- **Anthropic API (Claude Haiku 4.5)** — evaluation, comparison, and summarization
-- **Tailwind CSS** — styling
+- **Anthropic API (Claude Haiku 4.5)** — evaluation, pairwise comparison between runs, summarization, and helper text workflows
+- **Tailwind CSS 4** — styling
+- **TipTap / react-markdown** — rich and markdown summaries
+- **xlsx** — bulk test-case import via spreadsheet upload
 
 ## Features
 
-- **Test cases** — Manage single-turn and multi-turn cases with expected state/behavior, categories, and optional context/images
-- **Run evaluation** — Configure Evren API URL and model; run all enabled test cases; stream progress and save results to a new session
-- **Sessions** — View past runs, session summaries (with optional AI summarization and manual edits), and per-case scores
-- **Settings** — Persist default Evren URL and model preferences
+- **Test cases** — Single-turn and multi-turn cases with expected state/behavior, categories, notes, optional context/images, and Excel upload
+- **Run evaluation** — Configure Evren base URL and model (env default + UI); run enabled cases; stream progress; optional **context pack** injection from `context/md-files` (see `CONTEXT_PACK_MANIFEST.md`)
+- **Sessions** — Past runs, AI or manual session summaries (TipTap), per-case scores, **session versions** and **result snapshots**, pairwise **comparator** between versions (with optional metrics in the UI)
+- **Review helpers** — Session review summary drafting/refresh, behavior-review drafts, AI-assisted comparison edits, wording refinement (server routes under `app/api/`)
+- **Settings** — Default Evren URL/model and related preferences
 - **Auth** — Email/password login; owner can add users and manage access
 
-**Deletes (Supabase):** Removing a **test case** deletes its row and cascades to **eval_results** rows for that case. Removing a **session** deletes the session row and cascades to **eval_results** and **session_result_snapshots**. **Snapshot** delete or session history actions use real `DELETE` on `session_result_snapshots`. **Categories** are removed permanently (no soft-delete).
+**Deletes (Supabase):** Removing a **test case** deletes its row and cascades to **eval_results** for that case. Removing a **session** deletes the session and cascades to **eval_results** and **session_result_snapshots**. Snapshot delete and session history actions use real `DELETE` on `session_result_snapshots`. **Categories** are removed permanently (no soft-delete).
 
 ## Getting started
 
@@ -33,15 +36,18 @@ Copy `.env.example` to `.env.local` and fill in:
 
 | Variable | Description |
 |----------|-------------|
-| `ANTHROPIC_API_KEY` | From [Anthropic Console](https://console.anthropic.com/) — used for evaluator, comparator, and summarizer. `CLAUDE_API_KEY` is also accepted as an alias. |
+| `ANTHROPIC_API_KEY` | From [Anthropic Console](https://console.anthropic.com/) — evaluator, comparator, summarizer, and related LLM routes. `CLAUDE_API_KEY` is accepted as an alias. |
+| `EVREN_API_KEY` | If Evren requires API-key auth: same value as the service’s `AUTH_KEY`; sent as `x-api-key`. |
+| `EVREN_AUTHORIZATION` | (Optional) Full `Authorization` header value for backends that use Bearer/OIDC (e.g. some Cloud Run setups). |
+| `NEXT_PUBLIC_EVREN_API_URL` | Default Evren base URL (e.g. `http://localhost:8000`). Can be overridden in the UI. |
 | `NEXT_PUBLIC_SUPABASE_URL` | Supabase project URL (Settings → API) |
 | `NEXT_PUBLIC_SUPABASE_ANON_KEY` | Supabase anon/public key |
-| `SUPABASE_SERVICE_ROLE_KEY` | Supabase service role key (server-only; for auth sync and add-user) |
+| `SUPABASE_SERVICE_ROLE_KEY` | Supabase service role key (server-only; auth sync, add-user, protected writes) |
 | `DEFAULT_USER_ID` | (Optional) Fallback user UUID when running evaluations without a logged-in user |
 
 ### 3. Database
 
-Use a Supabase project and apply the schema under the repo root (e.g. `schema.sql` and any `schema-migration-*.sql` as needed). See `schema.sql` for tables: `users`, `categories`, `test_cases`, `test_sessions`, `eval_results`, etc.
+Use a Supabase project and apply the schema in **this directory**: start with `schema.sql`, then apply `schema-migration-*.sql`, `schema-behavior-review.sql`, `schema-rls-authenticated.sql`, and other `schema-*.sql` files as needed for your environment. Tables include `users`, `categories`, `test_cases`, `test_sessions`, `eval_results`, `session_result_snapshots`, and related review/summary columns.
 
 ### 4. Run the app
 
@@ -49,29 +55,31 @@ Use a Supabase project and apply the schema under the repo root (e.g. `schema.sq
 npm run dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000). You can run evaluations from the home page (Evren API URL, e.g. `http://localhost:8000`), manage test cases, and view sessions.
+This runs `next dev --webpack` (see `package.json`). Open [http://localhost:3000](http://localhost:3000). Run evaluations from the home or evaluate flow, manage test cases, and browse sessions.
 
 ## Evren API
 
-The app calls your Evren service at a configurable base URL, using the path **`/evren-eval`** (appended if the base URL has no path). Full request/response format and multi-turn behavior are in **[docs/evren-api-spec.md](docs/evren-api-spec.md)**.
+The app calls your Evren service at a configurable base URL, using the path **`/evren-eval`** when the base URL has no path. Auth: `EVREN_API_KEY` → `x-api-key`; optional `EVREN_AUTHORIZATION`. Full request/response format and multi-turn behavior are in **[docs/evren-api-spec.md](docs/evren-api-spec.md)**.
 
 ## Environments (staging vs production)
 
-By default, this eval app should be pointed at **staging** for Evren integration and testing. Do not assume staging behavior is identical to production; treat this repo as **eval-only** and validate production changes separately.
+By default, point this eval app at **staging** for Evren integration and testing. Staging is not guaranteed to match production; treat this repo as **eval-only** and validate production changes separately.
 
 ## Scripts
 
 | Command | Description |
 |---------|-------------|
-| `npm run dev` | Start development server |
-| `npm run build` | Build for production |
-| `npm run start` | Start production server |
-| `npm run lint` | Run ESLint |
+| `npm run dev` | Development server (`next dev --webpack`) |
+| `npm run build` | Production build |
+| `npm run start` | Production server |
+| `npm run lint` | ESLint |
 
 ## Project structure (high level)
 
-- `app/` — Routes and UI: home (run eval), test cases, sessions, settings, login
-- `app/api/` — API routes: auth, test cases, sessions, evaluate/run (and stream), default-settings, Gemini proxy, etc.
-- `lib/` — DB types, Supabase client/server/admin, evaluator, summarizer, Evren client, prompts, token-cost
+- `app/` — Routes and UI: home, evaluate, test cases, sessions, settings, login
+- `app/api/` — Auth, test cases (incl. upload), categories, sessions (versions, snapshots, summaries, resummarize, comparisons), evaluate/run and streaming, default-settings, refine-wording, legacy `gemini` route (calls the configured Anthropic eval model), etc.
+- `lib/` — DB types, Supabase clients, Evren client, evaluator/comparator/summarizer, context pack, prompts, token-cost, behavior/session review helpers
 - `content/prompts/` — System prompts for evaluator, summarizer, base
-- `schema.sql`, `schema-migration-*.sql` — Database schema and migrations
+- `context/md-files/` — Organization context markdown and `CONTEXT_PACK_MANIFEST.md` for evaluator/comparator injection
+- `docs/` — e.g. Evren API spec
+- `schema.sql`, `schema-migration-*.sql`, `schema-*.sql` — Database schema and migrations
