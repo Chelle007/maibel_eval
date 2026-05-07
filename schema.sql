@@ -46,6 +46,7 @@ CREATE TABLE test_cases (
   forbidden          TEXT,
   is_enabled         BOOLEAN NOT NULL DEFAULT TRUE,
   notes              TEXT,
+  eval_context       JSONB,
   created_at         TIMESTAMPTZ NOT NULL DEFAULT now(),
   updated_at         TIMESTAMPTZ NOT NULL DEFAULT now()
 );

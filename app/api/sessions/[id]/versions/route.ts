@@ -7,6 +7,7 @@ import type { TestCase, ComparisonData } from "@/lib/types";
 import { mergeBehaviorReviewMap, pruneBehaviorReviewForVersions, type BehaviorReviewByVersion } from "@/lib/behavior-review";
 import { draftBehaviorReviewForVersionEntries } from "@/lib/behavior-review-drafter";
 import type { EvalResultsRow, VersionEntry, TestCasesRow, DefaultSettingsRow } from "@/lib/db.types";
+import { testCaseFromRow } from "@/lib/test-case-from-row";
 import { createSessionResultSnapshot } from "@/lib/session-snapshots";
 import { getAnthropicEvalApiKey } from "@/lib/eval-llm-env";
 import { DEFAULT_EVAL_LLM_MODEL, normalizeAnthropicModelName } from "@/lib/eval-llm-defaults";
@@ -88,17 +89,7 @@ export async function DELETE(
     if (updatedIds.length >= 2 && apiKey && comparatorPrompt) {
       const tc = testCaseById.get(row.test_case_uuid);
       if (tc) {
-        testCaseForDraft = {
-          test_case_id: tc.test_case_id,
-          type: tc.type ?? "single_turn",
-          input_message: tc.input_message,
-          img_url: tc.img_url ?? undefined,
-          turns: tc.turns ?? undefined,
-          expected_state: tc.expected_state ?? "",
-          expected_behavior: tc.expected_behavior ?? "",
-          forbidden: tc.forbidden ?? undefined,
-          notes: tc.notes ?? undefined,
-        };
+        testCaseForDraft = testCaseFromRow(tc);
         try {
           const contextPack = loadContextPack({
             purpose: "comparator",

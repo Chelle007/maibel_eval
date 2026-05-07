@@ -3,6 +3,7 @@ import { mergeBehaviorReviewMap } from "@/lib/behavior-review";
 import { draftBehaviorReviewForVersionEntries } from "@/lib/behavior-review-drafter";
 import { compareOverall } from "@/lib/comparator";
 import type { Database, EvalResultsRow, TestCasesRow, VersionEntry } from "@/lib/db.types";
+import { testCaseFromRow } from "@/lib/test-case-from-row";
 import { loadContextPack } from "@/lib/context-pack";
 import { loadComparatorOverallSystemPrompt } from "@/lib/prompts";
 import type { TestCase } from "@/lib/types";
@@ -89,17 +90,7 @@ export async function rerunComparisonsForSession(args: {
       continue;
     }
 
-    const testCase: TestCase = {
-      test_case_id: tc.test_case_id,
-      type: tc.type ?? "single_turn",
-      input_message: tc.input_message,
-      img_url: tc.img_url ?? undefined,
-      turns: tc.turns ?? undefined,
-      expected_state: tc.expected_state ?? "",
-      expected_behavior: tc.expected_behavior ?? "",
-      forbidden: tc.forbidden ?? undefined,
-      notes: tc.notes ?? undefined,
-    };
+    const testCase: TestCase = testCaseFromRow(tc);
 
     try {
       const contextPack = loadContextPack({

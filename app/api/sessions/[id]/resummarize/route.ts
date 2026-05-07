@@ -4,6 +4,7 @@ import type { Database } from "@/lib/db.types";
 import { buildRichReport, runSummarizer } from "@/lib/summarizer";
 import { loadSummarizerSystemPrompt } from "@/lib/prompts";
 import type { TestCase, EvrenOutput, EvaluationResult } from "@/lib/types";
+import type { Json } from "@/lib/db.types";
 
 import { normalizeVersionEntry } from "@/lib/db.types";
 import type { AnyVersionEntry, VersionEntry } from "@/lib/db.types";
@@ -29,6 +30,7 @@ type EvalResultRow = {
     type?: "single_turn" | "multi_turn" | null;
     turns?: string[] | null;
     img_url?: string | null;
+    eval_context?: Json | null;
   } | null;
 };
 
@@ -59,7 +61,7 @@ export async function POST(
   const { data: rows, error: resultsError } = await supabase
     .from("eval_results")
     .select(
-      "eval_result_id, session_id, test_case_uuid, evren_responses, success, score, reason, test_cases(id, test_case_id, input_message, expected_state, expected_behavior, forbidden, title, type, turns, img_url)"
+      "eval_result_id, session_id, test_case_uuid, evren_responses, success, score, reason, test_cases(id, test_case_id, input_message, expected_state, expected_behavior, forbidden, title, type, turns, img_url, eval_context)"
     )
     .eq("session_id", sessionId)
     .order("eval_result_id");
@@ -89,6 +91,10 @@ export async function POST(
       title: tc.title ?? undefined,
       turns: tc.turns ?? undefined,
       img_url: tc.img_url ?? undefined,
+      eval_context:
+        tc.eval_context != null && typeof tc.eval_context === "object" && !Array.isArray(tc.eval_context)
+          ? (tc.eval_context as Record<string, unknown>)
+          : undefined,
     };
     const evrenOutput: EvrenOutput = {
       evren_response: lastTurn?.response?.join("\n") ?? "",

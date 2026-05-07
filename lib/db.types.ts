@@ -211,6 +211,8 @@ export interface TestCasesRow {
   forbidden: string | null;
   notes: string | null;
   is_enabled: boolean;
+  /** Merged into Evren POST body with messages (never carries messages key). */
+  eval_context: Json | null;
 }
 
 export interface DefaultSettingsRow {

@@ -119,6 +119,9 @@ export async function fetchEvrenCodeSource(evrenModelApiUrl: string): Promise<st
 
 /**
  * Call Evren eval API (POST /evren-eval) and return outputs plus optional code source metadata.
+ * Request body: always `{ messages: string[] }`, plus any keys from `testCase.eval_context`
+ * (e.g. `temporal_context`, `memory_context`) merged in. `recent_texts` is auto-filled from
+ * `messages` unless already set in eval_context. Never put `messages` inside eval_context.
  * Response shape is backwards-compatible: { evren_responses, code_source? }.
  */
 export async function callEvrenApiWithMeta(
@@ -135,6 +138,21 @@ export async function callEvrenApiWithMeta(
   }
 
   const body: Record<string, unknown> = { messages };
+
+  const extras = testCase.eval_context;
+  if (extras && typeof extras === "object" && !Array.isArray(extras)) {
+    for (const [key, value] of Object.entries(extras)) {
+      if (key === "messages") continue;
+      body[key] = value;
+    }
+  }
+
+  // Helps orchestrator BUG-029 / continuity when the harness only sends user strings.
+  if (messages.length > 0 && !("recent_texts" in body)) {
+    body.recent_texts = messages
+      .map((m, i) => `[user ${i + 1}/${messages.length}] ${m}`)
+      .join("\n");
+  }
 
   const url = evrenEndpoint(evrenModelApiUrl);
   const headers: Record<string, string> = { "Content-Type": "application/json" };

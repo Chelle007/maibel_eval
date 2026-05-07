@@ -14,6 +14,11 @@ export interface TestCase {
   forbidden?: string;
   notes?: string;
   is_enabled?: boolean;
+  /**
+   * Merged into the Evren eval POST JSON alongside messages (never use key "messages").
+   * Typical keys: temporal_context ({ timezone, local_time, time_of_day, ... }), memory_context (string).
+   */
+  eval_context?: Record<string, unknown>;
   /** Category name from sheet (used on upload to resolve to category_id). */
   category?: string;
 }

@@ -14,6 +14,7 @@ import { loadEvaluatorSystemPrompt, loadSummarizerSystemPrompt } from "@/lib/pro
 import { loadContextPack } from "@/lib/context-pack";
 import type { TestCase, EvrenOutput, EvaluationResult } from "@/lib/types";
 import type { Database, DefaultSettingsRow, RunEntry, TestCasesRow, VersionEntry } from "@/lib/db.types";
+import { testCaseFromRow } from "@/lib/test-case-from-row";
 import { buildAutofillRunMetadata } from "@/lib/run-metadata-autofill";
 import { getAnthropicEvalApiKey } from "@/lib/eval-llm-env";
 import { DEFAULT_EVAL_LLM_MODEL } from "@/lib/eval-llm-defaults";
@@ -211,16 +212,7 @@ export async function POST(request: Request) {
         let completedCount = 0;
 
         await runWithConcurrency(rows, maxConcurrentTestCases, async (row, index) => {
-          const testCase: TestCase = {
-            test_case_id: row.test_case_id,
-            type: row.type ?? "single_turn",
-            input_message: row.input_message,
-            img_url: row.img_url ?? undefined,
-            turns: row.turns ?? undefined,
-            expected_state: row.expected_state ?? "",
-            expected_behavior: row.expected_behavior ?? "",
-            forbidden: row.forbidden ?? undefined,
-          };
+          const testCase: TestCase = testCaseFromRow(row);
 
           const runPromises = Array.from({ length: runCount }, async () => callEvrenApiWithMeta(evrenModelApiUrl, testCase));
           const runResults = await Promise.allSettled(runPromises);
