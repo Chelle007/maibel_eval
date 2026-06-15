@@ -1,4 +1,4 @@
-import type { TestCase, EvrenOutput } from "./types";
+import type { TestCase, EvrenOutput, RouteTrace } from "./types";
 
 /** Path for the Evren eval endpoint (POST /evren-eval). */
 const EVREN_EVAL_PATH = "/evren-eval";
@@ -194,7 +194,11 @@ export async function callEvrenApiWithMeta(
   }
 
   const data = (await res.json()) as Record<string, unknown>;
-  const evrenResponses = data.evren_responses as Array<{ response?: string | string[]; detected_flags?: string }> | undefined;
+  const evrenResponses = data.evren_responses as Array<{
+    response?: string | string[];
+    detected_flags?: string;
+    route_trace?: RouteTrace | null;
+  }> | undefined;
   const codeSource = parseEvrenCodeSourceFromResponse(data);
 
   console.log("[Evren API] raw response:", JSON.stringify(data, null, 2));
@@ -206,6 +210,7 @@ export async function callEvrenApiWithMeta(
   const outputs = evrenResponses.map((item) => ({
     evren_response: item?.response ?? "",
     detected_states: String(item?.detected_flags ?? ""),
+    route_trace: item?.route_trace ?? null,
   }));
   return { outputs, codeSource };
 }

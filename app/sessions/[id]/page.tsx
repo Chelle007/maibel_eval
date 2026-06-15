@@ -23,7 +23,7 @@ import {
   RUN_METADATA_ENVIRONMENT_OPTIONS,
   validateRunMetadata,
 } from "@/lib/db.types";
-import type { AnyVersionEntry, RunMetadata, VersionEntry } from "@/lib/db.types";
+import type { AnyVersionEntry, RunMetadata, RouteTrace, VersionEntry } from "@/lib/db.types";
 import { fingerprintEvalResultsComparisons } from "@/lib/session-review-summary-basis";
 import {
   SESSION_REVIEW_FAILURE_TAXONOMY,
@@ -559,6 +559,22 @@ function prettyDetectedFlags(value: string): string {
   }
 }
 
+function prettyRouteTrace(value: RouteTrace | null | undefined): string {
+  if (!value) return "—";
+  return JSON.stringify(value, null, 2);
+}
+
+function turnHasRouteTrace(routeTrace: RouteTrace | null | undefined): boolean {
+  if (!routeTrace) return false;
+  return (
+    (routeTrace.selected_route?.length ?? 0) > 0 ||
+    (routeTrace.candidate_routes?.length ?? 0) > 0 ||
+    (routeTrace.active_gates?.length ?? 0) > 0 ||
+    (routeTrace.intent?.length ?? 0) > 0 ||
+    routeTrace.confidence != null
+  );
+}
+
 function getBehaviorReviewDraft(
   r: EvalResult,
   versionId: string,
@@ -651,6 +667,7 @@ export default function SessionDetailPage() {
   const [savedRunMetadata, setSavedRunMetadata] = useState(false);
   const [expandedResultId, setExpandedResultId] = useState<string | null>(null);
   const [expandedFlagsKeys, setExpandedFlagsKeys] = useState<Set<string>>(new Set());
+  const [expandedRouteTraceKeys, setExpandedRouteTraceKeys] = useState<Set<string>>(new Set());
   const [expandedRunsKeys, setExpandedRunsKeys] = useState<Set<string>>(new Set());
   const [searchQuery, setSearchQuery] = useState("");
   const [passFailFilter, setPassFailFilter] = useState<"" | "pass" | "fail">("");
@@ -3200,8 +3217,12 @@ export default function SessionDetailPage() {
                             {Array.from({ length: turnCount }, (_, i) => {
                           const flagsKey = `${r.eval_result_id}-${i}`;
                           const flagsExpanded = expandedFlagsKeys.has(flagsKey);
+                          const routeTraceExpanded = expandedRouteTraceKeys.has(flagsKey);
                           const hasFlags = versions.some((v) =>
                             v.runs.some((run) => run.turns[i]?.detected_flags?.trim())
+                          );
+                          const hasRouteTrace = versions.some((v) =>
+                            v.runs.some((run) => turnHasRouteTrace(run.turns[i]?.route_trace))
                           );
                           const singleVersion = versions.length <= 1;
                           const singleRuns = versions[0]?.runs ?? [];
@@ -3361,6 +3382,75 @@ export default function SessionDetailPage() {
                                                         </p>
                                                         <pre className="mt-1 whitespace-pre-wrap break-words text-xs text-stone-700 font-mono">
                                                           {prettyDetectedFlags(run.turns[i]?.detected_flags ?? "")}
+                                                        </pre>
+                                                      </div>
+                                                    ));
+                                                  })()}
+                                                </div>
+                                              </div>
+                                            ))}
+                                          </div>
+                                        )}
+                                      </div>
+                                    )}
+                                  </div>
+                                )}
+                                {hasRouteTrace && (
+                                  <div className="mt-2">
+                                    <button
+                                      type="button"
+                                      onClick={(e) => {
+                                        e.stopPropagation();
+                                        setExpandedRouteTraceKeys((prev) => {
+                                          const next = new Set(prev);
+                                          if (next.has(flagsKey)) next.delete(flagsKey);
+                                          else next.add(flagsKey);
+                                          return next;
+                                        });
+                                      }}
+                                      className="inline-flex items-center gap-1 rounded border border-stone-200 bg-stone-50 px-2 py-1 text-xs font-medium text-stone-600 hover:bg-stone-100"
+                                    >
+                                      <span className={`shrink-0 transition-transform ${routeTraceExpanded ? "rotate-90" : ""}`} aria-hidden>▶</span>
+                                      Route trace
+                                    </button>
+                                    {routeTraceExpanded && (
+                                      <div className="mt-2">
+                                        {singleVersion ? (
+                                          <div className="space-y-2">
+                                            {displaySingleRuns.map((run) => (
+                                              <div key={run.run_id} className="rounded-lg border border-stone-200 bg-white px-3 py-2">
+                                                <p className="text-[11px] font-medium uppercase tracking-wide text-stone-400">
+                                                  Run {run.run_index}
+                                                </p>
+                                                <pre className="mt-1 whitespace-pre-wrap break-words text-xs text-stone-700 font-mono">
+                                                  {prettyRouteTrace(run.turns[i]?.route_trace)}
+                                                </pre>
+                                              </div>
+                                            ))}
+                                          </div>
+                                        ) : (
+                                          <div className="mt-1 flex gap-2 overflow-x-auto pb-1">
+                                            {versions.map((ver) => (
+                                              <div
+                                                key={ver.version_id}
+                                                className="flex-1 min-w-[260px] rounded-lg border border-stone-200 bg-white px-3 py-2"
+                                              >
+                                                <p className="text-[11px] font-medium uppercase tracking-wide text-stone-400">
+                                                  {ver.version_name}
+                                                </p>
+                                                <div className="mt-1 space-y-2">
+                                                  {(() => {
+                                                    const collapsedRuns = ver.runs.filter((run) => run.run_index === 1);
+                                                    const displayRuns = runsExpanded
+                                                      ? ver.runs
+                                                      : (collapsedRuns.length > 0 ? collapsedRuns : ver.runs.slice(0, 1));
+                                                    return displayRuns.map((run) => (
+                                                      <div key={run.run_id}>
+                                                        <p className="text-[11px] font-medium uppercase tracking-wide text-stone-400">
+                                                          Run {run.run_index}
+                                                        </p>
+                                                        <pre className="mt-1 whitespace-pre-wrap break-words text-xs text-stone-700 font-mono">
+                                                          {prettyRouteTrace(run.turns[i]?.route_trace)}
                                                         </pre>
                                                       </div>
                                                     ));
