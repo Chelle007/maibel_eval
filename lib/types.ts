@@ -25,10 +25,14 @@ export interface TestCase {
 
 /** Eval-only routing observability from /evren-eval route_trace. */
 export interface RouteTrace {
+  primary_agent?: string | null;
+  agents_considered?: string[];
+  intent?: string[];
+  active_gates?: string[];
+  response_path?: string | null;
+  /** Legacy fields; may exist in runs stored before MAI-195 shape change. */
   selected_route?: string[];
   candidate_routes?: string[];
-  active_gates?: string[];
-  intent?: string[];
   confidence?: number | null;
 }
 

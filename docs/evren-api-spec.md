@@ -72,13 +72,13 @@ Each element of `evren_responses` must be an object with:
 
 When present, `route_trace` is an object with:
 
-| Field              | Type     | Description |
-|--------------------|----------|-------------|
-| `selected_route`   | string[] | Final agent route(s) chosen for this turn. |
-| `candidate_routes` | string[] | Intent-mapped routes before gate filtering (optional). |
-| `active_gates`     | string[] | Active gates affecting routing (e.g. `withdrawal`, `p1:withdrawn`, `p2_mission_rejection`). |
-| `intent`           | string[] | Classified intent(s) for this turn. |
-| `confidence`       | number   | Router/detection confidence when available (optional). |
+| Field                | Type     | Description |
+|----------------------|----------|-------------|
+| `primary_agent`      | string   | Agent chosen by the picker (`null` when a short-circuit handler wrote the reply). |
+| `agents_considered`  | string[] | Agents evaluated by the picker (`[]` when the picker did not run). |
+| `intent`             | string[] | Classified intent(s) for this turn. |
+| `active_gates`       | string[] | Active gates affecting routing (e.g. `withdrawal`, `p1:withdrawn`, `p2_mission_rejection`). |
+| `response_path`      | string   | Short-circuit handler when the picker did not run (e.g. `p1_withdrawal`; `null` on normal picker paths). |
 
 **Example — single-turn response:**
 
@@ -89,10 +89,31 @@ When present, `route_trace` is an object with:
       "response": "Hey! I'm doing okay, thanks for asking. How about you?",
       "detected_flags": "",
       "route_trace": {
-        "selected_route": ["default"],
-        "candidate_routes": ["default"],
+        "primary_agent": "default",
+        "agents_considered": ["default"],
         "active_gates": [],
-        "intent": ["general_chat"]
+        "intent": ["general_chat"],
+        "response_path": null
+      }
+    }
+  ]
+}
+```
+
+**Example — withdrawal short-circuit:**
+
+```json
+{
+  "evren_responses": [
+    {
+      "response": "thinking of you. no pressure to respond.",
+      "detected_flags": "- emotional_category = withdrawn\n...",
+      "route_trace": {
+        "primary_agent": null,
+        "agents_considered": [],
+        "intent": ["general_chat"],
+        "active_gates": ["withdrawal", "p1:withdrawn", "p1_transition"],
+        "response_path": "p1_withdrawal"
       }
     }
   ]

@@ -561,16 +561,35 @@ function prettyDetectedFlags(value: string): string {
 
 function prettyRouteTrace(value: RouteTrace | null | undefined): string {
   if (!value) return "—";
-  return JSON.stringify(value, null, 2);
+  const hasNewShape =
+    "primary_agent" in value || "agents_considered" in value || "response_path" in value;
+  if (!hasNewShape) {
+    return JSON.stringify(value, null, 2);
+  }
+  const fmt = (v: unknown): string => {
+    if (v == null) return "null";
+    if (Array.isArray(v)) return v.length ? v.join(", ") : "[]";
+    return String(v);
+  };
+  return [
+    `- primary_agent = ${fmt(value.primary_agent ?? null)}`,
+    `- agents_considered = ${fmt(value.agents_considered ?? [])}`,
+    `- intent = ${fmt(value.intent ?? [])}`,
+    `- active_gates = ${fmt(value.active_gates ?? [])}`,
+    `- response_path = ${fmt(value.response_path ?? null)}`,
+  ].join("\n");
 }
 
 function turnHasRouteTrace(routeTrace: RouteTrace | null | undefined): boolean {
   if (!routeTrace) return false;
   return (
-    (routeTrace.selected_route?.length ?? 0) > 0 ||
-    (routeTrace.candidate_routes?.length ?? 0) > 0 ||
+    (routeTrace.primary_agent != null && routeTrace.primary_agent !== "") ||
+    (routeTrace.agents_considered?.length ?? 0) > 0 ||
     (routeTrace.active_gates?.length ?? 0) > 0 ||
     (routeTrace.intent?.length ?? 0) > 0 ||
+    (routeTrace.response_path != null && routeTrace.response_path !== "") ||
+    (routeTrace.selected_route?.length ?? 0) > 0 ||
+    (routeTrace.candidate_routes?.length ?? 0) > 0 ||
     routeTrace.confidence != null
   );
 }
