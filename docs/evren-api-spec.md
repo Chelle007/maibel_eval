@@ -68,6 +68,17 @@ Each element of `evren_responses` must be an object with:
 |------------------|--------|----------|-------------|
 | `response`       | string or array | **Yes**  | Evren’s reply to that turn Either a single string or an array of strings (one per bubble); first element = first bubble, second = second, etc. |
 | `detected_flags` | string          | **Yes**  | Flags detected for that turn (e.g. comma-separated or `""` if none). |
+| `route_trace`    | object          | No       | Eval-only routing observability. See fields below. Omitted when unavailable. |
+
+When present, `route_trace` is an object with:
+
+| Field                | Type     | Description |
+|----------------------|----------|-------------|
+| `primary_agent`      | string   | Agent chosen by the picker (`null` when a short-circuit handler wrote the reply). |
+| `agents_considered`  | string[] | Agents evaluated by the picker (`[]` when the picker did not run). |
+| `intent`             | string[] | Classified intent(s) for this turn. |
+| `active_gates`       | string[] | Active gates affecting routing (e.g. `withdrawal`, `p1:withdrawn`, `p2_mission_rejection`). |
+| `response_path`      | string   | Short-circuit handler when the picker did not run (e.g. `p1_withdrawal`; `null` on normal picker paths). |
 
 **Example — single-turn response:**
 
@@ -76,7 +87,34 @@ Each element of `evren_responses` must be an object with:
   "evren_responses": [
     {
       "response": "Hey! I'm doing okay, thanks for asking. How about you?",
-      "detected_flags": ""
+      "detected_flags": "",
+      "route_trace": {
+        "primary_agent": "default",
+        "agents_considered": ["default"],
+        "active_gates": [],
+        "intent": ["general_chat"],
+        "response_path": null
+      }
+    }
+  ]
+}
+```
+
+**Example — withdrawal short-circuit:**
+
+```json
+{
+  "evren_responses": [
+    {
+      "response": "thinking of you. no pressure to respond.",
+      "detected_flags": "- emotional_category = withdrawn\n...",
+      "route_trace": {
+        "primary_agent": null,
+        "agents_considered": [],
+        "intent": ["general_chat"],
+        "active_gates": ["withdrawal", "p1:withdrawn", "p1_transition"],
+        "response_path": "p1_withdrawal"
+      }
     }
   ]
 }
@@ -121,7 +159,7 @@ Each element of `evren_responses` must be an object with:
 
 1. Expose **`POST /evren-eval`** (or mount it so the full URL is `<base>/evren-eval`).
 2. Accept JSON body with **`messages`** (array of strings); optionally **`context`** (object or string).
-3. Return **200** with JSON body containing **`evren_responses`**: an array of objects, each with **`response`** (string) and **`detected_flags`** (string). Array length must equal `messages.length`.
+3. Return **200** with JSON body containing **`evren_responses`**: an array of objects, each with **`response`** (string) and **`detected_flags`** (string). Optionally include **`route_trace`** per turn for eval routing observability. Array length must equal `messages.length`.
 4. For multi-turn, generate each response with full conversation history so replies are distinct and contextually correct.
 5. Use **JSON** for request and response and `Content-Type: application/json` where applicable.
 

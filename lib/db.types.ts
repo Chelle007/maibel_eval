@@ -94,10 +94,24 @@ export interface TestSessionsRow {
   run_metadata?: RunMetadata | Json;
 }
 
+/** Eval-only routing observability from /evren-eval route_trace. */
+export interface RouteTrace {
+  primary_agent?: string | null;
+  agents_considered?: string[];
+  intent?: string[];
+  active_gates?: string[];
+  response_path?: string | null;
+  /** Legacy fields; may exist in runs stored before MAI-195 shape change. */
+  selected_route?: string[];
+  candidate_routes?: string[];
+  confidence?: number | null;
+}
+
 /** One turn of Evren output within a version. */
 export interface VersionTurn {
   response: string[];
   detected_flags: string;
+  route_trace?: RouteTrace | null;
 }
 
 export type VersionEvidenceSource = "none" | "automated";

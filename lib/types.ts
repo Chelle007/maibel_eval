@@ -23,11 +23,25 @@ export interface TestCase {
   category?: string;
 }
 
+/** Eval-only routing observability from /evren-eval route_trace. */
+export interface RouteTrace {
+  primary_agent?: string | null;
+  agents_considered?: string[];
+  intent?: string[];
+  active_gates?: string[];
+  response_path?: string | null;
+  /** Legacy fields; may exist in runs stored before MAI-195 shape change. */
+  selected_route?: string[];
+  candidate_routes?: string[];
+  confidence?: number | null;
+}
+
 /** Evren model output for one test case. */
 export interface EvrenOutput {
   /** Single string or array of strings (one per bubble). */
   evren_response: string | string[];
   detected_states: string;
+  route_trace?: RouteTrace | null;
 }
 
 /** Payload sent to the evaluator: one test case + Evren's output(s). */

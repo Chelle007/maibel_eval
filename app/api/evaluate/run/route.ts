@@ -161,6 +161,7 @@ export async function POST(request: Request) {
         turns: runOutputs.map((o) => ({
           response: Array.isArray(o.evren_response) ? o.evren_response.map(String) : [String(o.evren_response ?? "")],
           detected_flags: String(o.detected_states ?? ""),
+          route_trace: o.route_trace ?? null,
         })),
       });
     }
@@ -170,6 +171,7 @@ export async function POST(request: Request) {
     const run1Outputs = run1Turns.map((t) => ({
       evren_response: t.response,
       detected_states: t.detected_flags,
+      route_trace: t.route_trace ?? null,
     }));
     const versionEntry: VersionEntry = {
       version_id: versionId,

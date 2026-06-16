@@ -273,6 +273,7 @@ export async function POST(
               turns: runOutputs.map((o) => ({
                 response: Array.isArray(o.evren_response) ? o.evren_response.map(String) : [String(o.evren_response ?? "")],
                 detected_flags: String(o.detected_states ?? ""),
+                route_trace: o.route_trace ?? null,
               })),
             });
           }
