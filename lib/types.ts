@@ -34,6 +34,8 @@ export interface RouteTrace {
   selected_route?: string[];
   candidate_routes?: string[];
   confidence?: number | null;
+  /** Context verifier confidence when P0 double-check ran (MAI-202). */
+  verifier_confidence?: number | null;
 }
 
 /** Evren model output for one test case. */

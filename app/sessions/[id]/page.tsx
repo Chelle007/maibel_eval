@@ -562,7 +562,10 @@ function prettyDetectedFlags(value: string): string {
 function prettyRouteTrace(value: RouteTrace | null | undefined): string {
   if (!value) return "—";
   const hasNewShape =
-    "primary_agent" in value || "agents_considered" in value || "response_path" in value;
+    "primary_agent" in value ||
+    "agents_considered" in value ||
+    "response_path" in value ||
+    "verifier_confidence" in value;
   if (!hasNewShape) {
     return JSON.stringify(value, null, 2);
   }
@@ -571,13 +574,17 @@ function prettyRouteTrace(value: RouteTrace | null | undefined): string {
     if (Array.isArray(v)) return v.length ? v.join(", ") : "[]";
     return String(v);
   };
-  return [
+  const lines = [
     `- primary_agent = ${fmt(value.primary_agent ?? null)}`,
     `- agents_considered = ${fmt(value.agents_considered ?? [])}`,
     `- intent = ${fmt(value.intent ?? [])}`,
     `- active_gates = ${fmt(value.active_gates ?? [])}`,
     `- response_path = ${fmt(value.response_path ?? null)}`,
-  ].join("\n");
+  ];
+  if (value.verifier_confidence != null) {
+    lines.push(`- verifier_confidence = ${fmt(value.verifier_confidence)}`);
+  }
+  return lines.join("\n");
 }
 
 function turnHasRouteTrace(routeTrace: RouteTrace | null | undefined): boolean {
@@ -590,7 +597,8 @@ function turnHasRouteTrace(routeTrace: RouteTrace | null | undefined): boolean {
     (routeTrace.response_path != null && routeTrace.response_path !== "") ||
     (routeTrace.selected_route?.length ?? 0) > 0 ||
     (routeTrace.candidate_routes?.length ?? 0) > 0 ||
-    routeTrace.confidence != null
+    routeTrace.confidence != null ||
+    routeTrace.verifier_confidence != null
   );
 }
 
